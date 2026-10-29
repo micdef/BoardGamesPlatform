@@ -3,6 +3,7 @@
 
   <!-- Projects -->
   <ItemGroup>
+    <ProjectReference Include="..\SocialGamesPlatform.Observability\SocialGamesPlatform.Observability.csproj" />
     <ProjectReference Include="..\SocialGamesPlatform.Platform.Application\SocialGamesPlatform.Platform.Application.csproj" />
     <ProjectReference Include="..\SocialGamesPlatform.Platform.Infrastructure\SocialGamesPlatform.Platform.Infrastructure.csproj" />
     <ProjectReference Include="..\SocialGamesPlatform.Back.Contracts\SocialGamesPlatform.Back.Contracts.csproj" />

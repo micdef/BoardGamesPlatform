@@ -59,9 +59,9 @@ Other UIs   ┘
 
 #### 0.2.0 — Solution skeleton and test infrastructure
 
-- **Content**: one project per tier, a shared contracts library, the empty SQL project, configuration and secrets conventions; the `test/` layout, a shared test-helper project (fake clock, seeded random source, free-port allocator), architecture tests with the first dependency rules, coverage collection, a CI guard that fails when a test project is not executed.
+- **Content**: one project per tier, a shared contracts library, the empty SQL project, configuration and secrets conventions; observability: every executable can send its logs, traces and metrics to an OpenTelemetry collector set in its configuration (see `doc/adm/observability.md`); the `test/` layout, a shared test-helper project (fake clock, seeded random source, free-port allocator), architecture tests with the first dependency rules, coverage collection, a CI guard that fails when a test project is not executed.
 - **Done**: the CI is green, every tier starts and logs its startup; the CI turns red when an architecture rule is broken.
-- **Branches**: `chore/solution-layout`, `chore/shared-contracts`, `chore/test-infrastructure`, `feature/architecture-tests`, `chore/ci-test-guard`, `chore/coverage-reporting`, `chore/sql-project`.
+- **Branches**: `chore/solution-layout`, `feature/observability`, `chore/shared-contracts`, `chore/test-infrastructure`, `feature/architecture-tests`, `chore/ci-test-guard`, `chore/coverage-reporting`, `chore/sql-project`.
 
 #### 0.3.0 — Walking skeleton
 
@@ -279,6 +279,7 @@ Every tier communicates through the network. All ports are configurable; their d
 | Back → Very Back | to be chosen in 0.3.0 | TCP + TLS 1.3 + authenticated ECDH | servers → servers |
 | Very Back → SQL Server | 1433 | TDS | servers → servers |
 | Back → SMTP server | 587 | SMTP + STARTTLS | servers → mail server |
+| Every executable → OpenTelemetry collector (optional) | 4317 or 4318 | OTLP over gRPC or HTTP | DMZ and servers → servers |
 
 ## Risks
 

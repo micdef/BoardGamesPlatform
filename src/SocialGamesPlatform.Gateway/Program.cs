@@ -6,7 +6,9 @@
  */
 
 // Using
-// #N/A
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
+using SocialGamesPlatform.Observability;
 
 // Static using
 // #N/A
@@ -19,6 +21,12 @@
 
 // Building the host
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
+
+// Sending the telemetry to the OpenTelemetry collector, when one is configured, including the incoming HTTP and SignalR requests
+builder.AddPlatformObservability(
+    tracing => tracing.AddAspNetCoreInstrumentation(),
+    metrics => metrics.AddAspNetCoreInstrumentation());
+
 WebApplication app = builder.Build();
 
 // Exposing a health endpoint, so that a monitoring tool can check that the Gateway answers

@@ -3,6 +3,7 @@
 
   <!-- Projects -->
   <ItemGroup>
+    <ProjectReference Include="..\SocialGamesPlatform.Observability\SocialGamesPlatform.Observability.csproj" />
     <ProjectReference Include="..\SocialGamesPlatform.VeryBack.Contracts\SocialGamesPlatform.VeryBack.Contracts.csproj" />
     <ProjectReference Include="..\SocialGamesPlatform.Protocol\SocialGamesPlatform.Protocol.csproj" />
   </ItemGroup>

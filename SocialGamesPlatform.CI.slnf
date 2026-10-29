@@ -6,6 +6,7 @@
       "src\\SocialGamesPlatform.Back.Contracts\\SocialGamesPlatform.Back.Contracts.csproj",
       "src\\SocialGamesPlatform.Codes\\SocialGamesPlatform.Codes.csproj",
       "src\\SocialGamesPlatform.Games.Abstractions\\SocialGamesPlatform.Games.Abstractions.csproj",
+      "src\\SocialGamesPlatform.Observability\\SocialGamesPlatform.Observability.csproj",
       "src\\SocialGamesPlatform.Gateway\\SocialGamesPlatform.Gateway.csproj",
       "src\\SocialGamesPlatform.Gateway.Contracts\\SocialGamesPlatform.Gateway.Contracts.csproj",
       "src\\SocialGamesPlatform.Platform.Application\\SocialGamesPlatform.Platform.Application.csproj",

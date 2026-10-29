@@ -6,6 +6,9 @@
  */
 
 // Using
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
+using SocialGamesPlatform.Observability;
 using SocialGamesPlatform.Web.Components;
 
 // Static using
@@ -22,6 +25,12 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents()
     .AddInteractiveWebAssemblyComponents();
+
+// Sending the telemetry of the server part to the OpenTelemetry collector, when one is configured, including the incoming HTTP requests
+builder.AddPlatformObservability(
+    tracing => tracing.AddAspNetCoreInstrumentation(),
+    metrics => metrics.AddAspNetCoreInstrumentation());
+
 WebApplication app = builder.Build();
 
 // Setting the environment pipeline: WebAssembly debugging in development, generic error page and HSTS otherwise
