@@ -18,6 +18,7 @@
     <File Path=".github/workflows/ci.yml" />
   </Folder>
   <Folder Name="/doc/">
+    <File Path="doc/adm/configuration.md" />
     <File Path="doc/adm/observability.md" />
     <File Path="doc/adm/README.md" />
     <File Path="doc/analyse/README.md" />
