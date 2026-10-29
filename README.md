@@ -30,7 +30,8 @@ Design mock-ups of the arcade neon interface: they show the intended look, not t
 
 ```bash
 git clone <repository-url>
-dotnet build SocialGamesPlatform.slnx
+dotnet build SocialGamesPlatform.CI.slnf
+dotnet test --solution SocialGamesPlatform.CI.slnf
 ```
 
 ### Repository layout
@@ -108,7 +109,8 @@ Maquettes de l'interface en style arcade néon : elles montrent l'apparence vis�
 
 ```bash
 git clone <url-du-depot>
-dotnet build SocialGamesPlatform.slnx
+dotnet build SocialGamesPlatform.CI.slnf
+dotnet test --solution SocialGamesPlatform.CI.slnf
 ```
 
 ### Organisation du dépôt

@@ -62,5 +62,9 @@
       <Deploy />
     </Project>
   </Folder>
-  <Folder Name="/9 - Tests/" />
+  <Folder Name="/9 - Tests/">
+    <File Path="test/Directory.Build.props" />
+    <Project Path="test/SocialGamesPlatform.Architecture.Tests/SocialGamesPlatform.Architecture.Tests.csproj" />
+    <Project Path="test/SocialGamesPlatform.TestKit/SocialGamesPlatform.TestKit.csproj" />
+  </Folder>
 </Solution>

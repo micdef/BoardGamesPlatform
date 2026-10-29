@@ -1,0 +1,45 @@
+<Project>
+  <!--
+    ┌──────────────┬──────────────────────────────────────────────────────────────┐
+    │ File         │ test/Directory.Build.props                                   │
+    │ Scope        │ Every project below test/ (imported automatically)           │
+    │ Purpose      │ Shared settings of the test projects: xUnit v3 executables   │
+    │              │ on Microsoft.Testing.Platform (MTP, selected in global.json),│
+    │              │ run by "dotnet test" and the Visual Studio Test Explorer,    │
+    │              │ with Shouldly assertions and code coverage collection.       │
+    │              │ The solution-wide Directory.Build.props still applies.       │
+    └──────────────┴──────────────────────────────────────────────────────────────┘
+  -->
+
+  <!-- The solution-wide settings (framework, analyzers, warnings as errors, documentation) -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <!-- Never packaged -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!-- Test projects (name ending with ".Tests"): xUnit v3 test projects are stand-alone executables.
+       Other projects of test/ (for example the TestKit library) only get the line above. -->
+  <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('.Tests'))">
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <!-- Test framework (xunit.v3 supports MTP natively), assertions, MTP coverage and TRX report extensions;
+       xunit.runner.visualstudio is kept for the Test Explorer of Visual Studio versions that still use VSTest (harmless with MTP)
+       (versions in Directory.Packages.props) -->
+  <ItemGroup Condition="$(MSBuildProjectName.EndsWith('.Tests'))">
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" />
+  </ItemGroup>
+
+  <!-- Namespaces available in every test file -->
+  <ItemGroup Condition="$(MSBuildProjectName.EndsWith('.Tests'))">
+    <Using Include="Xunit" />
+    <Using Include="Shouldly" />
+  </ItemGroup>
+</Project>
