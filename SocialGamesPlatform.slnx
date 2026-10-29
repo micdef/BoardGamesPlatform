@@ -55,7 +55,10 @@
     <Project Path="src/SocialGamesPlatform.VeryBack.Contracts/SocialGamesPlatform.VeryBack.Contracts.csproj" />
   </Folder>
   <Folder Name="/5 - Database/">
-    <Project Path="src/SocialGamesPlatform.Database/SocialGamesPlatform.Database.sqlproj" Type="00d1a9c2-b5f0-4af3-8072-f6c62b433612" />
+    <Project Path="src/SocialGamesPlatform.Database/SocialGamesPlatform.Database.sqlproj" Id="59d553b3-bb78-4ac7-8f9f-badc162dd3ba">
+      <Build />
+      <Deploy />
+    </Project>
   </Folder>
   <Folder Name="/9 - Tests/" />
 </Solution>

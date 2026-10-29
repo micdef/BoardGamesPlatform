@@ -26,3 +26,11 @@ One folder per project. In Visual Studio, solution folders group the projects by
 - No project references the SQL project: the Very Back calls the stored procedures by name.
 - No project references a game other than itself; the Gateway references no game at all.
 - The CI builds the solution filter `SocialGamesPlatform.CI.slnf`, which lists every .NET project and leaves out the SQL project.
+
+## Building
+
+| Tool | Command | Builds the SQL project |
+|------|---------|------------------------|
+| Visual Studio | Build Solution (Ctrl+Shift+B) | Yes |
+| .NET CLI | `dotnet build SocialGamesPlatform.CI.slnf` | No |
+| .NET CLI | `dotnet build SocialGamesPlatform.slnx` | Fails (error MSB4278: the SSDT targets only exist in Visual Studio); use the solution filter instead |
