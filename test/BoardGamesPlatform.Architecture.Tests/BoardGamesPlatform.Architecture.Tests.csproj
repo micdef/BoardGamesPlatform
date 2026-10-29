@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Architecture rules of the solution: allowed project references and dependencies between layers -->
+
+  <!-- Projects: the TestKit, and every source project so that their assemblies can be analyzed -->
+  <ItemGroup>
+    <ProjectReference Include="..\BoardGamesPlatform.TestKit\BoardGamesPlatform.TestKit.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Back\BoardGamesPlatform.Back.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Back.Contracts\BoardGamesPlatform.Back.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Codes\BoardGamesPlatform.Codes.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Games.Abstractions\BoardGamesPlatform.Games.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Gateway\BoardGamesPlatform.Gateway.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Gateway.Contracts\BoardGamesPlatform.Gateway.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Observability\BoardGamesPlatform.Observability.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Platform.Application\BoardGamesPlatform.Platform.Application.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Platform.Domain\BoardGamesPlatform.Platform.Domain.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Platform.Infrastructure\BoardGamesPlatform.Platform.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Protocol\BoardGamesPlatform.Protocol.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.VeryBack\BoardGamesPlatform.VeryBack.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.VeryBack.Contracts\BoardGamesPlatform.VeryBack.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Web\BoardGamesPlatform.Web.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Web.Client\BoardGamesPlatform.Web.Client.csproj" />
+  </ItemGroup>
+
+  <!-- Packages (versions in Directory.Packages.props) -->
+  <ItemGroup>
+    <PackageReference Include="TngTech.ArchUnitNET.xUnitV3" />
+  </ItemGroup>
+
+</Project>

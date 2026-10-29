@@ -1,4 +1,4 @@
-# SocialGamesPlatform
+# BoardGamesPlatform
 
 <a href="#english">🇬🇧 English</a> | <a href="#français">🇫🇷 Français</a>
 
@@ -6,9 +6,17 @@
 
 ## English
 
-A social games platform built on .NET 10 LTS. The first game is a custom version of Battleships.
+A platform for playing board games together online, built on .NET 10 LTS. The first game is Battleships.
 
-> **Status:** project bootstrap. Scope and architecture are being defined.
+> **Status:** project bootstrap. The scope and the roadmap are defined in [doc/analyse/roadmap.md](doc/analyse/roadmap.md); no game code yet.
+
+### Preview
+
+Design mock-ups of the arcade neon interface: they show the intended look, not the finished product.
+
+![Home page: hero, games and live matches](doc/assets/mockups/home.png)
+
+![Battleships match: enemy waters, own fleet and shot log](doc/assets/mockups/battleships-match.png)
 
 ### Requirements
 
@@ -22,14 +30,15 @@ A social games platform built on .NET 10 LTS. The first game is a custom version
 
 ```bash
 git clone <repository-url>
-dotnet build SocialGamesPlatform.slnx
+dotnet build BoardGamesPlatform.CI.slnf
+dotnet test --solution BoardGamesPlatform.CI.slnf
 ```
 
 ### Repository layout
 
 | Path                       | Purpose                                                       |
 |----------------------------|---------------------------------------------------------------|
-| `SocialGamesPlatform.slnx` | Solution file                                                 |
+| `BoardGamesPlatform.slnx` | Solution file                                                 |
 | `src/`                     | Source projects                                               |
 | `test/`                    | Test projects                                                 |
 | `doc/analyse/`             | Analysis: requirements, scope, architecture, decisions        |
@@ -76,9 +85,17 @@ Michaël Defraene
 
 ## Français
 
-Une plateforme de jeux sociaux en .NET 10 LTS. Le premier jeu est une version personnalisée de la bataille navale.
+Une plateforme de jeux de société à jouer ensemble en ligne, en .NET 10 LTS. Le premier jeu est la bataille navale.
 
-> **État :** démarrage du projet. Le périmètre et l'architecture sont en cours de définition.
+> **État :** démarrage du projet. Le périmètre et la roadmap sont définis dans [doc/analyse/roadmap.md](doc/analyse/roadmap.md) (en anglais) ; pas encore de code de jeu.
+
+### Aperçu
+
+Maquettes de l'interface en style arcade néon : elles montrent l'apparence visée, pas le produit fini.
+
+![Page d'accueil : bandeau, jeux et parties en direct](doc/assets/mockups/home.png)
+
+![Partie de bataille navale : eaux ennemies, flotte du joueur et historique des tirs](doc/assets/mockups/battleships-match.png)
 
 ### Prérequis
 
@@ -92,14 +109,15 @@ Une plateforme de jeux sociaux en .NET 10 LTS. Le premier jeu est une version pe
 
 ```bash
 git clone <url-du-depot>
-dotnet build SocialGamesPlatform.slnx
+dotnet build BoardGamesPlatform.CI.slnf
+dotnet test --solution BoardGamesPlatform.CI.slnf
 ```
 
 ### Organisation du dépôt
 
 | Chemin                     | Rôle                                                                |
 |----------------------------|---------------------------------------------------------------------|
-| `SocialGamesPlatform.slnx` | Fichier de solution                                                 |
+| `BoardGamesPlatform.slnx` | Fichier de solution                                                 |
 | `src/`                     | Projets sources                                                     |
 | `test/`                    | Projets de tests                                                    |
 | `doc/analyse/`             | Analyse : besoins, périmètre, architecture, décisions               |

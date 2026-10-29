@@ -1,4 +1,4 @@
-# Contributing to SocialGamesPlatform
+# Contributing to BoardGamesPlatform
 
 This guide describes how changes reach the repository: branches, commits, pull requests, versions and releases.
 These rules apply to every contributor, human or AI assistant.
@@ -21,6 +21,7 @@ main ─────────────────────────
 | `feature/<name>` | `release/X.Y.Z`  | `release/X.Y.Z`                             | A new feature.                                       |
 | `fix/<name>`     | `release/X.Y.Z`  | `release/X.Y.Z`                             | A bug fix during the development of a version.       |
 | `docs/<name>`    | `release/X.Y.Z`  | `release/X.Y.Z`                             | Documentation only.                                  |
+| `chore/<name>`   | `release/X.Y.Z`  | `release/X.Y.Z`                             | Repository maintenance: tooling, configuration, CI.  |
 | `hotfix/<name>`  | `main`           | `main`, then `dev` and the current release  | An urgent fix on a released version.                 |
 
 Branch names are lowercase, in English, with words separated by hyphens: `feature/fleet-placement`.
@@ -44,10 +45,12 @@ It is then merged into `dev` and into the release branch in progress, otherwise 
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org) and are written in English.
 
 ```
-<type>: <summary>
+<type>(<scope>): <summary>
 
 <body: what changed and why, as a short list or paragraph>
 ```
+
+The `(<scope>)` part is optional (`docs: fix typo` is valid).
 
 | Type       | Use for                                              |
 |------------|------------------------------------------------------|
@@ -60,6 +63,19 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 | `build`    | Build system, project files, NuGet packages          |
 | `ci`       | Continuous integration workflows                     |
 | `chore`    | Repository maintenance                               |
+
+### Scopes
+
+A scope names the part of the solution a commit touches, in lowercase. It is used when the change is limited to one area.
+
+| Scope            | Use for                                                     | Example                                  |
+|------------------|-------------------------------------------------------------|------------------------------------------|
+| `release`        | Moving a version up the branches (release → dev → main)     | `chore(release): merge 0.2.0 into dev`   |
+| `<project-name>` | A change limited to one project of `src/` or `test/`, named after the project in lowercase | `feat(battleships): add fleet placement` |
+
+New scopes are added to this table when a new area of the solution is created.
+
+### Rules
 
 - The summary uses the imperative mood (`add`, not `added`), starts in lowercase, has no final period and stays under 72 characters.
 - The body explains **what** changed and **why**, not how: the diff already shows how.
@@ -77,7 +93,19 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 ### Merge strategy
 
 Pull requests are merged with a **merge commit** only. Squash and rebase merges are disabled so that the full history is kept.
-Merged branches are deleted automatically; `main` and `dev` are protected against deletion.
+Merged branches are deleted automatically.
+
+### Branch protection
+
+GitHub rulesets enforce these rules; nobody can bypass them, including the repository owner.
+
+| Rule                                   | `main`, `dev` | `release/*` |
+|----------------------------------------|:-------------:|:-----------:|
+| Pull request required                  | ✅            | ✅          |
+| `Build and test` check must pass       | ✅            | ✅          |
+| Merge commit only                      | ✅            | ✅          |
+| Force push forbidden                   | ✅            | ✅          |
+| Deletion forbidden                     | ✅            | ❌ (deleted automatically once merged into `dev`) |
 
 ### History
 
@@ -117,8 +145,17 @@ Every `0.x.y` version, with or without an `-alpha.N` / `-beta.N` suffix, is publ
 Every pull request targeting `main`, `dev` or `release/*` is built and tested by GitHub Actions ([ci.yml](.github/workflows/ci.yml)).
 A pull request with a failing build is not merged.
 
+The CI builds the projects listed in `BoardGamesPlatform.CI.slnf`, and fails when:
+
+- a `.csproj` under `src/` or `test/` is missing from `BoardGamesPlatform.slnx`, or a `.csproj` of the solution is missing from the filter ([Test-CISolutionFilter.ps1](.github/scripts/Test-CISolutionFilter.ps1)); a new project is therefore added to both files;
+- a test project runs no test.
+
+Each run publishes a `test-results` artifact: the TRX report and the Cobertura coverage report of every test project.
+The coverage measures the production code only ([CodeCoverage.config](test/CodeCoverage.config)); no minimum is required yet.
+
 ## Code and documentation
 
 - Code, comments, documentation and commit messages are written in English.
-- Every public member carries an XML documentation comment (`///`), which feeds IntelliSense and the Doxygen documentation.
+- Every member, public or private, carries an XML documentation comment (`///`), which feeds IntelliSense and the Doxygen documentation.
+- File headers, regions, documentation and code rules for C# and SQL are described in the [coding conventions](doc/dev/coding-conventions.md).
 - Analyzer and style warnings are errors: fix them, do not suppress them without a documented reason.
