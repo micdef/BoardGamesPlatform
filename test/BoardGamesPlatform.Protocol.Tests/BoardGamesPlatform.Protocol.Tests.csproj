@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Tests of the socket protocol: framing (more to come: transport, request/response correlation) -->
+
+  <!-- Projects: the protocol under test -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Protocol\BoardGamesPlatform.Protocol.csproj" />
+  </ItemGroup>
+
+</Project>
