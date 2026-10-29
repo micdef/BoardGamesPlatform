@@ -12,21 +12,23 @@
 #---------------------------------------------------------------------------
 # Project (doc/ must exist: Doxygen creates only the last level of OUTPUT_DIRECTORY)
 #---------------------------------------------------------------------------
-PROJECT_NAME           = "SocialGamesPlatform"
-PROJECT_BRIEF          = "Social games platform built on .NET 10"
+PROJECT_NAME           = "BoardGamesPlatform"
+PROJECT_BRIEF          = "Board games played together online, built on .NET 10"
 OUTPUT_DIRECTORY       = doc/dev
 OUTPUT_LANGUAGE        = English
 
 #---------------------------------------------------------------------------
-# Input: the bilingual README is the main page, followed by the contribution guide and the changelog;
+# Input: the bilingual README is the main page, followed by the contribution guide, the changelog, the roadmap and the coding conventions;
 # the C# sources of src/ are documented (tests are not)
 #---------------------------------------------------------------------------
-INPUT                  = README.md CONTRIBUTING.md CHANGELOG.md src
+INPUT                  = README.md CONTRIBUTING.md CHANGELOG.md doc/analyse/roadmap.md doc/dev/coding-conventions.md src
 USE_MDFILE_AS_MAINPAGE = README.md
 FILE_PATTERNS          = *.cs
 RECURSIVE              = YES
 EXCLUDE_PATTERNS       = */bin/* */obj/* */Migrations/*
 INPUT_ENCODING         = UTF-8
+# Images used by the Markdown pages (copied into the HTML output)
+IMAGE_PATH             = doc/assets/mockups
 
 #---------------------------------------------------------------------------
 # Extraction: only documented members are published

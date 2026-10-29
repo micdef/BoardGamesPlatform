@@ -19,7 +19,7 @@
   <!-- Solution identity -->
   <PropertyGroup>
     <Authors>Michaël Defraene</Authors>
-    <Product>SocialGamesPlatform</Product>
+    <Product>BoardGamesPlatform</Product>
     <Copyright>© Michaël Defraene</Copyright>
     <NeutralLanguage>en</NeutralLanguage>
   </PropertyGroup>

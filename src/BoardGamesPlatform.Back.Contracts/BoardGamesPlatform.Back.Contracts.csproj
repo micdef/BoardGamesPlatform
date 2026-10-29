@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Contract exposed by the Back to the Gateway: socket messages -->
+
+  <!-- Projects -->
+  <ItemGroup>
+    <ProjectReference Include="..\BoardGamesPlatform.Codes\BoardGamesPlatform.Codes.csproj" />
+  </ItemGroup>
+
+</Project>
