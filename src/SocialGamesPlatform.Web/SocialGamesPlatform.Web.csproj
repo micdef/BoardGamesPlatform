@@ -8,11 +8,13 @@
 
   <!-- Projects -->
   <ItemGroup>
+    <ProjectReference Include="..\SocialGamesPlatform.Observability\SocialGamesPlatform.Observability.csproj" />
     <ProjectReference Include="..\SocialGamesPlatform.Web.Client\SocialGamesPlatform.Web.Client.csproj" />
   </ItemGroup>
 
   <!-- Packages (versions in Directory.Packages.props) -->
   <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" />
   </ItemGroup>
 

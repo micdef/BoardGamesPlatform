@@ -17,6 +17,7 @@
     <File Path=".github/workflows/ci.yml" />
   </Folder>
   <Folder Name="/doc/">
+    <File Path="doc/adm/observability.md" />
     <File Path="doc/adm/README.md" />
     <File Path="doc/analyse/README.md" />
     <File Path="doc/analyse/roadmap.md" />
@@ -27,6 +28,7 @@
 
   <Folder Name="/0 - Shared/">
     <Project Path="src/SocialGamesPlatform.Codes/SocialGamesPlatform.Codes.csproj" />
+    <Project Path="src/SocialGamesPlatform.Observability/SocialGamesPlatform.Observability.csproj" />
     <Project Path="src/SocialGamesPlatform.Protocol/SocialGamesPlatform.Protocol.csproj" />
   </Folder>
   <Folder Name="/1 - Front-End/">

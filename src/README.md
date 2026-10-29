@@ -6,6 +6,7 @@ One folder per project. In Visual Studio, solution folders group the projects by
 |-----------------|---------|------|---------|
 | 0 - Shared | `SocialGamesPlatform.Codes` | Library | Language-neutral codes (errors, statuses, events) that the fronts translate |
 | 0 - Shared | `SocialGamesPlatform.Protocol` | Library | Socket protocol of the Gateway ↔ Back and Back ↔ Very Back links |
+| 0 - Shared | `SocialGamesPlatform.Observability` | Library | Sends the logs, traces and metrics of every executable to an OpenTelemetry collector, when one is configured |
 | 1 - Front-End | `SocialGamesPlatform.Web` | Blazor (server) | Website, server part of the Blazor Auto application, hosted on IIS |
 | 1 - Front-End | `SocialGamesPlatform.Web.Client` | Blazor (WebAssembly) | Website, part run in the player's browser |
 | 2 - Gateway | `SocialGamesPlatform.Gateway` | ASP.NET Core | Single entry point of the fronts: SignalR hub, authentication, validation, rate limiting |

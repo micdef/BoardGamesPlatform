@@ -6,6 +6,7 @@
  */
 
 // Using
+using SocialGamesPlatform.Observability;
 using SocialGamesPlatform.VeryBack.Services;
 
 // Static using
@@ -20,6 +21,9 @@ using SocialGamesPlatform.VeryBack.Services;
 // Building the host
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddHostedService<StartupService>();
+
+// Sending the telemetry to the OpenTelemetry collector, when one is configured
+builder.AddPlatformObservability();
 IHost host = builder.Build();
 
 // Running the host until it is stopped

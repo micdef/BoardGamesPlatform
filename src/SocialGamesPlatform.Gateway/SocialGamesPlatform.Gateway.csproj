@@ -3,9 +3,15 @@
 
   <!-- Projects -->
   <ItemGroup>
+    <ProjectReference Include="..\SocialGamesPlatform.Observability\SocialGamesPlatform.Observability.csproj" />
     <ProjectReference Include="..\SocialGamesPlatform.Gateway.Contracts\SocialGamesPlatform.Gateway.Contracts.csproj" />
     <ProjectReference Include="..\SocialGamesPlatform.Back.Contracts\SocialGamesPlatform.Back.Contracts.csproj" />
     <ProjectReference Include="..\SocialGamesPlatform.Protocol\SocialGamesPlatform.Protocol.csproj" />
+  </ItemGroup>
+
+  <!-- Packages (versions in Directory.Packages.props) -->
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
   </ItemGroup>
 
 </Project>

@@ -7,6 +7,7 @@
 
 // Using
 using SocialGamesPlatform.Back.Services;
+using SocialGamesPlatform.Observability;
 
 // Static using
 // #N/A
@@ -20,6 +21,9 @@ using SocialGamesPlatform.Back.Services;
 // Building the host
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddHostedService<StartupService>();
+
+// Sending the telemetry to the OpenTelemetry collector, when one is configured
+builder.AddPlatformObservability();
 IHost host = builder.Build();
 
 // Running the host until it is stopped
