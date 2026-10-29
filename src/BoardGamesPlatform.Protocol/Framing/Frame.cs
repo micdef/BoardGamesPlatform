@@ -33,7 +33,10 @@ public sealed class Frame
 
     #region Constants
 
-    // #N/A
+    /// <summary>
+    /// Correlation identifier reserved for the frames that answer no request (for example the heartbeat of 0.4.0); a request never uses it
+    /// </summary>
+    public const ulong NoCorrelation = 0;
 
     #endregion
 

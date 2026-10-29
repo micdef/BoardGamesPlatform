@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Socket protocol, request/response correlation: a request client that sends several requests on one connection and pairs each response with its request (identifiers 1, 2, 3…; 0 is reserved), and a request server that answers them, several at a time up to a limit per connection. Any close of the connection fails the pending requests; a response to an unknown identifier closes the link; a canceled request never interrupts a frame being written.
+
 - Socket protocol, transport: interfaces of a connection (a byte stream), a listener and a connector, so that TLS can wrap the stream in 0.5.0; their plain TCP implementation (development only), with the Nagle delay disabled; a listener on port 0 gets its port from the system. First loopback integration tests.
 - Database tooling (`tools/database/Deploy-TestDatabase.ps1`): builds the SQL project into a DACPAC and deploys it to a throwaway database on the local SQL Server, dropping and recreating it; refuses any database name that does not start with `DEV_` or `TEST_` (upper case), before any build or connection.
 - CI: a separate job builds the SQL project, in its original format, with the MSBuild of Visual Studio of the runner image, and publishes the DACPAC as the `database-dacpac` artifact.
