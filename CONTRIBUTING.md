@@ -29,8 +29,10 @@ Branch names are lowercase, in English, with words separated by hyphens: `featur
 
 1. Create `release/X.Y.Z` from `dev`.
 2. Create one branch per feature or fix from `release/X.Y.Z`, then open a pull request back into it.
-3. When the version is complete, open a pull request from `release/X.Y.Z` into `dev` and validate it there.
-4. Open a pull request from `dev` into `main`, merge it, then tag the merge commit (see the Releases section below).
+3. When the version is complete, finalize its changelog, open a pull request from `release/X.Y.Z` into `dev` and validate it there.
+4. Open a pull request from `dev` into `main`, merge it, then tag the merge commit.
+
+The Releases section below details steps 3 and 4.
 
 ### Hotfixes
 
@@ -100,13 +102,15 @@ Before `1.0.0`, versions are `0.Y.Z` and the software is not considered stable. 
 
 ## Releases
 
-1. Merge `dev` into `main` through a pull request.
-2. Move the `[Unreleased]` entries of [CHANGELOG.md](CHANGELOG.md) under the new version number.
-3. Create an annotated tag on the merge commit: `git tag -a v1.0.0 -m "Release 1.0.0"`, then push it.
-4. Publish a GitHub release from the tag, using the changelog entries as release notes.
+1. On the release branch, move the `[Unreleased]` entries of [CHANGELOG.md](CHANGELOG.md) under the new version number and date, through a `docs/release-X.Y.Z` pull request.
+   The changelog is finalized before the version leaves its branch, because `dev` and `main` only accept pull requests.
+2. Merge `release/X.Y.Z` into `dev` through a pull request.
+3. Merge `dev` into `main` through a pull request.
+4. Create an annotated tag on the merge commit of `main`: `git tag -a v1.0.0 -m "Release 1.0.0"`, then push it.
+5. Publish a GitHub release from the tag, using the changelog entries as release notes.
 
 Downloadable packages are published from version `1.0.0` onward.
-Pre-release tags (`0.x.y-alpha.N`, `0.x.y-beta.N`) are published as GitHub pre-releases without packages.
+Every `0.x.y` version, with or without an `-alpha.N` / `-beta.N` suffix, is published as a GitHub pre-release without packages.
 
 ## Continuous integration
 
