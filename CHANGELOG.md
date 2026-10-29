@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README preview: mock-ups of the home page and of a Battleships match.
 - Solution layout: 15 projects (shared libraries, Blazor Auto website, Gateway, Back platform modules and host, Very Back, SQL project), grouped by tier in solution folders; every host starts and logs its startup.
 - CI solution filter that builds every .NET project and leaves out the SQL project.
+- Test infrastructure: xUnit v3 on Microsoft.Testing.Platform (selected in `global.json`), Shouldly, coverage and TRX extensions shared by every `*.Tests` project; a TestKit library; architecture tests on the project references and, with ArchUnitNET, on the dependencies between layers.
+- CI: `dotnet format --verify-no-changes` checks the `.editorconfig` rules the build does not enforce (line endings, naming).
 - Observability: the Back, the Very Back, the Gateway and the website write their logs to the system log (Windows Event Log or systemd journal), and can send their logs, traces and metrics to an OpenTelemetry collector configured in their settings; nothing is sent without one (`doc/adm/observability.md`).
 
 ### Changed

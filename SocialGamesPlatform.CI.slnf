@@ -16,7 +16,9 @@
       "src\\SocialGamesPlatform.VeryBack\\SocialGamesPlatform.VeryBack.csproj",
       "src\\SocialGamesPlatform.VeryBack.Contracts\\SocialGamesPlatform.VeryBack.Contracts.csproj",
       "src\\SocialGamesPlatform.Web\\SocialGamesPlatform.Web.csproj",
-      "src\\SocialGamesPlatform.Web.Client\\SocialGamesPlatform.Web.Client.csproj"
+      "src\\SocialGamesPlatform.Web.Client\\SocialGamesPlatform.Web.Client.csproj",
+      "test\\SocialGamesPlatform.Architecture.Tests\\SocialGamesPlatform.Architecture.Tests.csproj",
+      "test\\SocialGamesPlatform.TestKit\\SocialGamesPlatform.TestKit.csproj"
     ]
   }
 }

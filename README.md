@@ -6,7 +6,7 @@
 
 ## English
 
-A social games platform built on .NET 10 LTS. The first game is a custom version of Battleships.
+A platform for playing board games together online, built on .NET 10 LTS. The first game is Battleships.
 
 > **Status:** project bootstrap. The scope and the roadmap are defined in [doc/analyse/roadmap.md](doc/analyse/roadmap.md); no game code yet.
 
@@ -30,7 +30,8 @@ Design mock-ups of the arcade neon interface: they show the intended look, not t
 
 ```bash
 git clone <repository-url>
-dotnet build SocialGamesPlatform.slnx
+dotnet build SocialGamesPlatform.CI.slnf
+dotnet test --solution SocialGamesPlatform.CI.slnf
 ```
 
 ### Repository layout
@@ -84,7 +85,7 @@ Michaël Defraene
 
 ## Français
 
-Une plateforme de jeux sociaux en .NET 10 LTS. Le premier jeu est une version personnalisée de la bataille navale.
+Une plateforme de jeux de société à jouer ensemble en ligne, en .NET 10 LTS. Le premier jeu est la bataille navale.
 
 > **État :** démarrage du projet. Le périmètre et la roadmap sont définis dans [doc/analyse/roadmap.md](doc/analyse/roadmap.md) (en anglais) ; pas encore de code de jeu.
 
@@ -108,7 +109,8 @@ Maquettes de l'interface en style arcade néon : elles montrent l'apparence vis�
 
 ```bash
 git clone <url-du-depot>
-dotnet build SocialGamesPlatform.slnx
+dotnet build SocialGamesPlatform.CI.slnf
+dotnet test --solution SocialGamesPlatform.CI.slnf
 ```
 
 ### Organisation du dépôt
