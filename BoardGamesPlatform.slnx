@@ -64,6 +64,7 @@
     </Project>
   </Folder>
   <Folder Name="/9 - Tests/">
+    <File Path="test/CodeCoverage.config" />
     <File Path="test/Directory.Build.props" />
     <Project Path="test/BoardGamesPlatform.Architecture.Tests/BoardGamesPlatform.Architecture.Tests.csproj" />
     <Project Path="test/BoardGamesPlatform.TestKit/BoardGamesPlatform.TestKit.csproj" />
