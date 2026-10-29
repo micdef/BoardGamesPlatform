@@ -57,6 +57,22 @@ jobs:
       - name: Check code style (.editorconfig)
         run: dotnet format BoardGamesPlatform.CI.slnf --verify-no-changes --no-restore
 
-      # After "--", the minimum applies to each test project: a test project that runs no test fails the run
+      # After "--", every option applies to each test project: a test project that runs no test fails the run.
+      # Each test project writes its TRX report and its Cobertura coverage report (unique file name) to TestResults/;
+      # the coverage measures the production code only (test/CodeCoverage.config). No threshold yet.
       - name: Test
-        run: dotnet test --solution BoardGamesPlatform.CI.slnf --configuration Release --no-build -- --minimum-expected-tests 1
+        run: >-
+          dotnet test --solution BoardGamesPlatform.CI.slnf --configuration Release --no-build
+          --results-directory TestResults
+          -- --minimum-expected-tests 1
+          --report-trx
+          --coverage --coverage-output-format cobertura --coverage-settings test/CodeCoverage.config
+
+      # Published even when the tests fail, to read the TRX reports
+      - name: Publish the test and coverage reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: TestResults/
+          if-no-files-found: error
