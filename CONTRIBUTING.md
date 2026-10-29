@@ -44,10 +44,12 @@ It is then merged into `dev` and into the release branch in progress, otherwise 
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org) and are written in English.
 
 ```
-<type>: <summary>
+<type>(<scope>): <summary>
 
 <body: what changed and why, as a short list or paragraph>
 ```
+
+The `(<scope>)` part is optional (`docs: fix typo` is valid).
 
 | Type       | Use for                                              |
 |------------|------------------------------------------------------|
@@ -60,6 +62,19 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 | `build`    | Build system, project files, NuGet packages          |
 | `ci`       | Continuous integration workflows                     |
 | `chore`    | Repository maintenance                               |
+
+### Scopes
+
+A scope names the part of the solution a commit touches, in lowercase. It is used when the change is limited to one area.
+
+| Scope            | Use for                                                     | Example                                  |
+|------------------|-------------------------------------------------------------|------------------------------------------|
+| `release`        | Moving a version up the branches (release → dev → main)     | `chore(release): merge 0.2.0 into dev`   |
+| `<project-name>` | A change limited to one project of `src/` or `test/`, named after the project in lowercase | `feat(battleships): add fleet placement` |
+
+New scopes are added to this table when a new area of the solution is created.
+
+### Rules
 
 - The summary uses the imperative mood (`add`, not `added`), starts in lowercase, has no final period and stays under 72 characters.
 - The body explains **what** changed and **why**, not how: the diff already shows how.
@@ -77,7 +92,19 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 ### Merge strategy
 
 Pull requests are merged with a **merge commit** only. Squash and rebase merges are disabled so that the full history is kept.
-Merged branches are deleted automatically; `main` and `dev` are protected against deletion.
+Merged branches are deleted automatically.
+
+### Branch protection
+
+GitHub rulesets enforce these rules; nobody can bypass them, including the repository owner.
+
+| Rule                                   | `main`, `dev` | `release/*` |
+|----------------------------------------|:-------------:|:-----------:|
+| Pull request required                  | ✅            | ✅          |
+| `Build and test` check must pass       | ✅            | ✅          |
+| Merge commit only                      | ✅            | ✅          |
+| Force push forbidden                   | ✅            | ✅          |
+| Deletion forbidden                     | ✅            | ❌ (deleted automatically once merged into `dev`) |
 
 ### History
 

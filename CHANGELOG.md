@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Commit scopes (`release`, project names) and branch protection rules in the contribution guide.
+
 ## [0.1.0] - 2026-10-29
 
 Repository bootstrap: no game code yet.
