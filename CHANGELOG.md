@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-29
+
+Repository bootstrap: no game code yet.
+
 ### Added
 
 - Solution baseline: .NET 10 SDK, central package management, Roslynator analyzers, build-time code style.
@@ -15,3 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bilingual README (English and French) and PolyForm Strict 1.0.0 license.
 - Contribution guide describing the branching model, commit and pull request conventions, versioning and releases.
 - Continuous integration workflow building and testing every pull request.
+
+[Unreleased]: https://github.com/micdef/SocialGamesPlatform/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/micdef/SocialGamesPlatform/releases/tag/v0.1.0
