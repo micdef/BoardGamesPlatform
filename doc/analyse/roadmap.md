@@ -59,7 +59,7 @@ Other UIs   ┘
 
 #### 0.2.0 — Solution skeleton and test infrastructure
 
-- **Content**: one project per tier, a shared contracts library, the empty SQL project, configuration and secrets conventions; observability: every executable can send its logs, traces and metrics to an OpenTelemetry collector set in its configuration (see `doc/adm/observability.md`); the `test/` layout, a shared test-helper project (fake clock, seeded random source, free-port allocator), architecture tests with the first dependency rules, coverage collection, a CI guard that fails when a test project is not executed.
+- **Content**: one project per tier, a shared contracts library, the empty SQL project, configuration and secrets conventions; observability: every executable writes its logs to the system log (Windows Event Log or systemd journal) and can send its logs, traces and metrics to an OpenTelemetry collector set in its configuration (see `doc/adm/observability.md`); the `test/` layout, a shared test-helper project (fake clock, seeded random source, free-port allocator), architecture tests with the first dependency rules, coverage collection, a CI guard that fails when a test project is not executed.
 - **Done**: the CI is green, every tier starts and logs its startup; the CI turns red when an architecture rule is broken.
 - **Branches**: `chore/solution-layout`, `feature/observability`, `chore/shared-contracts`, `chore/test-infrastructure`, `feature/architecture-tests`, `chore/ci-test-guard`, `chore/coverage-reporting`, `chore/sql-project`.
 
@@ -228,7 +228,7 @@ An AI player goes through the same contract as a human: it receives the same per
 
 #### 0.25.0 — Native installation
 
-- **Content**: installation package or PowerShell scripts (IIS site, Windows services, systemd units), certificate and key provisioning, final network flow matrix, acceptance environment.
+- **Content**: installation package or PowerShell scripts, **run as administrator** (IIS site, Windows services, systemd units, one Windows Event Log source per executable), certificate and key provisioning, final network flow matrix, acceptance environment.
 - **Done**: a clean machine is installed from the package alone.
 - **Tests**: installation smoke test on a clean machine; the Back and the Very Back run on Linux at least once in acceptance.
 - **Branches**: `feature/installation-package`, `chore/systemd-units`, `chore/iis-deployment`, `docs/administrator-installation-guide`.

@@ -7,9 +7,11 @@
 
 // Using
 using System.Reflection;
+using System.Runtime.Versioning;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
@@ -31,8 +33,9 @@ namespace SocialGamesPlatform.Observability;
 /// <remarks>
 /// <para><b>Purpose:</b> one single place that decides how every executable of the platform (Back, Very Back, Gateway, website) reports
 /// its logs, traces and metrics, so that a collector can be plugged in by configuration only.</para>
-/// <para><b>Behavior:</b> reads the "Observability" configuration section. Without a collector address, it does nothing. With one, it adds the
-/// OpenTelemetry providers, describes the executable (name, version, environment, machine) and exports the three signals to the collector.</para>
+/// <para><b>Behavior:</b> reads the "Observability" configuration section. The logs always go to the system log of the machine (Windows Event Log
+/// or systemd journal). With a collector address, it also adds the OpenTelemetry providers, describes the executable (name, version, environment,
+/// machine) and exports the three signals to the collector.</para>
 /// </remarks>
 public static class ObservabilityExtensions
 {
@@ -111,6 +114,49 @@ public static class ObservabilityExtensions
     #region Privates
 
     /// <summary>
+    /// Method used to write the logs to the system log of the machine
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> keeps a local record of every executable in the tool the administrator already uses (Event Viewer, journalctl),
+    /// also when no collector is configured or when the collector is down.</para>
+    /// <para><b>Behavior:</b> on Windows, the logs go to the Application log of the Event Log, under one source per executable (named after the
+    /// service); only an administrator can create that source, which the installer does. On Linux, when the executable runs as a systemd unit,
+    /// the console output is formatted for the systemd journal, so that journalctl knows the level of each entry. The levels written are set by
+    /// the "Logging:EventLog:LogLevel" and "Logging:Console:LogLevel" settings.</para>
+    /// </remarks>
+    /// <param name="builder">[Cannot be null] Builder of the host</param>
+    /// <param name="serviceName">[Cannot be null] Name of the executable, used as the Event Log source</param>
+    private static void ConfigureSystemLogs(IHostApplicationBuilder builder, string serviceName)
+    {
+        // Windows: Application log of the Event Log, one source per executable
+        if (OperatingSystem.IsWindows())
+            AddWindowsEventLog(builder, serviceName);
+
+        // Linux: console formatted for the systemd journal (only when the executable runs as a systemd unit)
+        if (OperatingSystem.IsLinux())
+            builder.Services.AddSystemd();
+    }
+
+    /// <summary>
+    /// Method used to write the logs to the Application log of the Windows Event Log, under the source of the executable
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> isolates the Windows-only Event Log settings, so that the compiler checks they are never reached on another system.</para>
+    /// </remarks>
+    /// <param name="builder">[Cannot be null] Builder of the host</param>
+    /// <param name="serviceName">[Cannot be null] Name of the executable, used as the Event Log source</param>
+    [SupportedOSPlatform("windows")]
+    private static void AddWindowsEventLog(IHostApplicationBuilder builder, string serviceName)
+    {
+        // Setting the log and the source
+        builder.Logging.AddEventLog(settings =>
+        {
+            settings.LogName = "Application";
+            settings.SourceName = serviceName;
+        });
+    }
+
+    /// <summary>
     /// Method used to compute the address of the collector for one signal
     /// </summary>
     /// <remarks>
@@ -160,11 +206,12 @@ public static class ObservabilityExtensions
     #region Publics
 
     /// <summary>
-    /// Method used to send the logs, traces and metrics of the executable to the configured OpenTelemetry collector
+    /// Method used to write the logs to the system log of the machine, and to send the logs, traces and metrics to the configured OpenTelemetry collector
     /// </summary>
     /// <remarks>
     /// <para><b>Purpose:</b> called once by every executable while it builds its host.</para>
-    /// <para><b>Behavior:</b> without "Observability:OtlpEndpoint", nothing is added and the local logs stay as they are. With it, the executable is
+    /// <para><b>Behavior:</b> the logs always go to the system log of the machine (Windows Event Log or systemd journal), in addition to the console.
+    /// Without "Observability:OtlpEndpoint", nothing else is added. With it, the executable is
     /// described by its name (setting "Observability:ServiceName", else its application name), its version, its environment and its machine; HTTP
     /// client calls, the .NET runtime and the platform's own sources are instrumented, plus whatever the caller adds (for example ASP.NET Core).</para>
     /// </remarks>
@@ -173,7 +220,7 @@ public static class ObservabilityExtensions
     /// <param name="configureMetrics">[Can be null] Extra metric instrumentation of the caller</param>
     /// <returns>
     /// True  ==> A collector is configured and the telemetry is sent to it<br/>
-    /// False ==> No collector is configured; nothing was added
+    /// False ==> No collector is configured; only the system log was added
     /// </returns>
     /// <exception cref="ArgumentNullException">If the builder is null</exception>
     /// <exception cref="InvalidOperationException">If the configured collector address is not an absolute http or https address</exception>
@@ -188,7 +235,13 @@ public static class ObservabilityExtensions
         ObservabilityOptions options = new ObservabilityOptions();
         builder.Configuration.GetSection(ObservabilityOptions.SectionName).Bind(options);
 
-        // Doing nothing when no collector is configured
+        // Naming the executable, for the system log and for the collector
+        string serviceName = string.IsNullOrWhiteSpace(options.ServiceName) ? builder.Environment.ApplicationName : options.ServiceName;
+
+        // Writing the logs to the system log of the machine, whether a collector is configured or not
+        ConfigureSystemLogs(builder, serviceName);
+
+        // Doing nothing more when no collector is configured
         if (string.IsNullOrWhiteSpace(options.OtlpEndpoint))
         {
             // Function's return
@@ -203,7 +256,6 @@ public static class ObservabilityExtensions
         }
 
         // Describing the executable: one unique identifier per running instance, the machine in host.name
-        string serviceName = string.IsNullOrWhiteSpace(options.ServiceName) ? builder.Environment.ApplicationName : options.ServiceName;
         string serviceVersion = Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown";
         Dictionary<string, object> attributes = new Dictionary<string, object>
         {

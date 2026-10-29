@@ -79,7 +79,7 @@ public sealed class ObservabilityOptions
     public OtlpTransport OtlpProtocol { get; set; } = OtlpTransport.Grpc;
 
     /// <summary>
-    /// Name under which the executable appears in the collector; empty to use the application name of its host (the project name by default)
+    /// Name under which the executable appears in the collector and as its Windows Event Log source; empty to use the application name of its host (the project name by default)
     /// </summary>
     public string? ServiceName { get; set; }
 

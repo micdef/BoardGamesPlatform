@@ -1,7 +1,23 @@
 # Observability
 
-Every executable of the platform can send its **logs, traces and metrics** to an [OpenTelemetry](https://opentelemetry.io) collector.
-Nothing is sent until a collector is configured: without it, each executable keeps its usual local logs.
+Every executable of the platform writes its logs to the **system log of the machine**, and can also send its **logs, traces and metrics** to an [OpenTelemetry](https://opentelemetry.io) collector.
+Nothing is sent to a collector until one is configured. Every log entry goes to all its destinations at the same time: when the collector is down, the system log still has everything.
+
+## System log
+
+| System | Destination | How to read it |
+|--------|-------------|----------------|
+| Windows | **Application** log of the Event Log, one source per executable (named after the executable, for example `SocialGamesPlatform.Back`) | Event Viewer › Windows Logs › Application, filtered on the source |
+| Linux | **systemd journal**, when the executable runs as a systemd unit: its console output is formatted so that the journal knows the level of each entry | `journalctl -u <unit>`, for example `journalctl -u socialgamesplatform-back -p warning` |
+
+- **Windows Event Log source**: only an administrator can create it. The installer, which runs as administrator, creates one source per executable. Without its source, an executable starts and runs normally, but writes nothing to the Event Log.
+  To create a source by hand, in an administrator PowerShell:
+
+  ```powershell
+  [System.Diagnostics.EventLog]::CreateEventSource('SocialGamesPlatform.Back', 'Application')
+  ```
+
+- **Levels**: `Logging:EventLog:LogLevel:Default` sets what goes to the Event Log (`Information` in the delivered settings; .NET writes only `Warning` and above when it is not set). The journal receives what the console receives, set by `Logging:LogLevel`.
 
 ## Executables concerned
 
@@ -31,7 +47,7 @@ Each executable reads the `Observability` section of its `appsettings.json`:
 |---------|--------|---------|
 | `OtlpEndpoint` | Empty, or an absolute `http` or `https` address | Address of the collector. **Empty: nothing is sent.** Any other value (for example `localhost:4317` without a scheme) stops the executable at startup with an explicit error. |
 | `OtlpProtocol` | `Grpc` (default) or `HttpProtobuf` | Protocol used to reach the collector. With `HttpProtobuf`, `v1/logs`, `v1/traces` and `v1/metrics` are appended to the address, which may itself contain a path (for example `http://proxy.lan/otel`). Any other text stops the executable at startup. |
-| `ServiceName` | Empty, or a name | Name of the executable in the collector. Empty: the project name, for example `SocialGamesPlatform.Back`. |
+| `ServiceName` | Empty, or a name | Name of the executable in the collector and its Windows Event Log source. Empty: the project name, for example `SocialGamesPlatform.Back`. |
 | `IncludeScopes` | `false` (default) or `true` | Also sends the logging scopes, for example the request path and the connection of ASP.NET Core. |
 
 The same settings can be given as environment variables, which is convenient for a Windows service, a systemd unit or a container:
