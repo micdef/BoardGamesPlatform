@@ -17,6 +17,10 @@
     <File Path=".github/scripts/Test-CISolutionFilter.ps1" />
     <File Path=".github/workflows/ci.yml" />
   </Folder>
+  <Folder Name="/tools/">
+    <File Path="tools/database/Deploy-TestDatabase.ps1" />
+    <File Path="tools/database/README.md" />
+  </Folder>
   <Folder Name="/doc/">
     <File Path="doc/adm/configuration.md" />
     <File Path="doc/adm/observability.md" />

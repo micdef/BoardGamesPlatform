@@ -67,7 +67,7 @@ Other UIs   ┘
 
 - **Content**: a minimal socket protocol on plain TCP: a transport interface that hands over a byte stream (TLS wraps it in 0.5.0), frames with a length prefix, a correlation identifier, a JSON payload and a maximum size, several requests in flight on one connection [SEC]; the Back's client of the Very Back; a `Ping` stored procedure and a minimal application SQL user allowed to execute it only [SEC]; the SignalR hub of the gateway; a Blazor page. The ports of each link become configurable (defaults in the network flows below); every listener binds the loopback address unless configured otherwise. Development-only version: never deployed without TLS.
 - **Done**: a button on a Blazor page displays the SQL Server time, obtained through the five tiers; an end-to-end test proves it. In the CI, the end-to-end test runs against a fake procedure executor; its variant against the real SQL Server runs locally, under the SQL gate.
-- **Tests**: framing unit tests, a first loopback integration test, a first end-to-end test, a first SQL test (`Ping` and permissions) with the DACPAC test-deployment script. Network tests never pick a "free" port in advance, because another process can take it between the check and the use: an in-process listener binds port 0 and exposes the port given by the system; a free-port helper in the TestKit is only added if the end-to-end tests start the tiers as separate processes. Check whether the CI can build the SQL project as it is (original format, with the Visual Studio build tools of the CI runner); otherwise the local SQL gate applies (see the test strategy).
+- **Tests**: framing unit tests, a first loopback integration test, a first end-to-end test, a first SQL test (`Ping` and permissions) with the DACPAC test-deployment script. Network tests never pick a "free" port in advance, because another process can take it between the check and the use: an in-process listener binds port 0 and exposes the port given by the system; a free-port helper in the TestKit is only added if the end-to-end tests start the tiers as separate processes. The CI builds the SQL project as it is, in a separate job (original format, MSBuild of the Visual Studio of the runner image; checked in 0.3.0).
 - **Branches**, in order: `docs/ports-and-wire-format`, `chore/sql-ci-check`, `feature/minimal-frame-protocol`, `feature/transport-interface-tcp`, `chore/sql-test-deploy-script`, `feature/sql-ping-procedure`, `feature/protocol-request-response`, `feature/very-back-ping`, `feature/back-very-back-link`, `feature/back-gateway-link`, `feature/signalr-hub-ping`, `feature/blazor-ping-page`, `feature/e2e-test-host`. The deployment script of this version already refuses any database without the `DEV_` or `TEST_` prefix; 0.7.0 extends it.
 
 #### 0.4.0 — Robust socket protocol [SEC]
@@ -265,7 +265,7 @@ If time runs short, these versions can move to 1.1 without affecting the core: *
 | UI | Blazor component tests | 0.15.0 |
 
 - Test projects live in `test/` and all run in the CI; a CI guard fails when one is missing.
-- **SQL project outside the CI**: a PowerShell script builds the `.sqlproj` into a DACPAC and deploys it to a throwaway `TEST_` database. The SQL tests are a normal .NET test project. Without a SQL Server they are reported as *skipped*, never as passed. Running them locally is **mandatory before every `release/X.Y.Z` → `dev` merge**. A SQL Server container may be used **in the CI only**, if the CI can build the DACPAC (checked in 0.3.0).
+- **SQL project in the CI, in its original format**: a separate CI job builds the `.sqlproj` into a DACPAC with the MSBuild of Visual Studio (checked in 0.3.0); `dotnet build` cannot. Locally, `tools/database/Deploy-TestDatabase.ps1` builds it and deploys it to a throwaway `DEV_` or `TEST_` database. The SQL tests are a normal .NET test project. Without a SQL Server they are reported as *skipped*, never as passed. Running them locally is **mandatory before every `release/X.Y.Z` → `dev` merge**. A SQL Server container may be used **in the CI only**, to run the SQL tests there too: decided with the first SQL tests.
 - Slow simulations are tagged and run in a separate CI job; end-to-end tests wait for events, never for fixed delays.
 
 ## Network flows
@@ -288,7 +288,7 @@ Every tier communicates through the network. All ports are configurable; the def
 | A fragile custom protocol (framing, correlation, partial reads) | 0.3.0 (minimal), 0.4.0 (fuzzing, limits, reconnection) |
 | A design error in the handshake | 0.6.0: written threat model, test vectors, standard primitives only |
 | Security added late breaks the architecture | Transport interface in 0.3.0, security layers plugged in 0.5.0 and 0.6.0 |
-| SQL tests not run because the SQL project is outside the CI | Test-deployment script, explicit *skipped* status, mandatory local gate before each release merge |
+| SQL tests not run because no SQL Server is available in the CI | Test-deployment script, explicit *skipped* status, mandatory local gate before each release merge |
 | Drift from cross-platform code | Back and Very Back run on Linux in acceptance (0.25.0) |
 | Hidden information leaks to a client or a spectator | View tests in 0.13.0; server-only models never sent to the browser |
 | Scope creep | Done criteria per version; slack versions movable to 1.1 |
@@ -308,7 +308,7 @@ Every tier communicates through the network. All ports are configurable; the def
 | Real time | SignalR, through the gateway, for every front including a future WPF client |
 | Identity | Opaque session token verified by the Back; no JWT |
 | Forms | InteractiveServer render mode, full validation, revalidated by the gateway and the Back |
-| Database | SQL Server only until 1.0.0; the SQL project keeps its original format (DACPAC, opened by Visual Studio 2026) and is never converted to the SDK style; outside the CI unless the CI can build it as it is |
+| Database | SQL Server only until 1.0.0; the SQL project keeps its original format (DACPAC, opened by Visual Studio 2026) and is never converted to the SDK style; built by a separate CI job with the MSBuild of Visual Studio |
 | Development databases | `DEV_` and `ACC_` rebuilt freely until the first beta; no migration scripts before then |
 | Match history | Every move recorded; training logs pseudonymized |
 | Spectators | Public view: the match is visible, the fleets never are |
