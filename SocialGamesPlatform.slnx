@@ -9,4 +9,12 @@
     <File Path="global.json" />
     <File Path="README.md" />
   </Folder>
+  <Folder Name="/doc/">
+    <File Path="doc/adm/README.md" />
+    <File Path="doc/analyse/README.md" />
+    <File Path="doc/dev/README.md" />
+    <File Path="doc/user/README.md" />
+  </Folder>
+  <Folder Name="/src/" />
+  <Folder Name="/test/" />
 </Solution>

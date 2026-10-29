@@ -10,19 +10,19 @@
 # └──────────────┴──────────────────────────────────────────────────────────────┘
 
 #---------------------------------------------------------------------------
-# Project (single-level output folder: Doxygen does not create missing parent folders)
+# Project (doc/ must exist: Doxygen creates only the last level of OUTPUT_DIRECTORY)
 #---------------------------------------------------------------------------
 PROJECT_NAME           = "SocialGamesPlatform"
 PROJECT_BRIEF          = "Social games platform built on .NET 10"
-OUTPUT_DIRECTORY       = apidocs
+OUTPUT_DIRECTORY       = doc/dev
 OUTPUT_LANGUAGE        = English
 
 #---------------------------------------------------------------------------
-# Input: the bilingual README is the main page, the C# sources are documented
+# Input: the bilingual README is the main page, the C# sources of src/ are documented (tests are not)
 #---------------------------------------------------------------------------
 INPUT                  = README.md src
 USE_MDFILE_AS_MAINPAGE = README.md
-FILE_PATTERNS          = *.cs *.md
+FILE_PATTERNS          = *.cs
 RECURSIVE              = YES
 EXCLUDE_PATTERNS       = */bin/* */obj/* */Migrations/*
 INPUT_ENCODING         = UTF-8
@@ -44,7 +44,7 @@ WARNINGS               = YES
 WARN_IF_UNDOCUMENTED   = YES
 WARN_IF_DOC_ERROR      = YES
 WARN_NO_PARAMDOC       = YES
-WARN_LOGFILE           = apidocs/doxygen-warnings.log
+WARN_LOGFILE           = doc/dev/doxygen-warnings.log
 
 #---------------------------------------------------------------------------
 # Output: HTML only

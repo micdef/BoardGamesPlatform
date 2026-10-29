@@ -482,4 +482,5 @@ $RECYCLE.BIN/
 *.swp
 
 # Doxygen output (generated from the Doxyfile)
-apidocs/
+doc/dev/html/
+doc/dev/doxygen-warnings.log
