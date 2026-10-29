@@ -26,7 +26,7 @@ One folder per project. In Visual Studio, solution folders group the projects by
 - A `*.Contracts` project belongs to the tier that exposes it; only that tier and its direct caller reference it.
 - No project references the SQL project: the Very Back calls the stored procedures by name.
 - No project references a game other than itself; the Gateway references no game at all.
-- The CI builds the solution filter `BoardGamesPlatform.CI.slnf`, which lists every .NET project and leaves out the SQL project.
+- The CI builds the solution filter `BoardGamesPlatform.CI.slnf`, which lists every .NET project and leaves out the SQL project, which a separate job builds with Visual Studio's MSBuild (see Building).
 
 ## Building
 
@@ -35,3 +35,5 @@ One folder per project. In Visual Studio, solution folders group the projects by
 | Visual Studio | Build Solution (Ctrl+Shift+B) | Yes |
 | .NET CLI | `dotnet build BoardGamesPlatform.CI.slnf` | No |
 | .NET CLI | `dotnet build BoardGamesPlatform.slnx` | Fails (error MSB4278: the SSDT targets only exist in Visual Studio); use the solution filter instead |
+
+The SQL project keeps its original MSBuild format, so it is built with the MSBuild of Visual Studio, found with vswhere: & (& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe') src\BoardGamesPlatform.Database\BoardGamesPlatform.Database.sqlproj -p:Configuration=Release. Locally (Visual Studio 2026 18.11) this produces in\Release\BoardGamesPlatform.Database.dacpac. The windows-latest image (Windows Server 2025 with Visual Studio Enterprise 2026) lists the Microsoft.VisualStudio.Component.SQL.SSDT component, so the database job of the CI builds the DACPAC the same way and uploads it as the artifact database-dacpac; this is confirmed once a CI run succeeds.
