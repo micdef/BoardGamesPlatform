@@ -19,14 +19,14 @@ One folder per project. In Visual Studio, solution folders group the projects by
 | 3 - Back-End / Host | `BoardGamesPlatform.Back.Contracts` | Library | Contract exposed by the Back to the Gateway |
 | 4 - Very-Back-End | `BoardGamesPlatform.VeryBack` | Worker service | Very Back host: the only access to the database |
 | 4 - Very-Back-End | `BoardGamesPlatform.VeryBack.Contracts` | Library | Contract exposed by the Very Back to the Back |
-| 5 - Database | `BoardGamesPlatform.Database` | SQL project | Database schema (SSDT, built in Visual Studio only) |
+| 5 - Database | `BoardGamesPlatform.Database` | SQL project | Database schema (SSDT, original format; built by the MSBuild of Visual Studio, not by `dotnet build`) |
 
 ## Rules
 
 - A `*.Contracts` project belongs to the tier that exposes it; only that tier and its direct caller reference it.
 - No project references the SQL project: the Very Back calls the stored procedures by name.
 - No project references a game other than itself; the Gateway references no game at all.
-- The CI builds the solution filter `BoardGamesPlatform.CI.slnf`, which lists every .NET project and leaves out the SQL project.
+- The CI builds the solution filter `BoardGamesPlatform.CI.slnf`, which lists every .NET project and leaves out the SQL project, which a separate job builds with Visual Studio's MSBuild (see Building).
 
 ## Building
 
@@ -35,3 +35,13 @@ One folder per project. In Visual Studio, solution folders group the projects by
 | Visual Studio | Build Solution (Ctrl+Shift+B) | Yes |
 | .NET CLI | `dotnet build BoardGamesPlatform.CI.slnf` | No |
 | .NET CLI | `dotnet build BoardGamesPlatform.slnx` | Fails (error MSB4278: the SSDT targets only exist in Visual Studio); use the solution filter instead |
+
+The SQL project keeps its original MSBuild format: it is built by the MSBuild of Visual Studio, found with `vswhere`, into a DACPAC:
+
+```powershell
+$msbuild = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe'
+& $msbuild src/BoardGamesPlatform.Database/BoardGamesPlatform.Database.sqlproj -p:Configuration=Release
+```
+
+The DACPAC is written to `src/BoardGamesPlatform.Database/bin/Release/BoardGamesPlatform.Database.dacpac`.
+The `windows-latest` runner image ships Visual Studio Enterprise 2026 with the SQL Server Data Tools component, so the `Build the SQL project` job of the CI builds the DACPAC the same way and publishes it as the `database-dacpac` artifact.
