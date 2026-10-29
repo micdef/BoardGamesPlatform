@@ -1,0 +1,28 @@
+@*
+ *	@file	src/SocialGamesPlatform.Web/Components/App.razor
+ *	@author	Defraene Michaël (AKA Sonic) (co-written by Claude)
+ *
+ *	@brief	Root document of the website: head, routes and Blazor script
+ *@
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <ResourcePreloader />
+    <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="stylesheet" href="@Assets["SocialGamesPlatform.Web.styles.css"]" />
+    <ImportMap />
+    <HeadOutlet />
+</head>
+
+<body>
+    <Routes />
+    <ReconnectModal />
+    <script src="@Assets["_framework/blazor.web.js"]"></script>
+</body>
+
+</html>

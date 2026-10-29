@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Platform use cases, matchmaking, AI player framework, ports -->
+
+  <!-- Projects -->
+  <ItemGroup>
+    <ProjectReference Include="..\SocialGamesPlatform.Platform.Domain\SocialGamesPlatform.Platform.Domain.csproj" />
+    <ProjectReference Include="..\SocialGamesPlatform.Games.Abstractions\SocialGamesPlatform.Games.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

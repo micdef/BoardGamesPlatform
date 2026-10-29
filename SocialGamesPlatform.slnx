@@ -11,6 +11,10 @@
     <File Path="global.json" />
     <File Path="LICENSE" />
     <File Path="README.md" />
+    <File Path="SocialGamesPlatform.CI.slnf" />
+  </Folder>
+  <Folder Name="/.github/">
+    <File Path=".github/workflows/ci.yml" />
   </Folder>
   <Folder Name="/doc/">
     <File Path="doc/adm/README.md" />
@@ -20,9 +24,41 @@
     <File Path="doc/dev/README.md" />
     <File Path="doc/user/README.md" />
   </Folder>
-  <Folder Name="/.github/">
-    <File Path=".github/workflows/ci.yml" />
+
+  <Folder Name="/0 - Shared/">
+    <Project Path="src/SocialGamesPlatform.Codes/SocialGamesPlatform.Codes.csproj" />
+    <Project Path="src/SocialGamesPlatform.Protocol/SocialGamesPlatform.Protocol.csproj" />
   </Folder>
-  <Folder Name="/src/" />
-  <Folder Name="/test/" />
+  <Folder Name="/1 - Front-End/">
+    <Project Path="src/SocialGamesPlatform.Web/SocialGamesPlatform.Web.csproj" />
+    <Project Path="src/SocialGamesPlatform.Web.Client/SocialGamesPlatform.Web.Client.csproj" />
+  </Folder>
+  <Folder Name="/2 - Gateway/">
+    <Project Path="src/SocialGamesPlatform.Gateway/SocialGamesPlatform.Gateway.csproj" />
+    <Project Path="src/SocialGamesPlatform.Gateway.Contracts/SocialGamesPlatform.Gateway.Contracts.csproj" />
+  </Folder>
+  <Folder Name="/3 - Back-End/" />
+  <Folder Name="/3 - Back-End/Games/">
+    <Project Path="src/SocialGamesPlatform.Games.Abstractions/SocialGamesPlatform.Games.Abstractions.csproj" />
+  </Folder>
+  <Folder Name="/3 - Back-End/Host/">
+    <Project Path="src/SocialGamesPlatform.Back/SocialGamesPlatform.Back.csproj" />
+    <Project Path="src/SocialGamesPlatform.Back.Contracts/SocialGamesPlatform.Back.Contracts.csproj" />
+  </Folder>
+  <Folder Name="/3 - Back-End/Platform/">
+    <Project Path="src/SocialGamesPlatform.Platform.Application/SocialGamesPlatform.Platform.Application.csproj" />
+    <Project Path="src/SocialGamesPlatform.Platform.Domain/SocialGamesPlatform.Platform.Domain.csproj" />
+    <Project Path="src/SocialGamesPlatform.Platform.Infrastructure/SocialGamesPlatform.Platform.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/4 - Very-Back-End/">
+    <Project Path="src/SocialGamesPlatform.VeryBack/SocialGamesPlatform.VeryBack.csproj" />
+    <Project Path="src/SocialGamesPlatform.VeryBack.Contracts/SocialGamesPlatform.VeryBack.Contracts.csproj" />
+  </Folder>
+  <Folder Name="/5 - Database/">
+    <Project Path="src/SocialGamesPlatform.Database/SocialGamesPlatform.Database.sqlproj" Id="59d553b3-bb78-4ac7-8f9f-badc162dd3ba">
+      <Build />
+      <Deploy />
+    </Project>
+  </Folder>
+  <Folder Name="/9 - Tests/" />
 </Solution>
