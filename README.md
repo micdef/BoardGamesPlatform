@@ -60,6 +60,7 @@ The output is written to `doc/dev/html/index.html` (not versioned).
 
 - Code, comments, documentation and commit messages are written in English. Only this README is also available in French.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org) (`feat:`, `fix:`, `docs:`, `chore:`…).
+- Branching model, pull requests, versioning and releases: see [CONTRIBUTING.md](CONTRIBUTING.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ### License
 
@@ -129,6 +130,7 @@ Le résultat est écrit dans `doc/dev/html/index.html` (non versionné).
 
 - Le code, les commentaires, la documentation et les messages de commit sont rédigés en anglais. Seul ce README existe aussi en français.
 - Les messages de commit suivent [Conventional Commits](https://www.conventionalcommits.org/fr) (`feat:`, `fix:`, `docs:`, `chore:`…).
+- Modèle de branches, pull requests, versions et releases : voir [CONTRIBUTING.md](CONTRIBUTING.md) (en anglais). Les changements sont listés dans [CHANGELOG.md](CHANGELOG.md).
 
 ### Licence
 

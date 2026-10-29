@@ -18,9 +18,10 @@ OUTPUT_DIRECTORY       = doc/dev
 OUTPUT_LANGUAGE        = English
 
 #---------------------------------------------------------------------------
-# Input: the bilingual README is the main page, the C# sources of src/ are documented (tests are not)
+# Input: the bilingual README is the main page, followed by the contribution guide and the changelog;
+# the C# sources of src/ are documented (tests are not)
 #---------------------------------------------------------------------------
-INPUT                  = README.md src
+INPUT                  = README.md CONTRIBUTING.md CHANGELOG.md src
 USE_MDFILE_AS_MAINPAGE = README.md
 FILE_PATTERNS          = *.cs
 RECURSIVE              = YES
