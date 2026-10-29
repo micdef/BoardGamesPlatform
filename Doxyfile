@@ -1,0 +1,55 @@
+# ┌──────────────┬──────────────────────────────────────────────────────────────┐
+# │ File         │ Doxyfile                                                     │
+# │ Scope        │ API documentation of the whole solution                      │
+# │ Purpose      │ Generates the HTML documentation from the C# XML comments    │
+# │              │ (///). Open it with Doxywizard (File > Open), keep the       │
+# │              │ working directory set to this folder, then Run.              │
+# │              │ Command line: doxygen Doxyfile (from this folder).           │
+# │              │ Only non-default settings are listed; Doxygen uses its own   │
+# │              │ defaults for the others.                                     │
+# └──────────────┴──────────────────────────────────────────────────────────────┘
+
+#---------------------------------------------------------------------------
+# Project (single-level output folder: Doxygen does not create missing parent folders)
+#---------------------------------------------------------------------------
+PROJECT_NAME           = "SocialGamesPlatform"
+PROJECT_BRIEF          = "Social games platform built on .NET 10"
+OUTPUT_DIRECTORY       = apidocs
+OUTPUT_LANGUAGE        = English
+
+#---------------------------------------------------------------------------
+# Input: the bilingual README is the main page, the C# sources are documented
+#---------------------------------------------------------------------------
+INPUT                  = README.md src
+USE_MDFILE_AS_MAINPAGE = README.md
+FILE_PATTERNS          = *.cs *.md
+RECURSIVE              = YES
+EXCLUDE_PATTERNS       = */bin/* */obj/* */Migrations/*
+INPUT_ENCODING         = UTF-8
+
+#---------------------------------------------------------------------------
+# Extraction: only documented members are published
+#---------------------------------------------------------------------------
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+HIDE_UNDOC_MEMBERS     = YES
+HIDE_UNDOC_CLASSES     = YES
+
+#---------------------------------------------------------------------------
+# Warnings: undocumented members and wrong parameter names are reported
+#---------------------------------------------------------------------------
+QUIET                  = NO
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = YES
+WARN_LOGFILE           = apidocs/doxygen-warnings.log
+
+#---------------------------------------------------------------------------
+# Output: HTML only
+#---------------------------------------------------------------------------
+GENERATE_HTML          = YES
+GENERATE_TREEVIEW      = YES
+SOURCE_BROWSER         = YES
+GENERATE_LATEX         = NO

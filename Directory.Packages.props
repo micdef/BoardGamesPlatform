@@ -1,0 +1,27 @@
+<Project>
+  <!--
+    ┌──────────────┬──────────────────────────────────────────────────────────────┐
+    │ File         │ Directory.Packages.props                                     │
+    │ Scope        │ Every project of the solution                                │
+    │ Purpose      │ Central Package Management (CPM): one version per package    │
+    │              │ for the whole solution. Projects reference packages WITHOUT  │
+    │              │ a version.                                                   │
+    └──────────────┴──────────────────────────────────────────────────────────────┘
+  -->
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!-- A vulnerable transitive dependency can be pinned here without becoming a direct reference -->
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <!-- Analyzers applied to every project, with no reference in the .csproj files -->
+  <ItemGroup>
+    <GlobalPackageReference Include="Roslynator.Analyzers" Version="5.0.1" />
+    <GlobalPackageReference Include="Roslynator.Formatting.Analyzers" Version="5.0.1" />
+  </ItemGroup>
+
+  <!-- Packages referenced by the projects (filled in as projects are created) -->
+  <ItemGroup>
+  </ItemGroup>
+</Project>
