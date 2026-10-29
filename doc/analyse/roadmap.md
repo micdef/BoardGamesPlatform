@@ -65,10 +65,10 @@ Other UIs   ┘
 
 #### 0.3.0 — Walking skeleton
 
-- **Content**: a minimal socket protocol (framing, request/response correlation) on plain TCP, behind a transport interface; a `Ping` stored procedure; the SignalR hub of the gateway; a Blazor page. The ports of each link are chosen and become configurable. Development-only version: never deployed without TLS.
-- **Done**: a button on a Blazor page displays the SQL Server time, obtained through the five tiers; an end-to-end test proves it.
-- **Tests**: framing unit tests, a first loopback integration test, a first end-to-end test, a first SQL test (`Ping` and permissions) with the DACPAC test-deployment script. Network tests never pick a "free" port in advance, because another process can take it between the check and the use: an in-process listener binds port 0 and exposes the port given by the system; a free-port helper in the TestKit is only added if the end-to-end tests start the tiers as separate processes. Check whether the CI can build the SQL project; otherwise the local SQL gate applies (see the test strategy).
-- **Branches**: `feature/minimal-frame-protocol`, `feature/very-back-ping`, `feature/back-gateway-link`, `feature/signalr-hub-ping`, `feature/blazor-ping-page`, `feature/e2e-test-host`, `chore/sql-test-deploy-script`.
+- **Content**: a minimal socket protocol on plain TCP: a transport interface that hands over a byte stream (TLS wraps it in 0.5.0), frames with a length prefix, a correlation identifier, a JSON payload and a maximum size, several requests in flight on one connection [SEC]; the Back's client of the Very Back; a `Ping` stored procedure and a minimal application SQL user allowed to execute it only [SEC]; the SignalR hub of the gateway; a Blazor page. The ports of each link become configurable (defaults in the network flows below); every listener binds the loopback address unless configured otherwise. Development-only version: never deployed without TLS.
+- **Done**: a button on a Blazor page displays the SQL Server time, obtained through the five tiers; an end-to-end test proves it. In the CI, the end-to-end test runs against a fake procedure executor; its variant against the real SQL Server runs locally, under the SQL gate.
+- **Tests**: framing unit tests, a first loopback integration test, a first end-to-end test, a first SQL test (`Ping` and permissions) with the DACPAC test-deployment script. Network tests never pick a "free" port in advance, because another process can take it between the check and the use: an in-process listener binds port 0 and exposes the port given by the system; a free-port helper in the TestKit is only added if the end-to-end tests start the tiers as separate processes. Check whether the CI can build the SQL project as it is (original format, with the Visual Studio build tools of the CI runner); otherwise the local SQL gate applies (see the test strategy).
+- **Branches**, in order: `docs/ports-and-wire-format`, `chore/sql-ci-check`, `feature/minimal-frame-protocol`, `feature/transport-interface-tcp`, `chore/sql-test-deploy-script`, `feature/sql-ping-procedure`, `feature/protocol-request-response`, `feature/very-back-ping`, `feature/back-very-back-link`, `feature/back-gateway-link`, `feature/signalr-hub-ping`, `feature/blazor-ping-page`, `feature/e2e-test-host`. The deployment script of this version already refuses any database without the `DEV_` or `TEST_` prefix; 0.7.0 extends it.
 
 #### 0.4.0 — Robust socket protocol [SEC]
 
@@ -270,13 +270,13 @@ If time runs short, these versions can move to 1.1 without affecting the core: *
 
 ## Network flows
 
-Every tier communicates through the network. All ports are configurable; their default values are chosen in 0.3.0. This matrix is completed at each version that adds a flow and is copied into the administrator documentation.
+Every tier communicates through the network. All ports are configurable; the defaults below were chosen in 0.3.0. This matrix is completed at each version that adds a flow and is copied into the administrator documentation.
 
 | Flow | Port | Protocol | Firewall zones |
 |------|------|----------|----------------|
 | Internet → website and gateway (IIS) | 443 | HTTPS, WebSocket | WAN → DMZ (the only port open to the outside) |
-| Gateway → Back | to be chosen in 0.3.0 | TCP + TLS 1.3 | DMZ → servers |
-| Back → Very Back | to be chosen in 0.3.0 | TCP + TLS 1.3 + authenticated ECDH | servers → servers |
+| Gateway → Back | 7821 | TCP + TLS 1.3 (plain TCP in 0.3.0 and 0.4.0, development only) | DMZ → servers |
+| Back → Very Back | 7822 | TCP + TLS 1.3 + authenticated ECDH (plain TCP in 0.3.0 and 0.4.0, development only) | servers → servers |
 | Very Back → SQL Server | 1433 | TDS | servers → servers |
 | Back → SMTP server | 587 | SMTP + STARTTLS | servers → mail server |
 | Every executable → OpenTelemetry collector (optional) | 4317 or 4318 | OTLP over gRPC or HTTP | DMZ and servers → servers |
@@ -303,10 +303,12 @@ Every tier communicates through the network. All ports are configurable; their d
 | Hosting | Website on IIS (Windows Server); services as Windows services or Linux systemd daemons; Docker variant offered for other deployments |
 | Back ↔ Very Back | Raw TCP sockets, TLS 1.3 with mutual authentication, plus an authenticated ECDH handshake |
 | Gateway ↔ Back | Raw TCP sockets, TLS 1.3 with mutual authentication |
+| Socket protocol | The transport hands over a byte stream, so that TLS wraps it; frames carry a length prefix, a correlation identifier and a UTF-8 JSON payload (System.Text.Json), with a maximum frame size; several requests in flight on one connection. No version field before 0.4.0 |
+| Default ports | Gateway → Back 7821, Back → Very Back 7822 (unassigned in the IANA registry, range 7811-7844); configurable; listeners on the loopback address unless configured otherwise |
 | Real time | SignalR, through the gateway, for every front including a future WPF client |
 | Identity | Opaque session token verified by the Back; no JWT |
 | Forms | InteractiveServer render mode, full validation, revalidated by the gateway and the Back |
-| Database | SQL Server only until 1.0.0; original-format SQL project, outside the CI |
+| Database | SQL Server only until 1.0.0; the SQL project keeps its original format (DACPAC, opened by Visual Studio 2026) and is never converted to the SDK style; outside the CI unless the CI can build it as it is |
 | Development databases | `DEV_` and `ACC_` rebuilt freely until the first beta; no migration scripts before then |
 | Match history | Every move recorded; training logs pseudonymized |
 | Spectators | Public view: the match is visible, the fleets never are |
@@ -319,8 +321,6 @@ Every tier communicates through the network. All ports are configurable; their d
 
 | Choice | Decided in |
 |--------|------------|
-| Serialization format of the socket protocol | 0.3.0 / 0.4.0 |
-| Default ports | 0.3.0 |
 | Certificate authority (private CA or self-signed with pinning), key storage and rotation | 0.5.0 |
 | Vault product | 0.7.0 |
 | How clients present the session token to the SignalR hub | 0.10.0 |
