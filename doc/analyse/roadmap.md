@@ -59,7 +59,7 @@ Other UIs   ┘
 
 #### 0.2.0 — Solution skeleton and test infrastructure
 
-- **Content**: one project per tier, a shared contracts library, the empty SQL project, configuration and secrets conventions; observability: every executable writes its logs to the system log (Windows Event Log or systemd journal) and can send its logs, traces and metrics to an OpenTelemetry collector set in its configuration (see `doc/adm/observability.md`); the `test/` layout, a shared test-helper project (fake clock, seeded random source, free-port allocator), architecture tests with the first dependency rules, coverage collection, a CI guard that fails when a test project is not executed.
+- **Content**: one project per tier, a shared contracts library, the empty SQL project, configuration and secrets conventions; observability: every executable writes its logs to the system log (Windows Event Log or systemd journal) and can send its logs, traces and metrics to an OpenTelemetry collector set in its configuration (see `doc/adm/observability.md`); the `test/` layout, a shared test-helper project (repository paths, fake clock; further helpers are added by the version that first needs them), architecture tests with the first dependency rules, coverage collection, a CI guard that fails when a test project is not executed.
 - **Done**: the CI is green, every tier starts and logs its startup; the CI turns red when an architecture rule is broken.
 - **Branches**: `chore/solution-layout`, `feature/observability`, `chore/shared-contracts`, `chore/test-infrastructure`, `feature/architecture-tests`, `chore/ci-test-guard`, `chore/coverage-reporting`, `chore/sql-project`.
 
@@ -67,7 +67,7 @@ Other UIs   ┘
 
 - **Content**: a minimal socket protocol (framing, request/response correlation) on plain TCP, behind a transport interface; a `Ping` stored procedure; the SignalR hub of the gateway; a Blazor page. The ports of each link are chosen and become configurable. Development-only version: never deployed without TLS.
 - **Done**: a button on a Blazor page displays the SQL Server time, obtained through the five tiers; an end-to-end test proves it.
-- **Tests**: framing unit tests, a first loopback integration test, a first end-to-end test, a first SQL test (`Ping` and permissions) with the DACPAC test-deployment script. Check whether the CI can build the SQL project; otherwise the local SQL gate applies (see the test strategy).
+- **Tests**: framing unit tests, a first loopback integration test, a first end-to-end test, a first SQL test (`Ping` and permissions) with the DACPAC test-deployment script. Network tests never pick a "free" port in advance, because another process can take it between the check and the use: an in-process listener binds port 0 and exposes the port given by the system; a free-port helper in the TestKit is only added if the end-to-end tests start the tiers as separate processes. Check whether the CI can build the SQL project; otherwise the local SQL gate applies (see the test strategy).
 - **Branches**: `feature/minimal-frame-protocol`, `feature/very-back-ping`, `feature/back-gateway-link`, `feature/signalr-hub-ping`, `feature/blazor-ping-page`, `feature/e2e-test-host`, `chore/sql-test-deploy-script`.
 
 #### 0.4.0 — Robust socket protocol [SEC]
@@ -145,7 +145,7 @@ Other UIs   ┘
 
 - **Content**: the game contract (description including the game's visual identity — icon and background watermark, required for every game —, match creation, action handling, events, per-player view, public view for spectators, end of match); the Battleships rules as a pure domain.
 - **Done**: a complete scripted match passes the tests; the opponent's view and the public view never contain ship positions.
-- **Tests**: domain tests are the core deliverable; property-based tests (any legal sequence of moves ends; no view contains hidden data); architecture rule: each game module is isolated.
+- **Tests**: domain tests are the core deliverable, with a seeded random source added to the TestKit next to the injectable random source of the domain; property-based tests (any legal sequence of moves ends; no view contains hidden data); architecture rule: each game module is isolated.
 - **Branches**: `feature/game-contract`, `feature/battleships-rules`, `feature/battleships-views`.
 
 #### 0.14.0 — Move log and match recovery [SEC]
