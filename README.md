@@ -6,7 +6,7 @@
 
 ## English
 
-A social games platform built on .NET 10 LTS. The first game is a custom version of Battleships.
+A platform for playing board games together online, built on .NET 10 LTS. The first game is Battleships.
 
 > **Status:** project bootstrap. The scope and the roadmap are defined in [doc/analyse/roadmap.md](doc/analyse/roadmap.md); no game code yet.
 
@@ -84,7 +84,7 @@ Michaël Defraene
 
 ## Français
 
-Une plateforme de jeux sociaux en .NET 10 LTS. Le premier jeu est une version personnalisée de la bataille navale.
+Une plateforme de jeux de société à jouer ensemble en ligne, en .NET 10 LTS. Le premier jeu est la bataille navale.
 
 > **État :** démarrage du projet. Le périmètre et la roadmap sont définis dans [doc/analyse/roadmap.md](doc/analyse/roadmap.md) (en anglais) ; pas encore de code de jeu.
 
