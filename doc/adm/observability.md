@@ -7,8 +7,8 @@ Nothing is sent to a collector until one is configured. Every log entry goes to 
 
 | System | Destination | How to read it |
 |--------|-------------|----------------|
-| Windows | **Application** log of the Event Log, one source per executable (named after the executable, for example `SocialGamesPlatform.Back`) | Event Viewer › Windows Logs › Application, filtered on the source |
-| Linux | **systemd journal**, when the executable runs as a systemd unit: its console output is formatted so that the journal knows the level of each entry | `journalctl -u <unit>`, for example `journalctl -u socialgamesplatform-back -p warning` |
+| Windows | **Application** log of the Event Log, one source per executable (named after the executable, for example `BoardGamesPlatform.Back`) | Event Viewer › Windows Logs › Application, filtered on the source |
+| Linux | **systemd journal**, when the executable runs as a systemd unit: its console output is formatted so that the journal knows the level of each entry | `journalctl -u <unit>`, for example `journalctl -u boardgamesplatform-back -p warning` |
 
 On Linux, running as a systemd unit also integrates the executable with systemd: it stops cleanly on `SIGTERM` and tells systemd when it is ready and when it is stopping. The units are therefore declared with `Type=notify`. Outside systemd, nothing changes.
 
@@ -16,10 +16,10 @@ On Linux, running as a systemd unit also integrates the executable with systemd:
   To create a source by hand, in an administrator PowerShell:
 
   ```powershell
-  [System.Diagnostics.EventLog]::CreateEventSource('SocialGamesPlatform.Back', 'Application')
+  [System.Diagnostics.EventLog]::CreateEventSource('BoardGamesPlatform.Back', 'Application')
   ```
 
-- **Website under IIS**: the source is named after the executable (`ServiceName`, else `SocialGamesPlatform.Web`), not after the IIS site. The application pool identity cannot create it either: the installer creates it.
+- **Website under IIS**: the source is named after the executable (`ServiceName`, else `BoardGamesPlatform.Web`), not after the IIS site. The application pool identity cannot create it either: the installer creates it.
 - **Levels**: `Logging:EventLog:LogLevel:Default` sets what goes to the Event Log (`Information` in the delivered settings; .NET writes only `Warning` and above when it is not set). The journal receives what the console receives, set by `Logging:Console:LogLevel`, else `Logging:LogLevel`.
 - **Source name**: `ServiceName` is also the Event Log source; keep it to letters, digits, dots and hyphens.
 
@@ -27,10 +27,10 @@ On Linux, running as a systemd unit also integrates the executable with systemd:
 
 | Executable | Logs | Traces | Metrics |
 |------------|:----:|:------:|:-------:|
-| `SocialGamesPlatform.Back` | ✅ | ✅ (platform sources, outgoing HTTP) | ✅ (.NET runtime, outgoing HTTP, platform meters) |
-| `SocialGamesPlatform.VeryBack` | ✅ | ✅ (platform sources, outgoing HTTP) | ✅ (.NET runtime, outgoing HTTP, platform meters) |
-| `SocialGamesPlatform.Gateway` | ✅ | ✅ (+ incoming HTTP requests, including the SignalR connection requests) | ✅ (+ ASP.NET Core) |
-| `SocialGamesPlatform.Web` (server part) | ✅ | ✅ (+ incoming HTTP requests) | ✅ (+ ASP.NET Core) |
+| `BoardGamesPlatform.Back` | ✅ | ✅ (platform sources, outgoing HTTP) | ✅ (.NET runtime, outgoing HTTP, platform meters) |
+| `BoardGamesPlatform.VeryBack` | ✅ | ✅ (platform sources, outgoing HTTP) | ✅ (.NET runtime, outgoing HTTP, platform meters) |
+| `BoardGamesPlatform.Gateway` | ✅ | ✅ (+ incoming HTTP requests, including the SignalR connection requests) | ✅ (+ ASP.NET Core) |
+| `BoardGamesPlatform.Web` (server part) | ✅ | ✅ (+ incoming HTTP requests) | ✅ (+ ASP.NET Core) |
 
 The WebAssembly part of the website runs in the players' browsers: it does not send telemetry directly, since that would expose the collector to the Internet.
 
@@ -51,7 +51,7 @@ Each executable reads the `Observability` section of its `appsettings.json`:
 |---------|--------|---------|
 | `OtlpEndpoint` | Empty, or an absolute `http` or `https` address | Address of the collector. **Empty: nothing is sent.** Any other value (for example `localhost:4317` without a scheme) stops the executable at startup with an explicit error. |
 | `OtlpProtocol` | `Grpc` (default) or `HttpProtobuf` | Protocol used to reach the collector. With `HttpProtobuf`, `v1/logs`, `v1/traces` and `v1/metrics` are appended to the address, which may itself contain a path (for example `http://proxy.lan/otel`). Any other text stops the executable at startup. |
-| `ServiceName` | Empty, or a name | Name of the executable in the collector and its Windows Event Log source. Empty: the project name, for example `SocialGamesPlatform.Back`. |
+| `ServiceName` | Empty, or a name | Name of the executable in the collector and its Windows Event Log source. Empty: the project name, for example `BoardGamesPlatform.Back`. |
 | `IncludeScopes` | `false` (default) or `true` | Also sends the logging scopes, for example the request path and the connection of ASP.NET Core. |
 
 The same settings can be given as environment variables, which is convenient for a Windows service, a systemd unit or a container:
@@ -67,7 +67,7 @@ Every log entry, trace and metric carries:
 
 | Attribute | Value |
 |-----------|-------|
-| `service.namespace` | `SocialGamesPlatform` |
+| `service.namespace` | `BoardGamesPlatform` |
 | `service.name` | The `ServiceName` setting, or the project name |
 | `service.version` | The version of the executable (it may end with `+` and the commit identifier) |
 | `service.instance.id` | A unique identifier, new at each start of the executable |

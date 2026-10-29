@@ -1,0 +1,24 @@
+{
+  "solution": {
+    "path": "BoardGamesPlatform.slnx",
+    "projects": [
+      "src\\BoardGamesPlatform.Back\\BoardGamesPlatform.Back.csproj",
+      "src\\BoardGamesPlatform.Back.Contracts\\BoardGamesPlatform.Back.Contracts.csproj",
+      "src\\BoardGamesPlatform.Codes\\BoardGamesPlatform.Codes.csproj",
+      "src\\BoardGamesPlatform.Games.Abstractions\\BoardGamesPlatform.Games.Abstractions.csproj",
+      "src\\BoardGamesPlatform.Observability\\BoardGamesPlatform.Observability.csproj",
+      "src\\BoardGamesPlatform.Gateway\\BoardGamesPlatform.Gateway.csproj",
+      "src\\BoardGamesPlatform.Gateway.Contracts\\BoardGamesPlatform.Gateway.Contracts.csproj",
+      "src\\BoardGamesPlatform.Platform.Application\\BoardGamesPlatform.Platform.Application.csproj",
+      "src\\BoardGamesPlatform.Platform.Domain\\BoardGamesPlatform.Platform.Domain.csproj",
+      "src\\BoardGamesPlatform.Platform.Infrastructure\\BoardGamesPlatform.Platform.Infrastructure.csproj",
+      "src\\BoardGamesPlatform.Protocol\\BoardGamesPlatform.Protocol.csproj",
+      "src\\BoardGamesPlatform.VeryBack\\BoardGamesPlatform.VeryBack.csproj",
+      "src\\BoardGamesPlatform.VeryBack.Contracts\\BoardGamesPlatform.VeryBack.Contracts.csproj",
+      "src\\BoardGamesPlatform.Web\\BoardGamesPlatform.Web.csproj",
+      "src\\BoardGamesPlatform.Web.Client\\BoardGamesPlatform.Web.Client.csproj",
+      "test\\BoardGamesPlatform.Architecture.Tests\\BoardGamesPlatform.Architecture.Tests.csproj",
+      "test\\BoardGamesPlatform.TestKit\\BoardGamesPlatform.TestKit.csproj"
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+  <!-- Website, WebAssembly part of the Blazor Auto application -->
+
+  <!-- No launch profile (started by the server part), static assets served by the server, navigation without exception -->
+  <PropertyGroup>
+    <NoDefaultLaunchSettingsFile>true</NoDefaultLaunchSettingsFile>
+    <StaticWebAssetProjectMode>Default</StaticWebAssetProjectMode>
+    <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+  </PropertyGroup>
+
+  <!-- Projects -->
+  <ItemGroup>
+    <ProjectReference Include="..\BoardGamesPlatform.Gateway.Contracts\BoardGamesPlatform.Gateway.Contracts.csproj" />
+  </ItemGroup>
+
+  <!-- Packages (versions in Directory.Packages.props) -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" />
+  </ItemGroup>
+
+</Project>

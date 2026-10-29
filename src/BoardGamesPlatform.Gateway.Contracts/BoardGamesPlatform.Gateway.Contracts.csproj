@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Contract exposed by the Gateway to the fronts: SignalR hub interfaces, platform messages, game envelope -->
+
+  <!-- Projects -->
+  <ItemGroup>
+    <ProjectReference Include="..\BoardGamesPlatform.Codes\BoardGamesPlatform.Codes.csproj" />
+  </ItemGroup>
+
+</Project>
