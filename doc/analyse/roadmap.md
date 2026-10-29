@@ -228,7 +228,7 @@ An AI player goes through the same contract as a human: it receives the same per
 
 #### 0.25.0 — Native installation
 
-- **Content**: installation package or PowerShell scripts, **run as administrator** (IIS site, Windows services, systemd units, one Windows Event Log source per executable), certificate and key provisioning, final network flow matrix, acceptance environment.
+- **Content**: installation package or PowerShell scripts, **run as administrator** (IIS site, Windows services, systemd units declared with `Type=notify`, one Windows Event Log source per executable), certificate and key provisioning, final network flow matrix, acceptance environment.
 - **Done**: a clean machine is installed from the package alone.
 - **Tests**: installation smoke test on a clean machine; the Back and the Very Back run on Linux at least once in acceptance.
 - **Branches**: `feature/installation-package`, `chore/systemd-units`, `chore/iis-deployment`, `docs/administrator-installation-guide`.

@@ -10,6 +10,8 @@ Nothing is sent to a collector until one is configured. Every log entry goes to 
 | Windows | **Application** log of the Event Log, one source per executable (named after the executable, for example `SocialGamesPlatform.Back`) | Event Viewer › Windows Logs › Application, filtered on the source |
 | Linux | **systemd journal**, when the executable runs as a systemd unit: its console output is formatted so that the journal knows the level of each entry | `journalctl -u <unit>`, for example `journalctl -u socialgamesplatform-back -p warning` |
 
+On Linux, running as a systemd unit also integrates the executable with systemd: it stops cleanly on `SIGTERM` and tells systemd when it is ready and when it is stopping. The units are therefore declared with `Type=notify`. Outside systemd, nothing changes.
+
 - **Windows Event Log source**: only an administrator can create it. The installer, which runs as administrator, creates one source per executable. Without its source, an executable starts and runs normally, but writes nothing to the Event Log.
   To create a source by hand, in an administrator PowerShell:
 
@@ -17,7 +19,9 @@ Nothing is sent to a collector until one is configured. Every log entry goes to 
   [System.Diagnostics.EventLog]::CreateEventSource('SocialGamesPlatform.Back', 'Application')
   ```
 
-- **Levels**: `Logging:EventLog:LogLevel:Default` sets what goes to the Event Log (`Information` in the delivered settings; .NET writes only `Warning` and above when it is not set). The journal receives what the console receives, set by `Logging:LogLevel`.
+- **Website under IIS**: the source is named after the executable (`ServiceName`, else `SocialGamesPlatform.Web`), not after the IIS site. The application pool identity cannot create it either: the installer creates it.
+- **Levels**: `Logging:EventLog:LogLevel:Default` sets what goes to the Event Log (`Information` in the delivered settings; .NET writes only `Warning` and above when it is not set). The journal receives what the console receives, set by `Logging:Console:LogLevel`, else `Logging:LogLevel`.
+- **Source name**: `ServiceName` is also the Event Log source; keep it to letters, digits, dots and hyphens.
 
 ## Executables concerned
 

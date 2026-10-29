@@ -120,9 +120,9 @@ public static class ObservabilityExtensions
     /// <para><b>Purpose:</b> keeps a local record of every executable in the tool the administrator already uses (Event Viewer, journalctl),
     /// also when no collector is configured or when the collector is down.</para>
     /// <para><b>Behavior:</b> on Windows, the logs go to the Application log of the Event Log, under one source per executable (named after the
-    /// service); only an administrator can create that source, which the installer does. On Linux, when the executable runs as a systemd unit,
-    /// the console output is formatted for the systemd journal, so that journalctl knows the level of each entry. The levels written are set by
-    /// the "Logging:EventLog:LogLevel" and "Logging:Console:LogLevel" settings.</para>
+    /// service); only an administrator can create that source, which the installer does; the level is set by "Logging:EventLog:LogLevel".
+    /// On Linux, the executable is integrated with systemd (see <see cref="IntegrateWithSystemd"/>); the journal receives the console output,
+    /// whose level is set by "Logging:Console:LogLevel", else "Logging:LogLevel". On other systems, nothing is added.</para>
     /// </remarks>
     /// <param name="builder">[Cannot be null] Builder of the host</param>
     /// <param name="serviceName">[Cannot be null] Name of the executable, used as the Event Log source</param>
@@ -132,9 +132,26 @@ public static class ObservabilityExtensions
         if (OperatingSystem.IsWindows())
             AddWindowsEventLog(builder, serviceName);
 
-        // Linux: console formatted for the systemd journal (only when the executable runs as a systemd unit)
+        // Linux: integration with systemd, which includes the journal format of the console
         if (OperatingSystem.IsLinux())
-            builder.Services.AddSystemd();
+            IntegrateWithSystemd(builder);
+    }
+
+    /// <summary>
+    /// Method used to integrate the executable with systemd, when it runs as a systemd unit
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> lets the systemd journal know the level of each entry, and lets systemd know when the executable is ready and when it stops.</para>
+    /// <para><b>Behavior:</b> only when the executable runs as a systemd unit, or when the NOTIFY_SOCKET variable is set (otherwise, nothing changes):
+    /// the console is formatted for the journal; the host lifetime becomes the systemd lifetime (stop on SIGTERM); the executable notifies systemd
+    /// that it is ready and that it is stopping, which a unit declared with <c>Type=notify</c> waits for.
+    /// Warning: it replaces the host lifetime; another lifetime registered later (for example a Windows service) would take precedence.</para>
+    /// </remarks>
+    /// <param name="builder">[Cannot be null] Builder of the host</param>
+    private static void IntegrateWithSystemd(IHostApplicationBuilder builder)
+    {
+        // Registering the systemd console format, lifetime and notifier
+        builder.Services.AddSystemd();
     }
 
     /// <summary>
@@ -210,7 +227,8 @@ public static class ObservabilityExtensions
     /// </summary>
     /// <remarks>
     /// <para><b>Purpose:</b> called once by every executable while it builds its host.</para>
-    /// <para><b>Behavior:</b> the logs always go to the system log of the machine (Windows Event Log or systemd journal), in addition to the console.
+    /// <para><b>Behavior:</b> on Windows and Linux, the logs always go to the system log of the machine (Windows Event Log, or systemd journal
+    /// with the systemd integration of the host), in addition to the console.
     /// Without "Observability:OtlpEndpoint", nothing else is added. With it, the executable is
     /// described by its name (setting "Observability:ServiceName", else its application name), its version, its environment and its machine; HTTP
     /// client calls, the .NET runtime and the platform's own sources are instrumented, plus whatever the caller adds (for example ASP.NET Core).</para>
