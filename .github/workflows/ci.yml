@@ -43,11 +43,12 @@ jobs:
         with:
           global-json-file: global.json
 
+      # The CI solution filter lists every .NET project; the SQL project (MSBuild format) is built in Visual Studio only
       - name: Restore
-        run: dotnet restore SocialGamesPlatform.slnx
+        run: dotnet restore SocialGamesPlatform.CI.slnf
 
       - name: Build (warnings are errors)
-        run: dotnet build SocialGamesPlatform.slnx --configuration Release --no-restore
+        run: dotnet build SocialGamesPlatform.CI.slnf --configuration Release --no-restore
 
       - name: Test
-        run: dotnet test SocialGamesPlatform.slnx --configuration Release --no-build
+        run: dotnet test SocialGamesPlatform.CI.slnf --configuration Release --no-build

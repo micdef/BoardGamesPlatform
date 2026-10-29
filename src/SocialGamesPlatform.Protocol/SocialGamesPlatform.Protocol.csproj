@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Socket protocol shared by the Gateway-Back and Back-Very Back links: framing, serialization, heartbeat, reconnection, mutual TLS, authenticated ECDH -->
+
+</Project>

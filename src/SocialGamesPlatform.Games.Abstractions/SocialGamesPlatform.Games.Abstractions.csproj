@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Game contract that every game implements -->
+
+  <!-- Projects -->
+  <ItemGroup>
+    <ProjectReference Include="..\SocialGamesPlatform.Codes\SocialGamesPlatform.Codes.csproj" />
+  </ItemGroup>
+
+</Project>

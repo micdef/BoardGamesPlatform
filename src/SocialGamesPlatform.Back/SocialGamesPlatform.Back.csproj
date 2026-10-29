@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+  <!-- Back host (a console process in 0.2.0, installed as a Windows service or a systemd daemon from 0.25.0): composition root and socket server for the Gateway -->
+
+  <!-- Projects -->
+  <ItemGroup>
+    <ProjectReference Include="..\SocialGamesPlatform.Platform.Application\SocialGamesPlatform.Platform.Application.csproj" />
+    <ProjectReference Include="..\SocialGamesPlatform.Platform.Infrastructure\SocialGamesPlatform.Platform.Infrastructure.csproj" />
+    <ProjectReference Include="..\SocialGamesPlatform.Back.Contracts\SocialGamesPlatform.Back.Contracts.csproj" />
+    <ProjectReference Include="..\SocialGamesPlatform.Protocol\SocialGamesPlatform.Protocol.csproj" />
+  </ItemGroup>
+
+  <!-- Packages (versions in Directory.Packages.props) -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+</Project>

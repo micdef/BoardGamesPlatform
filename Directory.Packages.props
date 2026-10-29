@@ -21,7 +21,14 @@
     <GlobalPackageReference Include="Roslynator.Formatting.Analyzers" Version="5.0.1" />
   </ItemGroup>
 
-  <!-- Packages referenced by the projects (filled in as projects are created) -->
+  <!-- Hosting: Back and Very Back worker services -->
   <ItemGroup>
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.14" />
+  </ItemGroup>
+
+  <!-- Blazor: website (server and WebAssembly parts) -->
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="10.0.14" />
   </ItemGroup>
 </Project>

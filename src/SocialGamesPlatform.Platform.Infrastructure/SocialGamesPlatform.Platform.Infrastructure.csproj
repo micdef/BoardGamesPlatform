@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Platform adapters: the Very Back client implementing the ports -->
+
+  <!-- Projects -->
+  <ItemGroup>
+    <ProjectReference Include="..\SocialGamesPlatform.Platform.Application\SocialGamesPlatform.Platform.Application.csproj" />
+    <ProjectReference Include="..\SocialGamesPlatform.VeryBack.Contracts\SocialGamesPlatform.VeryBack.Contracts.csproj" />
+    <ProjectReference Include="..\SocialGamesPlatform.Protocol\SocialGamesPlatform.Protocol.csproj" />
+  </ItemGroup>
+
+</Project>
