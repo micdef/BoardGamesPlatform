@@ -484,3 +484,6 @@ $RECYCLE.BIN/
 # Doxygen output (generated from the Doxyfile)
 doc/dev/html/
 doc/dev/doxygen-warnings.log
+
+# Git worktrees of the Claude Code agents (local only)
+.claude/worktrees/
