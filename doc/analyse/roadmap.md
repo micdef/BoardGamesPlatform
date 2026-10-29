@@ -143,7 +143,7 @@ Other UIs   ┘
 
 #### 0.13.0 — Game contract, Battleships rules and public view
 
-- **Content**: the game contract (description, match creation, action handling, events, per-player view, public view for spectators, end of match); the Battleships rules as a pure domain.
+- **Content**: the game contract (description including the game's visual identity — icon and background watermark, required for every game —, match creation, action handling, events, per-player view, public view for spectators, end of match); the Battleships rules as a pure domain.
 - **Done**: a complete scripted match passes the tests; the opponent's view and the public view never contain ship positions.
 - **Tests**: domain tests are the core deliverable; property-based tests (any legal sequence of moves ends; no view contains hidden data); architecture rule: each game module is isolated.
 - **Branches**: `feature/game-contract`, `feature/battleships-rules`, `feature/battleships-views`.
