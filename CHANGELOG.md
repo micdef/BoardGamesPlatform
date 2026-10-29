@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI solution filter that builds every .NET project and leaves out the SQL project.
 - Test infrastructure: xUnit v3 on Microsoft.Testing.Platform (selected in `global.json`), Shouldly, coverage and TRX extensions shared by every `*.Tests` project; a TestKit library; architecture tests on the project references and, with ArchUnitNET, on the dependencies between layers.
 - CI: `dotnet format --verify-no-changes` checks the `.editorconfig` rules the build does not enforce (line endings, naming).
+- CI guards: the run fails when the CI solution filter no longer matches the solution, or when a test project runs no test.
 - Observability: the Back, the Very Back, the Gateway and the website write their logs to the system log (Windows Event Log or systemd journal), and can send their logs, traces and metrics to an OpenTelemetry collector configured in their settings; nothing is sent without one (`doc/adm/observability.md`).
 
 ### Changed
