@@ -14,6 +14,7 @@
     <File Path="BoardGamesPlatform.CI.slnf" />
   </Folder>
   <Folder Name="/.github/">
+    <File Path=".github/scripts/Test-CISolutionFilter.ps1" />
     <File Path=".github/workflows/ci.yml" />
   </Folder>
   <Folder Name="/doc/">

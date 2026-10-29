@@ -145,6 +145,11 @@ Every `0.x.y` version, with or without an `-alpha.N` / `-beta.N` suffix, is publ
 Every pull request targeting `main`, `dev` or `release/*` is built and tested by GitHub Actions ([ci.yml](.github/workflows/ci.yml)).
 A pull request with a failing build is not merged.
 
+The CI builds the projects listed in `BoardGamesPlatform.CI.slnf`, and fails when:
+
+- a `.csproj` under `src/` or `test/` is missing from `BoardGamesPlatform.slnx`, or a `.csproj` of the solution is missing from the filter ([Test-CISolutionFilter.ps1](.github/scripts/Test-CISolutionFilter.ps1)); a new project is therefore added to both files;
+- a test project runs no test.
+
 ## Code and documentation
 
 - Code, comments, documentation and commit messages are written in English.

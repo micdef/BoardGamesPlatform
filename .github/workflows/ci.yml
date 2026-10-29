@@ -44,6 +44,9 @@ jobs:
           global-json-file: global.json
 
       # The CI solution filter lists every .NET project; the SQL project (MSBuild format) is built in Visual Studio only
+      - name: Check that the CI solution filter matches the solution
+        run: ./.github/scripts/Test-CISolutionFilter.ps1
+
       - name: Restore
         run: dotnet restore BoardGamesPlatform.CI.slnf
 
@@ -54,5 +57,6 @@ jobs:
       - name: Check code style (.editorconfig)
         run: dotnet format BoardGamesPlatform.CI.slnf --verify-no-changes --no-restore
 
+      # After "--", the minimum applies to each test project: a test project that runs no test fails the run
       - name: Test
-        run: dotnet test --solution BoardGamesPlatform.CI.slnf --configuration Release --no-build
+        run: dotnet test --solution BoardGamesPlatform.CI.slnf --configuration Release --no-build -- --minimum-expected-tests 1
