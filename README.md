@@ -8,7 +8,15 @@
 
 A social games platform built on .NET 10 LTS. The first game is a custom version of Battleships.
 
-> **Status:** project bootstrap. Scope and architecture are being defined.
+> **Status:** project bootstrap. The scope and the roadmap are defined in [doc/analyse/roadmap.md](doc/analyse/roadmap.md); no game code yet.
+
+### Preview
+
+Design mock-ups of the arcade neon interface: they show the intended look, not the finished product.
+
+![Home page: hero, games and live matches](doc/assets/mockups/home.png)
+
+![Battleships match: enemy waters, own fleet and shot log](doc/assets/mockups/battleships-match.png)
 
 ### Requirements
 
@@ -78,7 +86,15 @@ Michaël Defraene
 
 Une plateforme de jeux sociaux en .NET 10 LTS. Le premier jeu est une version personnalisée de la bataille navale.
 
-> **État :** démarrage du projet. Le périmètre et l'architecture sont en cours de définition.
+> **État :** démarrage du projet. Le périmètre et la roadmap sont définis dans [doc/analyse/roadmap.md](doc/analyse/roadmap.md) (en anglais) ; pas encore de code de jeu.
+
+### Aperçu
+
+Maquettes de l'interface en style arcade néon : elles montrent l'apparence visée, pas le produit fini.
+
+![Page d'accueil : bandeau, jeux et parties en direct](doc/assets/mockups/home.png)
+
+![Partie de bataille navale : eaux ennemies, flotte du joueur et historique des tirs](doc/assets/mockups/battleships-match.png)
 
 ### Prérequis
 

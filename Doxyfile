@@ -18,15 +18,17 @@ OUTPUT_DIRECTORY       = doc/dev
 OUTPUT_LANGUAGE        = English
 
 #---------------------------------------------------------------------------
-# Input: the bilingual README is the main page, followed by the contribution guide, the changelog and the coding conventions;
+# Input: the bilingual README is the main page, followed by the contribution guide, the changelog, the roadmap and the coding conventions;
 # the C# sources of src/ are documented (tests are not)
 #---------------------------------------------------------------------------
-INPUT                  = README.md CONTRIBUTING.md CHANGELOG.md doc/dev/coding-conventions.md src
+INPUT                  = README.md CONTRIBUTING.md CHANGELOG.md doc/analyse/roadmap.md doc/dev/coding-conventions.md src
 USE_MDFILE_AS_MAINPAGE = README.md
 FILE_PATTERNS          = *.cs
 RECURSIVE              = YES
 EXCLUDE_PATTERNS       = */bin/* */obj/* */Migrations/*
 INPUT_ENCODING         = UTF-8
+# Images used by the Markdown pages (copied into the HTML output)
+IMAGE_PATH             = doc/assets/mockups
 
 #---------------------------------------------------------------------------
 # Extraction: only documented members are published

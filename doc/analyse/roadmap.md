@@ -127,7 +127,7 @@ Other UIs   ┘
 - **Content**:
   - the **design system** of the arcade neon mock-up: colors, typography (Orbitron for titles and buttons, Rajdhani for text), buttons, badges, form fields, glow rules, as one shared stylesheet of variables and Blazor components;
   - the **visual identity of a game** (icon and background watermark), provided by each game module, so that a player knows at a glance which game is on screen;
-  - **internationalization**: resources per language, language picker, the player's preferred language, culture-aware dates and numbers, translation of the codes received from the other tiers;
+  - **internationalization**: English and French, in .NET `.resx` resource files (adding a language means adding one resource file per component); a language picker with flags from [flagcdn.com](https://flagcdn.com) (Flagpedia), copied into the site so that no player's browser calls a third party; the language changes **on the fly**, without reloading the page nor interrupting a match in progress; the player's preferred language; culture-aware dates and numbers; translation of the codes received from the other tiers;
   - the Blazor Auto layout, the registration and login forms forced to InteractiveServer with full validation, a minimal administration section (open or close registrations, user list).
 - **Done**: a user registers and logs in from a browser, in English or in French, and the whole site switches language; the administrator closes the registrations and the registration form refuses new accounts.
 - **Tests**: every resource key exists in every supported language (a missing translation fails the build); component tests of the design system.
@@ -311,7 +311,7 @@ Every tier communicates through the network. All ports are configurable; their d
 | Spectators | Public view: the match is visible, the fleets never are |
 | Rating | A rating system (Elo or Glicko), per game |
 | AI | Named player accounts going through the same contract as humans |
-| Languages | Multilingual user interface, English and French at least; only codes travel between tiers, the fronts translate them |
+| Languages | English and French in v1.0.0, in `.resx` files; language switched on the fly; flags from flagcdn.com served by the site; only codes travel between tiers, the fronts translate them |
 | User interface | Arcade neon design system (direction approved, mock-up being refined): cyan for the player and primary actions, magenta for the opponent and hits, glow only on interactive or live elements; each game has its own icon and background watermark |
 
 ## Choices left for later
@@ -327,4 +327,4 @@ Every tier communicates through the network. All ports are configurable; their d
 | Elo or Glicko | 0.19.0 |
 | Whether AI players appear in the ranking and in random matchmaking | 0.20.0 / 0.21.0 |
 | Names of the AI players | 0.21.0 |
-| Languages supported beyond English and French | 0.11.0 |
+| Further languages (one `.resx` file per component and language) | When needed, after 1.0.0 |
