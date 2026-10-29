@@ -134,7 +134,7 @@ public bool AddShip(string shipName)
 | Block-bodied methods and constructors, so that each step can be commented | — | IDE suggestion |
 | Classic constructors (no primary constructors), so that parameters are checked before being stored | — | IDE suggestion |
 | Guard clauses first, with the parameter name and an explicit message | `throw new ArgumentNullException(nameof(x), $"…")` | Review |
-| Private fields `_camelCase`; injected services `_svcName`, with the parameter `svcName` | `_svcMailing`, `svcMailing` | Build (fields) / review (services) |
+| Private fields `_camelCase`; injected services `_svcName`, with the parameter `svcName`; the logger is the exception: `_logger`, with the parameter `logger` | `_svcMailing`, `svcMailing`, `_logger` | Build (fields) / review (services) |
 | Interfaces `IName`, services `NameService`, asynchronous methods suffixed `Async` | `IMailingService`, `SendAsync` | Build |
 | Access modifiers always explicit, no `this.` | — | Build |
 
