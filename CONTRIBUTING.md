@@ -21,6 +21,7 @@ main ─────────────────────────
 | `feature/<name>` | `release/X.Y.Z`  | `release/X.Y.Z`                             | A new feature.                                       |
 | `fix/<name>`     | `release/X.Y.Z`  | `release/X.Y.Z`                             | A bug fix during the development of a version.       |
 | `docs/<name>`    | `release/X.Y.Z`  | `release/X.Y.Z`                             | Documentation only.                                  |
+| `chore/<name>`   | `release/X.Y.Z`  | `release/X.Y.Z`                             | Repository maintenance: tooling, configuration, CI.  |
 | `hotfix/<name>`  | `main`           | `main`, then `dev` and the current release  | An urgent fix on a released version.                 |
 
 Branch names are lowercase, in English, with words separated by hyphens: `feature/fleet-placement`.
@@ -147,5 +148,6 @@ A pull request with a failing build is not merged.
 ## Code and documentation
 
 - Code, comments, documentation and commit messages are written in English.
-- Every public member carries an XML documentation comment (`///`), which feeds IntelliSense and the Doxygen documentation.
+- Every member, public or private, carries an XML documentation comment (`///`), which feeds IntelliSense and the Doxygen documentation.
+- File headers, regions, documentation and code rules for C# and SQL are described in the [coding conventions](doc/dev/coding-conventions.md).
 - Analyzer and style warnings are errors: fix them, do not suppress them without a documented reason.

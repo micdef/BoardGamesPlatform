@@ -15,6 +15,7 @@
   <Folder Name="/doc/">
     <File Path="doc/adm/README.md" />
     <File Path="doc/analyse/README.md" />
+    <File Path="doc/dev/coding-conventions.md" />
     <File Path="doc/dev/README.md" />
     <File Path="doc/user/README.md" />
   </Folder>
