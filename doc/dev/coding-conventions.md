@@ -18,14 +18,14 @@ Every file starts with a header block. It uses a plain `/* */` comment: a `/** *
 ```csharp
 /*
  *	@file	src/Platform/Players/PlayerService.cs
- *	@author	Defraene Michaël (AKA Sonic)
- *
- *	Versions :
- *		- 2026-10-29	: Defraene Michaël		: Initial creation
+ *	@author	Defraene Michaël (AKA Sonic) (co-written by Claude)
  *
  *	@brief	Manages the player accounts of the platform
  */
 ```
+
+- `@author` names the legal author, Defraene Michaël (AKA Sonic). A file written with an AI assistant adds `(co-written by Claude)`; a file written by the author alone does not.
+- The header carries no version history: the Git history is the only record of who changed what and when, so it can never be out of date.
 
 ### Usings and namespace
 
@@ -149,14 +149,13 @@ Every SQL object starts with a `/** */` header. Its tables describe the object c
 ```sql
 /**
  *	@file @prj/src/Database/StoredProcedures/Platform/Players/SP_Platform_Players_Insert.sql
- *	@author Defraene Michaël (AKA Sonic)
- *
- *	Versions :
- *		- 2026-10-29	: Defraene Michaël		: Initial Creation
+ *	@author Defraene Michaël (AKA Sonic) (co-written by Claude)
  *
  *	@brief Inserts one or more players into the Platform.Players table
  */
 ```
+
+`@author` and the absence of version history follow the same rules as the C# header.
 
 The sections that follow `@brief` depend on the kind of object:
 

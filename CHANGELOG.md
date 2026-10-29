@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Commit scopes (`release`, project names) and branch protection rules in the contribution guide.
-- Coding conventions for C# and SQL: file headers, regions, intent-first documentation, code rules, SQL object headers and naming.
+- Coding conventions for C# and SQL: file headers (legal author, no version history: Git keeps it), regions, intent-first documentation, code rules, SQL object headers and naming.
 - `chore/` branches for repository maintenance.
 
 ### Changed
