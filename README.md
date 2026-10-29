@@ -61,6 +61,12 @@ The output is written to `doc/dev/html/index.html` (not versioned).
 - Code, comments, documentation and commit messages are written in English. Only this README is also available in French.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org) (`feat:`, `fix:`, `docs:`, `chore:`…).
 
+### License
+
+Licensed under the [PolyForm Strict License 1.0.0](LICENSE).
+
+In short: you may use the software for noncommercial purposes only. Distributing it, modifying it or creating derivative works is not permitted. For any other use, contact the author. The [LICENSE](LICENSE) file is the only legally binding text.
+
 ### Author
 
 Michaël Defraene
@@ -123,6 +129,12 @@ Le résultat est écrit dans `doc/dev/html/index.html` (non versionné).
 
 - Le code, les commentaires, la documentation et les messages de commit sont rédigés en anglais. Seul ce README existe aussi en français.
 - Les messages de commit suivent [Conventional Commits](https://www.conventionalcommits.org/fr) (`feat:`, `fix:`, `docs:`, `chore:`…).
+
+### Licence
+
+Distribué sous la [PolyForm Strict License 1.0.0](LICENSE).
+
+En résumé : le logiciel peut être utilisé uniquement à des fins non commerciales. Sa distribution, sa modification et la création d'œuvres dérivées ne sont pas autorisées. Pour tout autre usage, contactez l'auteur. Seul le fichier [LICENSE](LICENSE), en anglais, fait foi.
 
 ### Auteur
 
