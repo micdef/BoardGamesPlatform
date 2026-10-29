@@ -4,8 +4,8 @@ One folder per test project. In Visual Studio, they are grouped in the `9 - Test
 
 | Project | Type | Purpose |
 |---------|------|---------|
-| `SocialGamesPlatform.Architecture.Tests` | Tests | Architecture rules: allowed project references, game isolation, dependencies between layers |
-| `SocialGamesPlatform.TestKit` | Library | Helpers shared by the test projects: repository paths; references the `FakeTimeProvider` package for fake time |
+| `BoardGamesPlatform.Architecture.Tests` | Tests | Architecture rules: allowed project references, game isolation, dependencies between layers |
+| `BoardGamesPlatform.TestKit` | Library | Helpers shared by the test projects: repository paths; references the `FakeTimeProvider` package for fake time |
 
 ## Running the tests
 
@@ -13,8 +13,8 @@ The tests run on **Microsoft.Testing.Platform** (MTP), selected in `global.json`
 
 | Tool | Command |
 |------|---------|
-| .NET CLI, every test project | `dotnet test --solution SocialGamesPlatform.CI.slnf` |
-| .NET CLI, one test project | `dotnet test --project test/SocialGamesPlatform.Architecture.Tests` |
+| .NET CLI, every test project | `dotnet test --solution BoardGamesPlatform.CI.slnf` |
+| .NET CLI, one test project | `dotnet test --project test/BoardGamesPlatform.Architecture.Tests` |
 | Visual Studio | Test Explorer |
 
 With MTP, `--solution` and `--project` are the documented syntax of `dotnet test`; use them rather than a bare path.
@@ -27,11 +27,11 @@ With MTP, `--solution` and `--project` are the documented syntax of `dotnet test
 
 ## Architecture rules
 
-The rules of `SocialGamesPlatform.Architecture.Tests` work at two levels:
+The rules of `BoardGamesPlatform.Architecture.Tests` work at two levels:
 
 | Level | Checks | Works while the projects are empty |
 |-------|--------|:---------------------------------:|
 | Project files | Every project of `src/` only references the projects listed in `ProjectReferenceTests._allowedReferences`; every entry names a real project; every project is analyzed by the layer rules; a game never references another game; nothing references the SQL project | Yes |
 | Types (ArchUnitNET) | The platform domain and use cases depend on no outer layer; only the Very Back uses a SQL client | From the first type written in the layer |
 
-A new project of `src/`, or a new reference, must be added on purpose to `_allowedReferences`, and the new project referenced by `SocialGamesPlatform.Architecture.Tests.csproj`; otherwise the build of the pull request fails.
+A new project of `src/`, or a new reference, must be added on purpose to `_allowedReferences`, and the new project referenced by `BoardGamesPlatform.Architecture.Tests.csproj`; otherwise the build of the pull request fails.

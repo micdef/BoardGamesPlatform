@@ -45,14 +45,14 @@ jobs:
 
       # The CI solution filter lists every .NET project; the SQL project (MSBuild format) is built in Visual Studio only
       - name: Restore
-        run: dotnet restore SocialGamesPlatform.CI.slnf
+        run: dotnet restore BoardGamesPlatform.CI.slnf
 
       - name: Build (warnings are errors)
-        run: dotnet build SocialGamesPlatform.CI.slnf --configuration Release --no-restore
+        run: dotnet build BoardGamesPlatform.CI.slnf --configuration Release --no-restore
 
       # Rules the build does not enforce: line endings, naming (IDE1006) and the other .editorconfig rules
       - name: Check code style (.editorconfig)
-        run: dotnet format SocialGamesPlatform.CI.slnf --verify-no-changes --no-restore
+        run: dotnet format BoardGamesPlatform.CI.slnf --verify-no-changes --no-restore
 
       - name: Test
-        run: dotnet test --solution SocialGamesPlatform.CI.slnf --configuration Release --no-build
+        run: dotnet test --solution BoardGamesPlatform.CI.slnf --configuration Release --no-build

@@ -1,6 +1,6 @@
 # Coding conventions
 
-How code and its documentation are written in SocialGamesPlatform, for C# and SQL.
+How code and its documentation are written in BoardGamesPlatform, for C# and SQL.
 
 ## Principles
 
@@ -40,7 +40,7 @@ using System.Text;
 // #N/A
 
 // Namespace
-namespace SocialGamesPlatform.Platform.Players;
+namespace BoardGamesPlatform.Platform.Players;
 ```
 
 An empty section is kept and marked `// #N/A`. The namespace is file-scoped and matches the folder.

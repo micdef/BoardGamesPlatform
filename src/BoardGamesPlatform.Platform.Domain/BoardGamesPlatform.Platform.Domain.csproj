@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Platform domain: accounts, sessions, lobby, chat, friends, rating (entities and rules) -->
+
+  <!-- Projects -->
+  <ItemGroup>
+    <ProjectReference Include="..\BoardGamesPlatform.Codes\BoardGamesPlatform.Codes.csproj" />
+  </ItemGroup>
+
+</Project>

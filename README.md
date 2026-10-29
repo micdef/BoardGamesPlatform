@@ -1,4 +1,4 @@
-# SocialGamesPlatform
+# BoardGamesPlatform
 
 <a href="#english">🇬🇧 English</a> | <a href="#français">🇫🇷 Français</a>
 
@@ -30,15 +30,15 @@ Design mock-ups of the arcade neon interface: they show the intended look, not t
 
 ```bash
 git clone <repository-url>
-dotnet build SocialGamesPlatform.CI.slnf
-dotnet test --solution SocialGamesPlatform.CI.slnf
+dotnet build BoardGamesPlatform.CI.slnf
+dotnet test --solution BoardGamesPlatform.CI.slnf
 ```
 
 ### Repository layout
 
 | Path                       | Purpose                                                       |
 |----------------------------|---------------------------------------------------------------|
-| `SocialGamesPlatform.slnx` | Solution file                                                 |
+| `BoardGamesPlatform.slnx` | Solution file                                                 |
 | `src/`                     | Source projects                                               |
 | `test/`                    | Test projects                                                 |
 | `doc/analyse/`             | Analysis: requirements, scope, architecture, decisions        |
@@ -109,15 +109,15 @@ Maquettes de l'interface en style arcade néon : elles montrent l'apparence vis�
 
 ```bash
 git clone <url-du-depot>
-dotnet build SocialGamesPlatform.CI.slnf
-dotnet test --solution SocialGamesPlatform.CI.slnf
+dotnet build BoardGamesPlatform.CI.slnf
+dotnet test --solution BoardGamesPlatform.CI.slnf
 ```
 
 ### Organisation du dépôt
 
 | Chemin                     | Rôle                                                                |
 |----------------------------|---------------------------------------------------------------------|
-| `SocialGamesPlatform.slnx` | Fichier de solution                                                 |
+| `BoardGamesPlatform.slnx` | Fichier de solution                                                 |
 | `src/`                     | Projets sources                                                     |
 | `test/`                    | Projets de tests                                                    |
 | `doc/analyse/`             | Analyse : besoins, périmètre, architecture, décisions               |

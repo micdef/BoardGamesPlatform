@@ -12,7 +12,7 @@
 #---------------------------------------------------------------------------
 # Project (doc/ must exist: Doxygen creates only the last level of OUTPUT_DIRECTORY)
 #---------------------------------------------------------------------------
-PROJECT_NAME           = "SocialGamesPlatform"
+PROJECT_NAME           = "BoardGamesPlatform"
 PROJECT_BRIEF          = "Board games played together online, built on .NET 10"
 OUTPUT_DIRECTORY       = doc/dev
 OUTPUT_LANGUAGE        = English

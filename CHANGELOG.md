@@ -37,5 +37,5 @@ Repository bootstrap: no game code yet.
 - Contribution guide describing the branching model, commit and pull request conventions, versioning and releases.
 - Continuous integration workflow building and testing every pull request.
 
-[Unreleased]: https://github.com/micdef/SocialGamesPlatform/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/micdef/SocialGamesPlatform/releases/tag/v0.1.0
+[Unreleased]: https://github.com/micdef/BoardGamesPlatform/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/micdef/BoardGamesPlatform/releases/tag/v0.1.0

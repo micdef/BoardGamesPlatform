@@ -1,4 +1,4 @@
-# Contributing to SocialGamesPlatform
+# Contributing to BoardGamesPlatform
 
 This guide describes how changes reach the repository: branches, commits, pull requests, versions and releases.
 These rules apply to every contributor, human or AI assistant.
