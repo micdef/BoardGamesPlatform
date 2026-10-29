@@ -1,0 +1,53 @@
+# ┌──────────────┬──────────────────────────────────────────────────────────────┐
+# │ File         │ .github/workflows/ci.yml                                     │
+# │ Purpose      │ Builds and tests the solution on every pull request to a     │
+# │              │ shared branch, and after every merge into main or dev.       │
+# │              │ A failing run blocks the pull request (see CONTRIBUTING.md). │
+# └──────────────┴──────────────────────────────────────────────────────────────┘
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main, dev, 'release/**']
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+
+# Read-only token: the workflow never writes to the repository
+permissions:
+  contents: read
+
+# A new push to the same pull request cancels the run in progress
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build:
+    name: Build and test
+    # Windows: the target platform of the solution
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Install the .NET SDK pinned in global.json
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore SocialGamesPlatform.slnx
+
+      - name: Build (warnings are errors)
+        run: dotnet build SocialGamesPlatform.slnx --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test SocialGamesPlatform.slnx --configuration Release --no-build
