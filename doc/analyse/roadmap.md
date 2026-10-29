@@ -15,6 +15,7 @@ It records the scope, the order of the work, what each version must demonstrate,
 - Statistics and a per-game rating, used to pick a random online opponent of a similar level.
 - AI players for Battleships, each level being a named player: easy, medium and hard.
 - An administration section in the website and a separate administration tool.
+- A user interface available in several languages (at least English and French), in the arcade neon style of the design mock-up.
 - A native installation (IIS, Windows services, Linux systemd daemons) and a Docker variant.
 - User, administrator and developer documentation.
 
@@ -33,6 +34,7 @@ It records the scope, the order of the work, what each version must demonstrate,
 - **Riskiest work first.** The custom socket protocol, its security layers and the end-to-end path through every tier come before the features.
 - **Tests from the start.** The test infrastructure exists from 0.2.0; every version ships the tests of what it adds, in the same branches as the code.
 - **One version at a time.** Versions are developed in sequence: a single `release/X.Y.Z` branch is open at any time.
+- **Multilingual from the start.** No text shown to a user is written in the code: the fronts read it from resources in the player's language. The other tiers never send display texts, only codes (errors, events, statuses) that the fronts translate.
 - **Security-sensitive work is marked [SEC].** It is written by the main developer and reviewed by the security agents and by the project lead.
 
 ## Architecture summary
@@ -70,7 +72,7 @@ Other UIs   ┘
 
 #### 0.4.0 — Robust socket protocol [SEC]
 
-- **Content**: protocol versioning and negotiation, serialization format, heartbeat, reconnection with back-off, request timeouts, message size limits, rejection of malformed frames.
+- **Content**: protocol versioning and negotiation, serialization format, heartbeat, reconnection with back-off, request timeouts, message size limits, rejection of malformed frames; errors carried as codes, never as display texts.
 - **Done**: the Very Back is stopped in the middle of a session; the Back reconnects, and pending requests either resume or fail cleanly.
 - **Tests**: property-based and fuzz tests of the framing, reconnection tests against a test server that can be killed.
 - **Branches**: `feature/protocol-versioning`, `feature/heartbeat`, `feature/reconnection`, `feature/protocol-limits`, `docs/protocol-specification`.
@@ -101,14 +103,14 @@ Other UIs   ┘
 
 #### 0.8.0 — Accounts and sessions [SEC]
 
-- **Content**: registration (nickname, e-mail address, password), hashed passwords, login and logout, opaque 256-bit session token (only its SHA-256 hash is stored), expiry, immediate revocation, session audit, account states (active, warned, suspended, banned), registration switch.
+- **Content**: registration (nickname, e-mail address, password, preferred language), hashed passwords, login and logout, opaque 256-bit session token (only its SHA-256 hash is stored), expiry, immediate revocation, session audit, account states (active, warned, suspended, banned), registration switch.
 - **Done**: register, log in, log out; a revoked token is refused immediately; the audit rows exist.
 - **Tests**: expiry, revocation, hash-only storage, registration switch.
 - **Branches**: `feature/account-registration`, `feature/session-tokens`, `feature/session-audit`, `feature/registration-switch`.
 
 #### 0.9.0 — E-mail: verification and password reset [SEC]
 
-- **Content**: e-mail sending through an SMTP server, e-mail address verification, password reset by a single-use, time-limited link (only its hash is stored).
+- **Content**: e-mail sending through an SMTP server, e-mail templates in each supported language (the player's preferred language), e-mail address verification, password reset by a single-use, time-limited link (only its hash is stored).
 - **Done**: a new account is activated from the verification e-mail; a forgotten password is reset from the e-mail link, and the link no longer works afterwards.
 - **Tests**: single use, expiry, unverified account restrictions; e-mails captured by a test SMTP server.
 - **Branches**: `feature/email-sending`, `feature/email-verification`, `feature/password-reset`.
@@ -120,11 +122,16 @@ Other UIs   ┘
 - **Tests**: architecture rule "the gateway contains no game logic", rate-limit tests.
 - **Branches**: `feature/platform-module`, `feature/gateway-authentication`, `feature/gateway-rate-limit`.
 
-#### 0.11.0 — Website
+#### 0.11.0 — Website, design system and languages
 
-- **Content**: the Blazor Auto layout, the registration and login forms forced to InteractiveServer with full validation, a minimal administration section (open or close registrations, user list).
-- **Done**: a user registers and logs in from a browser; the administrator closes the registrations and the registration form refuses new accounts.
-- **Branches**: `feature/site-layout`, `feature/login-registration-forms`, `feature/admin-registration-switch`.
+- **Content**:
+  - the **design system** of the arcade neon mock-up: colors, typography (Orbitron for titles and buttons, Rajdhani for text), buttons, badges, form fields, glow rules, as one shared stylesheet of variables and Blazor components;
+  - the **visual identity of a game** (icon and background watermark), provided by each game module, so that a player knows at a glance which game is on screen;
+  - **internationalization**: resources per language, language picker, the player's preferred language, culture-aware dates and numbers, translation of the codes received from the other tiers;
+  - the Blazor Auto layout, the registration and login forms forced to InteractiveServer with full validation, a minimal administration section (open or close registrations, user list).
+- **Done**: a user registers and logs in from a browser, in English or in French, and the whole site switches language; the administrator closes the registrations and the registration form refuses new accounts.
+- **Tests**: every resource key exists in every supported language (a missing translation fails the build); component tests of the design system.
+- **Branches**: `feature/design-system`, `feature/game-visual-identity`, `feature/localization`, `feature/site-layout`, `feature/login-registration-forms`, `feature/admin-registration-switch`.
 
 #### 0.12.0 — Lobby and chat
 
@@ -304,6 +311,8 @@ Every tier communicates through the network. All ports are configurable; their d
 | Spectators | Public view: the match is visible, the fleets never are |
 | Rating | A rating system (Elo or Glicko), per game |
 | AI | Named player accounts going through the same contract as humans |
+| Languages | Multilingual user interface, English and French at least; only codes travel between tiers, the fronts translate them |
+| User interface | Arcade neon design system (direction approved, mock-up being refined): cyan for the player and primary actions, magenta for the opponent and hits, glow only on interactive or live elements; each game has its own icon and background watermark |
 
 ## Choices left for later
 
@@ -318,4 +327,4 @@ Every tier communicates through the network. All ports are configurable; their d
 | Elo or Glicko | 0.19.0 |
 | Whether AI players appear in the ranking and in random matchmaking | 0.20.0 / 0.21.0 |
 | Names of the AI players | 0.21.0 |
-| User interface design system (arcade neon style) | Mock-up in progress, integrated into this roadmap once validated |
+| Languages supported beyond English and French | 0.11.0 |
