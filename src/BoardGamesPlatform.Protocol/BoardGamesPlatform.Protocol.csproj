@@ -1,4 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- Socket protocol shared by the Gateway-Back and Back-Very Back links: framing, serialization, heartbeat, reconnection, mutual TLS, authenticated ECDH -->
 
+  <!-- The tests reach the internal TCP connection, to check the socket settings it applies -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="BoardGamesPlatform.Protocol.Tests" />
+  </ItemGroup>
+
 </Project>
