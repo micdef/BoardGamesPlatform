@@ -7,6 +7,7 @@
 
 // Using
 using System.Net;
+using BoardGamesPlatform.Protocol.Links;
 
 // Static using
 // #N/A
@@ -50,7 +51,7 @@ public sealed class VeryBackClientOptions
     /// Longest connect timeout accepted: waiting longer for a tier on the same network means it is down, and a far longer value could not be
     /// set as a cancellation deadline (about 49.7 days at most)
     /// </summary>
-    public static readonly TimeSpan MaxConnectTimeout = TimeSpan.FromMinutes(5);
+    public static readonly TimeSpan MaxConnectTimeout = LinkClient.MaxConnectTimeout;
 
     #endregion
 

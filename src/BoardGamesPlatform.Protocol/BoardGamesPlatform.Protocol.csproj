@@ -6,4 +6,9 @@
     <InternalsVisibleTo Include="BoardGamesPlatform.Protocol.Tests" />
   </ItemGroup>
 
+  <!-- Packages (versions in Directory.Packages.props): the links log through the logger of the tier that uses them -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
 </Project>
