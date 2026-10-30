@@ -304,6 +304,7 @@ Every tier communicates through the network. All ports are configurable; the def
 | Back ↔ Very Back | Raw TCP sockets, TLS 1.3 with mutual authentication, plus an authenticated ECDH handshake |
 | Gateway ↔ Back | Raw TCP sockets, TLS 1.3 with mutual authentication |
 | Socket protocol | The transport hands over a byte stream, so that TLS wraps it; frames carry a length prefix, a correlation identifier and a UTF-8 JSON payload (System.Text.Json), with a maximum frame size; several requests in flight on one connection. No version field before 0.4.0 |
+| Message envelope | From 0.3.0, every request is `{"operation":"<name>","body":{…}}` and every response `{"body":{…}}` (UTF-8 JSON, camelCase); each tier routes the requests by operation name. Reading is strict: any other shape is a protocol violation. 0.4.0 adds the version and the error code next to the body |
 | Default ports | Gateway → Back 7821, Back → Very Back 7822 (unassigned in the IANA registry, range 7811-7844); configurable; listeners on the loopback address unless configured otherwise |
 | Real time | SignalR, through the gateway, for every front including a future WPF client |
 | Identity | Opaque session token verified by the Back; no JWT |
