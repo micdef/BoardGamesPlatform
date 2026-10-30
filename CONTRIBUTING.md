@@ -87,6 +87,8 @@ New scopes are added to this table when a new area of the solution is created.
 - Every change reaches `main`, `dev` and `release/*` through a pull request opened against the parent branch.
 - The title follows the commit convention: `feat: add fleet placement`.
 - The description states the purpose, the main changes and how they were tested.
+- The changes are described in a **changelog fragment**, `changelog/unreleased/<branch>.md` (see [its README](changelog/unreleased/README.md)), never in `CHANGELOG.md` itself: the CI refuses a pull request that edits it, except `docs/release-X.Y.Z`.
+- **Two pull requests open at the same time never touch the same file**, so that none of them ever has a merge conflict; a pull request that needs a file of another open one is opened once that one is merged.
 - The build must pass and every review thread must be resolved before merging.
 - **Only the repository owner merges a pull request.** Nobody else, including AI assistants, merges.
 
@@ -130,7 +132,7 @@ Before `1.0.0`, versions are `0.Y.Z` and the software is not considered stable. 
 
 ## Releases
 
-1. On the release branch, move the `[Unreleased]` entries of [CHANGELOG.md](CHANGELOG.md) under the new version number and date, through a `docs/release-X.Y.Z` pull request.
+1. On the release branch, through a `docs/release-X.Y.Z` pull request: merge the changelog fragments with `pwsh tools/changelog/Merge-ChangelogFragments.ps1`, then move the `[Unreleased]` entries of [CHANGELOG.md](CHANGELOG.md) under the new version number and date.
    The changelog is finalized before the version leaves its branch, because `dev` and `main` only accept pull requests.
 2. Merge `release/X.Y.Z` into `dev` through a pull request.
 3. Merge `dev` into `main` through a pull request.
