@@ -402,7 +402,7 @@ public sealed class MessageTests
     {
         // Serving a loopback connection with the dispatcher
         CancellationToken token = TestContext.Current.CancellationToken;
-        await using TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, 0));
+        await using TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next()));
         Task<ITransportConnection> accepting = listener.AcceptAsync(token);
         ITransportConnection clientEnd = await new TcpTransportConnector().ConnectAsync("127.0.0.1", listener.LocalEndPoint.Port, token);
         await using ITransportConnection serverEnd = await accepting;

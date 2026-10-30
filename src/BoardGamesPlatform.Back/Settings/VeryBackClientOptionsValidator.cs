@@ -24,8 +24,8 @@ namespace BoardGamesPlatform.Back.Settings;
 /// <remarks>
 /// <para><b>Purpose:</b> a Back configured with an unusable address of the Very Back must refuse to start (fail closed), like any other
 /// invalid setting, instead of failing at the first request.</para>
-/// <para><b>Behavior:</b> runs the checks of <see cref="VeryBackClientOptions.Validate"/>, the single place where they are written, and turns
-/// their refusal into a validation failure with the same message: it names the setting and never repeats its value.</para>
+/// <para><b>Behavior:</b> applies <see cref="VeryBackClientOptions.FindProblem"/>, the single place where the checks are written; the failure
+/// names the setting and never repeats its value.</para>
 /// </remarks>
 public sealed class VeryBackClientOptionsValidator : IValidateOptions<VeryBackClientOptions>
 {
@@ -112,15 +112,9 @@ public sealed class VeryBackClientOptionsValidator : IValidateOptions<VeryBackCl
     public ValidateOptionsResult Validate(string? name, VeryBackClientOptions options)
     {
         // Running the checks of the settings themselves
-        try
-        {
-            options.Validate();
-        }
-        catch (InvalidOperationException exception)
-        {
-            // Function's return
-            return ValidateOptionsResult.Fail(exception.Message);
-        }
+        string? problem = options.FindProblem();
+        if (problem is not null)
+            return ValidateOptionsResult.Fail(problem);
 
         // Function's return
         return ValidateOptionsResult.Success;

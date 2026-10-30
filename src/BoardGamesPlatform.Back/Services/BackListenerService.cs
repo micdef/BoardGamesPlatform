@@ -115,7 +115,7 @@ public sealed partial class BackListenerService : BackgroundService
     #region Members & Properties
 
     /// <summary>
-    /// Address and port the service listens on; when port 0 is configured, the port given by the system (used by the tests)
+    /// Address and port the service listens on, as bound when it started
     /// </summary>
     /// <exception cref="InvalidOperationException">If the service is not started</exception>
     public IPEndPoint LocalEndPoint => _listener?.LocalEndPoint ?? throw new InvalidOperationException("The listener is not started");

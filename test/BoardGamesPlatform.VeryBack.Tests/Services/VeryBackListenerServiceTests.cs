@@ -39,9 +39,9 @@ namespace BoardGamesPlatform.VeryBack.Tests.Services;
 /// <remarks>
 /// <para><b>Purpose:</b> proves the Ping operation end to end up to the procedure (a fake here), and the rules of the accept loop: a failing
 /// connection never stops the others, and stopping the service closes the listener.</para>
-/// <para><b>Behavior:</b> every service binds port 0 on the loopback address and the client connects to the port given by the system. Each test
-/// is limited in time, so that a missing response fails the test instead of blocking the run; nothing waits for a fixed delay: the tests wait
-/// for the response, or for the close of the connection.</para>
+/// <para><b>Behavior:</b> every service binds a fixed test port of the block of this project (see <see cref="TestPorts"/>) on the loopback
+/// address. Each test is limited in time, so that a missing response fails the test instead of blocking the run; nothing waits for a fixed
+/// delay: the tests wait for the response, or for the close of the connection.</para>
 /// </remarks>
 public sealed class VeryBackListenerServiceTests
 {
@@ -123,7 +123,7 @@ public sealed class VeryBackListenerServiceTests
     #region Privates
 
     /// <summary>
-    /// Method used to create a service listening on port 0 of the loopback address, and start it
+    /// Method used to create a service listening on a test port of the loopback address, and start it
     /// </summary>
     /// <param name="procedure">[Cannot be null] Procedure the service calls</param>
     /// <param name="cancellationToken">Token of the test</param>
@@ -133,7 +133,7 @@ public sealed class VeryBackListenerServiceTests
     private static async Task<VeryBackListenerService> StartServiceAsync(IPingProcedure procedure, CancellationToken cancellationToken)
     {
         // Creating and starting the service
-        VeryBackOptions options = new VeryBackOptions { ListenAddress = LoopbackHost, Port = 0 };
+        VeryBackOptions options = new VeryBackOptions { ListenAddress = LoopbackHost, Port = TestPorts.Block.Next() };
         VeryBackListenerService service = new VeryBackListenerService(Options.Create(options), procedure, NullLogger<VeryBackListenerService>.Instance);
         await service.StartAsync(cancellationToken);
 

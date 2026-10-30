@@ -24,7 +24,7 @@ namespace BoardGamesPlatform.Platform.Infrastructure.VeryBack;
 /// <remarks>
 /// <para><b>Purpose:</b> lets an administrator point the Back to the Very Back through its configuration only, without changing the code.</para>
 /// <para><b>Behavior:</b> read from the "VeryBack" section of the configuration (appsettings.json or environment variables such as
-/// <c>VeryBack__Port</c>). The Back calls <see cref="Validate"/> at startup and refuses to start when a setting is invalid (fail closed).
+/// <c>VeryBack__Port</c>). The Back checks them at startup (<c>VeryBackClientOptionsValidator</c>) and refuses to start when a setting is invalid (fail closed).
 /// The defaults suit a development machine, where both tiers run side by side.</para>
 /// </remarks>
 public sealed class VeryBackClientOptions
@@ -127,23 +127,45 @@ public sealed class VeryBackClientOptions
     #region Publics
 
     /// <summary>
-    /// Method used to check the settings
+    /// Method used to find what is wrong in the settings
     /// </summary>
     /// <remarks>
-    /// <para><b>Purpose:</b> stops the startup of the Back on a wrong setting, rather than failing at the first call to the Very Back.</para>
+    /// <para><b>Purpose:</b> one place that knows the rules, for the startup check of the Back (no exception used for control flow) and for
+    /// <see cref="Validate"/>.</para>
     /// <para><b>Behavior:</b> the host must not be empty, the port must be from 1 to 65535 and the connection timeout greater than zero and at
-    /// most <see cref="MaxConnectTimeout"/>. The message names the setting, never its value.</para>
+    /// most <see cref="MaxConnectTimeout"/>. The message names the setting, never its value. Only the first problem found is returned.</para>
+    /// </remarks>
+    /// <returns>
+    /// The message that describes the first invalid setting; null when every setting is valid
+    /// </returns>
+    public string? FindProblem()
+    {
+        // Checks
+        if (string.IsNullOrWhiteSpace(Host))
+            return $"The setting {SectionName}:{nameof(Host)} must not be empty";
+        if (Port < 1 || Port > IPEndPoint.MaxPort)
+            return $"The setting {SectionName}:{nameof(Port)} must be between 1 and {IPEndPoint.MaxPort}";
+        if (ConnectTimeout <= TimeSpan.Zero || ConnectTimeout > MaxConnectTimeout)
+            return $"The setting {SectionName}:{nameof(ConnectTimeout)} must be greater than zero and at most {MaxConnectTimeout}";
+
+        // Function's return
+        return null;
+    }
+
+    /// <summary>
+    /// Method used to refuse invalid settings with an exception
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> lets a consumer that must not work with invalid settings (the constructor of the Very Back client) fail at once.</para>
+    /// <para><b>Behavior:</b> throws the message of <see cref="FindProblem"/>, which names the setting and never its value.</para>
     /// </remarks>
     /// <exception cref="InvalidOperationException">If a setting is invalid</exception>
     public void Validate()
     {
         // Checks
-        if (string.IsNullOrWhiteSpace(Host))
-            throw new InvalidOperationException($"The setting {SectionName}:{nameof(Host)} must not be empty");
-        if (Port < 1 || Port > IPEndPoint.MaxPort)
-            throw new InvalidOperationException($"The setting {SectionName}:{nameof(Port)} must be between 1 and {IPEndPoint.MaxPort}");
-        if (ConnectTimeout <= TimeSpan.Zero || ConnectTimeout > MaxConnectTimeout)
-            throw new InvalidOperationException($"The setting {SectionName}:{nameof(ConnectTimeout)} must be greater than zero and at most {MaxConnectTimeout}");
+        string? problem = FindProblem();
+        if (problem is not null)
+            throw new InvalidOperationException(problem);
     }
 
     #endregion

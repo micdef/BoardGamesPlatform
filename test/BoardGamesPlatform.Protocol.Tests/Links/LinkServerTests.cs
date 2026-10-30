@@ -34,8 +34,8 @@ namespace BoardGamesPlatform.Protocol.Tests.Links;
 /// <remarks>
 /// <para><b>Purpose:</b> the rules of the accept loop hold for any tier, under the name it gives: the tests use "the Back", a tier other than
 /// the one the loop was first written for.</para>
-/// <para><b>Behavior:</b> the failures of the listener are simulated by a fake listener; the round trip uses a real listener on port 0 of the
-/// loopback address. Each test is limited in time and waits for events, never for a fixed delay.</para>
+/// <para><b>Behavior:</b> the failures of the listener are simulated by a fake listener; the round trip uses a real listener on a fixed test
+/// port of the loopback address. Each test is limited in time and waits for events, never for a fixed delay.</para>
 /// </remarks>
 public sealed class LinkServerTests
 {
@@ -161,7 +161,7 @@ public sealed class LinkServerTests
     {
         // Running a server on a real listener, and sending a Ping
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
-        TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, 0));
+        TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next()));
         int port = listener.LocalEndPoint.Port;
         CapturingLogger<LinkServerTests> logger = new CapturingLogger<LinkServerTests>();
         using CancellationTokenSource stopping = new CancellationTokenSource();

@@ -38,8 +38,8 @@ namespace BoardGamesPlatform.Back.Tests.Services;
 /// <remarks>
 /// <para><b>Purpose:</b> proves the Ping operation of the Back end to end up to a fake Very Back, and that the Back never runs without
 /// listening. The rules of the accept loop itself are proven by the tests of the link server, in the protocol tests.</para>
-/// <para><b>Behavior:</b> every listener binds port 0 on the loopback address; each test is limited in time and waits for responses or for the
-/// close of a connection, never for a fixed delay.</para>
+/// <para><b>Behavior:</b> every listener binds a fixed test port of the block of this project (see <see cref="TestPorts"/>) on the loopback
+/// address; each test is limited in time and waits for responses or for the close of a connection, never for a fixed delay.</para>
 /// </remarks>
 public sealed class BackListenerServiceTests
 {
@@ -51,6 +51,11 @@ public sealed class BackListenerServiceTests
     /// Longest duration of a network test, in milliseconds
     /// </summary>
     private const int TestTimeout = 10000;
+
+    /// <summary>
+    /// Longest duration of a test that waits for refused connections: on Windows, each refusal on the loopback address takes about 2 seconds
+    /// </summary>
+    private const int RefusalTestTimeout = 30000;
 
     /// <summary>
     /// Address used by the clients to reach the services of the tests
@@ -131,7 +136,7 @@ public sealed class BackListenerServiceTests
     }
 
     /// <summary>
-    /// Method used to start a Back listening on port 0 of the loopback address
+    /// Method used to start a Back listening on a test port of the loopback address
     /// </summary>
     /// <param name="veryBackClient">[Cannot be null] Client of the Very Back used by the Back</param>
     /// <param name="cancellationToken">Token of the test</param>
@@ -145,7 +150,7 @@ public sealed class BackListenerServiceTests
     }
 
     /// <summary>
-    /// Method used to start a Back listening on port 0 of the loopback address, with a given logger
+    /// Method used to start a Back listening on a test port of the loopback address, with a given logger
     /// </summary>
     /// <param name="veryBackClient">[Cannot be null] Client of the Very Back used by the Back</param>
     /// <param name="logger">[Cannot be null] Logger of the service</param>
@@ -156,7 +161,7 @@ public sealed class BackListenerServiceTests
     private static async Task<BackListenerService> StartBackAsync(VeryBackClient veryBackClient, ILogger<BackListenerService> logger, CancellationToken cancellationToken)
     {
         // Creating and starting the service
-        BackListenerService service = new BackListenerService(Options.Create(new BackOptions { ListenAddress = LoopbackHost, Port = 0 }), veryBackClient,
+        BackListenerService service = new BackListenerService(Options.Create(new BackOptions { ListenAddress = LoopbackHost, Port = TestPorts.Block.Next() }), veryBackClient,
             logger);
         await service.StartAsync(cancellationToken);
 
@@ -220,15 +225,12 @@ public sealed class BackListenerServiceTests
     /// <returns>
     /// A task that completes when the check is done
     /// </returns>
-    [Fact(Timeout = TestTimeout)]
+    [Fact(Timeout = RefusalTestTimeout)]
     public async Task APingFailsWhenTheVeryBackIsDownAndTheBackKeepsServingAsync()
     {
-        // Taking the port of a Very Back that stops at once (no port is picked in advance), then starting the Back
+        // Pointing the Back to a test port of the block where nothing listens, then starting it
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
-        FakeVeryBack stopped = new FakeVeryBack();
-        int veryBackPort = stopped.Port;
-        await stopped.DisposeAsync();
-        await using VeryBackClient veryBackClient = CreateVeryBackClient(veryBackPort);
+        await using VeryBackClient veryBackClient = CreateVeryBackClient(TestPorts.Block.Next());
         CapturingLogger<BackListenerService> logger = new CapturingLogger<BackListenerService>();
         BackListenerService service = await StartBackAsync(veryBackClient, logger, cancellationToken);
         try
