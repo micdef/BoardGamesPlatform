@@ -1,9 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Tests of the socket protocol: framing (more to come: transport, request/response correlation) -->
+  <!-- Tests of the socket protocol: framing, transport, request/response correlation, messages; and of the message contracts of the tiers -->
 
-  <!-- Projects: the protocol under test -->
+  <!-- Projects: the protocol under test, and the contracts whose messages it carries -->
   <ItemGroup>
     <ProjectReference Include="..\..\src\BoardGamesPlatform.Protocol\BoardGamesPlatform.Protocol.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.VeryBack.Contracts\BoardGamesPlatform.VeryBack.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Back.Contracts\BoardGamesPlatform.Back.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Gateway.Contracts\BoardGamesPlatform.Gateway.Contracts.csproj" />
   </ItemGroup>
 
 </Project>
