@@ -9,6 +9,7 @@
 using BoardGamesPlatform.TestKit;
 using BoardGamesPlatform.VeryBack.Procedures;
 using BoardGamesPlatform.VeryBack.Settings;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Options;
 
 // Static using
@@ -204,6 +205,72 @@ public sealed class SqlPingProcedureTests
         exception.Message.ShouldContain("ConnectionStrings:Main");
         exception.Message.ShouldNotContain("Kx9secret", Case.Insensitive);
         exception.InnerException.ShouldBeNull();
+    }
+
+    #endregion
+
+    #region Application name
+
+    /// <summary>
+    /// A connection string without Application Name gets the name of the Very Back, and keeps its other keywords
+    /// </summary>
+    /// <param name="connectionString">Connection string without Application Name</param>
+    [Theory]
+    [InlineData("Server=localhost;Database=TEST_BoardGamesPlatform;Integrated Security=true")]
+    [InlineData("Server=localhost;Max Pool Size=7;Pooling=true")]
+    [InlineData("Server=localhost;Application Name=")]
+    [InlineData("Server=localhost;App=")]
+    public void TheDefaultApplicationNameIsAddedWhenAbsent(string connectionString)
+    {
+        // Check
+        SqlConnectionStringBuilder before = new SqlConnectionStringBuilder(connectionString);
+        SqlConnectionStringBuilder after = new SqlConnectionStringBuilder(SqlPingProcedure.WithApplicationName(connectionString));
+        after.ApplicationName.ShouldBe(SqlPingProcedure.DefaultApplicationName);
+        after.DataSource.ShouldBe(before.DataSource);
+        after.MaxPoolSize.ShouldBe(before.MaxPoolSize);
+        after.Pooling.ShouldBe(before.Pooling);
+    }
+
+    /// <summary>
+    /// An Application Name set by the administrator, under either of its two keywords (in any case) and whatever its value, is kept untouched
+    /// </summary>
+    /// <param name="connectionString">Connection string that sets the application name</param>
+    /// <param name="expected">Application name the administrator set</param>
+    [Theory]
+    [InlineData("Server=localhost;Application Name=Admin.Choice", "Admin.Choice")]
+    [InlineData("Server=localhost;App=Admin.Choice", "Admin.Choice")]
+    [InlineData("Server=localhost;APP=Admin.Choice", "Admin.Choice")]
+    [InlineData("Server=localhost;application name=x", "x")]
+    [InlineData("Server=localhost;Application Name=.Net SqlClient Data Provider", ".Net SqlClient Data Provider")]
+    public void AnApplicationNameSetByTheAdministratorIsKept(string connectionString, string expected)
+    {
+        // Check
+        string result = SqlPingProcedure.WithApplicationName(connectionString);
+        result.ShouldBe(connectionString);
+        new SqlConnectionStringBuilder(result).ApplicationName.ShouldBe(expected);
+    }
+
+    #endregion
+
+    #region Disposal
+
+    /// <summary>
+    /// A call after the disposal is refused, so that it never opens a new pool (and a new session) once the Very Back is stopped; disposing
+    /// twice is harmless
+    /// </summary>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    [Fact(Timeout = TestTimeout)]
+    public async Task ACallAfterTheDisposalIsRefusedAsync()
+    {
+        // Disposing a procedure that never opened a connection (nothing reaches the network)
+        SqlPingProcedure procedure = new SqlPingProcedure(Options.Create(new ConnectionStringsOptions { Main = "Server=localhost;Database=TEST_BoardGamesPlatform;Integrated Security=true" }));
+        procedure.Dispose();
+        procedure.Dispose();
+
+        // Check
+        await Should.ThrowAsync<ObjectDisposedException>(() => procedure.GetServerTimeAsync(TestContext.Current.CancellationToken));
     }
 
     #endregion

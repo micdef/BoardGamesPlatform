@@ -48,5 +48,6 @@ dotnet test --project test/BoardGamesPlatform.Database.Tests
 ```
 
 - The tests refuse any database whose name does not start with `TEST_` or `DEV_`: they create and drop objects (a temporary user without login, dropped at the end of its test). The rule lives in one place, `TestDatabase` of `test/BoardGamesPlatform.TestKit`, used by the three test projects that reach a real SQL Server (`Database.Tests`, `VeryBack.Tests`, `EndToEnd.Tests`); the name is read from the open connection.
+- The session test of the Very Back (`SqlSessionsTests`) counts the sessions in `sys.dm_exec_sessions`, which shows the sessions of others only with `VIEW SERVER STATE` (SQL Server 2019 and earlier) or `VIEW SERVER PERFORMANCE STATE` (SQL Server 2022 and later); without it, the test is skipped with that reason.
 - Running them locally is **mandatory before every `release/X.Y.Z` → `dev` merge** (roadmap, test strategy).
 - The real SQL variant of the end-to-end test (`test/BoardGamesPlatform.EndToEnd.Tests`, a Ping from a headless front through the five tiers down to this database) runs with the same variable, the same `TEST_` / `DEV_` rule, and is skipped without it.

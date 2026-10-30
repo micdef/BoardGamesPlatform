@@ -7,6 +7,7 @@
 
 // Using
 using System.Data;
+using System.Data.Common;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -34,12 +35,33 @@ namespace BoardGamesPlatform.VeryBack.Procedures;
 /// Back checks what the database returns instead of trusting it. The connection string is never logged and never put in an exception message:
 /// it is checked at construction, so that the parsing error of the SQL client, which quotes the unknown keyword, can never be raised by a
 /// call. The errors of SQL Server itself may still name the server, the database or the login.</para>
+/// <para><b>Sessions:</b> the SQL client keeps the closed connections in a pool, so a session stays open on SQL Server after the call. The
+/// procedure is a singleton of the host: the host disposes it after every hosted service is stopped, that is once the requests in progress
+/// have ended, and <see cref="Dispose"/> then clears the pool of its own connection string only, so that no session of the Very Back stays on
+/// SQL Server after a stop or a redeployment. The sessions are named <see cref="DefaultApplicationName"/> unless the administrator sets
+/// <c>Application Name</c> in the connection string.</para>
 /// </remarks>
-public sealed partial class SqlPingProcedure : IPingProcedure
+public sealed partial class SqlPingProcedure : IPingProcedure, IDisposable
 {
     #region Members
 
     #region Constants
+
+    /// <summary>
+    /// Name given to the sessions of the Very Back on SQL Server (column program_name of sys.dm_exec_sessions) when the connection string
+    /// sets no Application Name
+    /// </summary>
+    public const string DefaultApplicationName = "BoardGamesPlatform.VeryBack";
+
+    /// <summary>
+    /// Keyword of the connection string that names the application
+    /// </summary>
+    private const string ApplicationNameKeyword = "Application Name";
+
+    /// <summary>
+    /// Synonym of <see cref="ApplicationNameKeyword"/>
+    /// </summary>
+    private const string ApplicationNameSynonym = "App";
 
     /// <summary>
     /// Schema-qualified name of the stored procedure
@@ -66,7 +88,10 @@ public sealed partial class SqlPingProcedure : IPingProcedure
 
     #region Variables
 
-    // #N/A
+    /// <summary>
+    /// Whether the pool has been cleared: 0 = no, 1 = yes (set with Interlocked.Exchange, so that Dispose clears the pool once)
+    /// </summary>
+    private int _disposed;
 
     #endregion
 
@@ -131,8 +156,8 @@ public sealed partial class SqlPingProcedure : IPingProcedure
         if (!ConnectionStringsOptionsValidator.IsWellFormed(connectionString))
             throw new InvalidOperationException($"{ConnectionStringsOptions.SectionName}:{nameof(ConnectionStringsOptions.Main)} is not a connection string the SQL client can read");
 
-        // Setting
-        _connectionString = connectionString;
+        // Setting, with the name of the sessions
+        _connectionString = WithApplicationName(connectionString);
     }
 
     #endregion
@@ -160,6 +185,34 @@ public sealed partial class SqlPingProcedure : IPingProcedure
     #endregion
 
     #region Publics
+
+    /// <summary>
+    /// Method used to name the sessions of the Very Back in a connection string
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> lets an administrator recognize the sessions of the Very Back on SQL Server (program_name), and tell them from the
+    /// ones of another application.</para>
+    /// <para><b>Behavior:</b> if the connection string sets <c>Application Name</c> (or its synonym <c>App</c>) with a value, even the default one
+    /// of the SQL client, it is returned untouched: a value set by the administrator is always kept. An empty value counts as no value.
+    /// Otherwise <see cref="DefaultApplicationName"/> is added. The string is never logged, and the errors of the SQL client, which can quote a
+    /// piece of it, are not caught here: the caller has already checked that it is well formed.</para>
+    /// </remarks>
+    /// <param name="connectionString">[Cannot be null] A connection string the SQL client can read</param>
+    /// <returns>
+    /// The same string when it names the application, otherwise the string with the default name added
+    /// </returns>
+    internal static string WithApplicationName(string connectionString)
+    {
+        // Keeping the name set by the administrator: the generic builder lists the keywords really written (the one of the SQL client lists
+        // them all, and hides a name equal to its own default)
+        DbConnectionStringBuilder written = new DbConnectionStringBuilder { ConnectionString = connectionString };
+        if (written.ContainsKey(ApplicationNameKeyword) || written.ContainsKey(ApplicationNameSynonym))
+            return connectionString;
+
+        // Function's return
+        SqlConnectionStringBuilder builder = new SqlConnectionStringBuilder(connectionString) { ApplicationName = DefaultApplicationName };
+        return builder.ConnectionString;
+    }
 
     /// <summary>
     /// Method used to read the JSON result of the Ping procedure
@@ -219,8 +272,12 @@ public sealed partial class SqlPingProcedure : IPingProcedure
     /// <exception cref="SqlException">If the connection or the procedure fails</exception>
     /// <exception cref="InvalidDataException">If the database answers something else than the documented result</exception>
     /// <exception cref="OperationCanceledException">If the call is canceled</exception>
+    /// <exception cref="ObjectDisposedException">If the procedure is disposed: a call must not open a new pool after the stop</exception>
     public async Task<DateTimeOffset> GetServerTimeAsync(CancellationToken cancellationToken)
     {
+        // Check: no new session once the pool is cleared (a request that outlasts the shutdown timeout of the host ends here)
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) == 1, this);
+
         // Opening the connection and calling the procedure
         await using SqlConnection connection = new SqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
@@ -241,7 +298,28 @@ public sealed partial class SqlPingProcedure : IPingProcedure
 
     #region Methods
 
-    // #N/A
+    /// <summary>
+    /// Method used to close the sessions the SQL client keeps open for the Very Back
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> after Close or Dispose of a connection, the session stays open on SQL Server, kept by the pool of the SQL client.
+    /// Only clearing the pool closes it.</para>
+    /// <para><b>Behavior:</b> clears the pool of the connection string of this procedure, not all the pools of the process
+    /// (<c>ClearAllPools</c>): the Very Back owns no other pool today, but this procedure must not close the sessions of a pool it did not open.
+    /// The idle sessions are closed; one still in use would be discarded when its connection is closed. Called once, the next calls do nothing.
+    /// A call to the database after the disposal is refused with an <see cref="ObjectDisposedException"/>, so that it never opens a new pool:
+    /// it can only happen when requests outlast the shutdown timeout of the host.</para>
+    /// </remarks>
+    public void Dispose()
+    {
+        // Doing it once
+        if (Interlocked.Exchange(ref _disposed, 1) == 1)
+            return;
+
+        // Clearing the pool of this connection string (building the connection opens nothing)
+        using SqlConnection poolOwner = new SqlConnection(_connectionString);
+        SqlConnection.ClearPool(poolOwner);
+    }
 
     #endregion
 
