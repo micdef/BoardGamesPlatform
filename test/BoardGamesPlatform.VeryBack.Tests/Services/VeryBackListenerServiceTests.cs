@@ -12,6 +12,7 @@ using BoardGamesPlatform.Protocol.Correlation;
 using BoardGamesPlatform.Protocol.Framing;
 using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
+using BoardGamesPlatform.TestKit;
 using BoardGamesPlatform.VeryBack.Contracts;
 using BoardGamesPlatform.VeryBack.Contracts.Ping;
 using BoardGamesPlatform.VeryBack.Procedures;

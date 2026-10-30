@@ -6,9 +6,7 @@
  */
 
 // Using
-using BoardGamesPlatform.Protocol.Correlation;
-using BoardGamesPlatform.Protocol.Framing;
-using BoardGamesPlatform.Protocol.Messages;
+using BoardGamesPlatform.Protocol.Links;
 using BoardGamesPlatform.Protocol.Transport;
 using BoardGamesPlatform.VeryBack.Contracts;
 using BoardGamesPlatform.VeryBack.Contracts.Ping;
@@ -28,78 +26,31 @@ namespace BoardGamesPlatform.Platform.Infrastructure.VeryBack;
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> gives the Back one place to reach the Very Back, hiding the connection, the framing and the messages.</para>
-/// <para><b>Behavior:</b> the connection opens on the first call, through the connector, within the connect timeout of the options. All the
-/// concurrent calls share that one connection; a lock guards only its opening. When the connection has closed (the peer, a failure), the next
-/// call opens a new one.</para>
-/// <list type="bullet">
-/// <item><description>A request that fails is never retried here: the caller sees the error. Retries, back-off, heartbeat and request
-/// timeouts come with 0.4.0.</description></item>
-/// <item><description>A connection may close between the moment a call finds it open and the moment its request is sent: that call fails
-/// with an <see cref="IOException"/>, like any request on a lost connection, and the next call opens a new connection.</description></item>
-/// <item><description>The settings are copied once validated, at construction: changing the settings object afterwards has no
-/// effect.</description></item>
-/// <item><description>A call that waits for a response is stopped only by the token of its caller.</description></item>
-/// <item><description>After <see cref="DisposeAsync"/>, every call throws an <see cref="ObjectDisposedException"/>.</description></item>
-/// <item><description>The logs tell when a connection opens or is lost, with the address of the Very Back only.</description></item>
-/// </list>
+/// <para><b>Behavior:</b> the connection is managed by a <see cref="LinkClient"/>: it opens on the first call, within the connect timeout of the
+/// options, is shared by all the concurrent calls, and a new one opens on the next call once it is lost. A request that fails is never retried
+/// here (retries come with 0.4.0). The settings are copied once validated, at construction: changing the settings object afterwards has no
+/// effect. After <see cref="DisposeAsync"/>, every call throws an <see cref="ObjectDisposedException"/>. The logs give the address of the Very
+/// Back only.</para>
 /// </remarks>
-public sealed partial class VeryBackClient : IAsyncDisposable
+public sealed class VeryBackClient : IAsyncDisposable
 {
     #region Members
 
     #region Constants
 
-    // #N/A
+    /// <summary>
+    /// Name of the Very Back in the logs and the messages
+    /// </summary>
+    private const string PeerName = "the Very Back";
 
     #endregion
 
     #region Variables
 
     /// <summary>
-    /// Host of the Very Back, copied from the settings once they are validated, so that a later change of the settings object has no effect
+    /// Connection management of the link to the Very Back
     /// </summary>
-    private readonly string _host;
-
-    /// <summary>
-    /// Port of the Very Back, copied from the validated settings
-    /// </summary>
-    private readonly int _port;
-
-    /// <summary>
-    /// Longest time allowed to open a connection, copied from the validated settings
-    /// </summary>
-    private readonly TimeSpan _connectTimeout;
-
-    /// <summary>
-    /// Connector used to open the connection (plain TCP in production)
-    /// </summary>
-    private readonly ITransportConnector _connector;
-
-    /// <summary>
-    /// Logger of the client
-    /// </summary>
-    private readonly ILogger<VeryBackClient> _logger;
-
-    /// <summary>
-    /// Codec of the link; the Very Back uses the default maximum length too
-    /// </summary>
-    private readonly FrameCodec _codec;
-
-    /// <summary>
-    /// Lock that lets one call at a time open the connection; it is never disposed, since a call may still wait for it while the client is
-    /// disposed, and a semaphore that nobody asked a wait handle from holds no system resource
-    /// </summary>
-    private readonly SemaphoreSlim _openingLock;
-
-    /// <summary>
-    /// Request client of the current connection; null before the first call. It is replaced by the call that finds it closed
-    /// </summary>
-    private volatile RequestClient? _current;
-
-    /// <summary>
-    /// Whether <see cref="DisposeAsync"/> has been called (0: no, 1: yes)
-    /// </summary>
-    private int _isDisposed;
+    private readonly LinkClient _link;
 
     #endregion
 
@@ -160,14 +111,8 @@ public sealed partial class VeryBackClient : IAsyncDisposable
             throw new ArgumentNullException(nameof(logger), $"The value of the parameter: {nameof(logger)} cannot be null");
         options.Validate();
 
-        // Setting
-        _host = options.Host;
-        _port = options.Port;
-        _connectTimeout = options.ConnectTimeout;
-        _connector = connector;
-        _logger = logger;
-        _codec = new FrameCodec();
-        _openingLock = new SemaphoreSlim(1, 1);
+        // Setting (the link copies the validated values)
+        _link = new LinkClient(options.Host, options.Port, options.ConnectTimeout, PeerName, connector, logger);
     }
 
     #endregion
@@ -182,173 +127,7 @@ public sealed partial class VeryBackClient : IAsyncDisposable
 
     #region Privates
 
-    /// <summary>
-    /// Method used to log that a connection to the Very Back is open
-    /// </summary>
-    /// <param name="host">Host of the Very Back</param>
-    /// <param name="port">Port of the Very Back</param>
-    [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "Connection to the Very Back opened ({Host}:{Port})")]
-    private partial void LogConnectionOpened(string host, int port);
-
-    /// <summary>
-    /// Method used to log that the connection to the Very Back is lost
-    /// </summary>
-    /// <param name="host">Host of the Very Back</param>
-    /// <param name="port">Port of the Very Back</param>
-    [LoggerMessage(EventId = 2, Level = LogLevel.Warning, Message = "Connection to the Very Back lost ({Host}:{Port}); the next call opens a new one")]
-    private partial void LogConnectionLost(string host, int port);
-
-    /// <summary>
-    /// Method used to log that the Very Back cannot be reached
-    /// </summary>
-    /// <param name="exception">Why the connection failed</param>
-    /// <param name="host">Host of the Very Back</param>
-    /// <param name="port">Port of the Very Back</param>
-    [LoggerMessage(EventId = 3, Level = LogLevel.Warning, Message = "Connection to the Very Back failed ({Host}:{Port})")]
-    private partial void LogConnectionFailed(Exception exception, string host, int port);
-
-    /// <summary>
-    /// Method used to log that the connection to the Very Back is closed because the client is disposed
-    /// </summary>
-    /// <param name="host">Host of the Very Back</param>
-    /// <param name="port">Port of the Very Back</param>
-    [LoggerMessage(EventId = 5, Level = LogLevel.Information, Message = "Connection to the Very Back closed by the disposal of the client ({Host}:{Port})")]
-    private partial void LogConnectionClosed(string host, int port);
-
-    /// <summary>
-    /// Method used to log that closing a lost connection failed
-    /// </summary>
-    /// <param name="exception">Why the closing failed</param>
-    [LoggerMessage(EventId = 4, Level = LogLevel.Warning, Message = "Closing the lost connection to the Very Back failed")]
-    private partial void LogCloseFailed(Exception exception);
-
-    /// <summary>
-    /// Method used to tell when a connection is lost
-    /// </summary>
-    /// <remarks>
-    /// <para><b>Behavior:</b> waits for the end of the request client, then always logs it: as a loss, or as a close when the client itself was
-    /// disposed (the disposal is marked before the connection is closed).</para>
-    /// </remarks>
-    /// <param name="client">[Cannot be null] Request client to watch</param>
-    /// <returns>
-    /// A task that completes when the request client has closed
-    /// </returns>
-    private async Task WatchConnectionAsync(RequestClient client)
-    {
-        // Waiting for the end of the connection (the completion never fails)
-        await client.Completion.ConfigureAwait(false);
-
-        // Telling the end: a loss, or the disposal of the client
-        if (Volatile.Read(ref _isDisposed) == 0)
-            LogConnectionLost(_host, _port);
-        else
-            LogConnectionClosed(_host, _port);
-    }
-
-    /// <summary>
-    /// Method used to open a connection within the connect timeout
-    /// </summary>
-    /// <param name="cancellationToken">Token of the caller</param>
-    /// <returns>
-    /// The open connection
-    /// </returns>
-    /// <exception cref="TimeoutException">If the connection is not open within the connect timeout</exception>
-    /// <exception cref="OperationCanceledException">If the caller cancels</exception>
-    /// <exception cref="System.Net.Sockets.SocketException">If the connection cannot be opened</exception>
-    private async Task<ITransportConnection> ConnectAsync(CancellationToken cancellationToken)
-    {
-        // Combining the token of the caller with the deadline
-        using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(_connectTimeout);
-
-        // Connecting; a cancellation that the caller did not ask for is the deadline
-        try
-        {
-            // Function's return
-            return await _connector.ConnectAsync(_host, _port, deadline.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
-        {
-            throw new TimeoutException($"The connection to the Very Back was not open within {_connectTimeout}", exception);
-        }
-    }
-
-    /// <summary>
-    /// Method used to get the request client of the current connection, opening a connection when there is none or when it has closed
-    /// </summary>
-    /// <param name="cancellationToken">Token of the caller</param>
-    /// <returns>
-    /// A request client that was open when it was returned
-    /// </returns>
-    /// <exception cref="ObjectDisposedException">If the client is disposed</exception>
-    /// <exception cref="TimeoutException">If the connection is not open within the connect timeout</exception>
-    /// <exception cref="OperationCanceledException">If the caller cancels</exception>
-    /// <exception cref="System.Net.Sockets.SocketException">If the connection cannot be opened</exception>
-    private async Task<RequestClient> GetRequestClientAsync(CancellationToken cancellationToken)
-    {
-        // Using the open connection, without any lock
-        RequestClient? client = _current;
-        if (client is not null && !client.Completion.IsCompleted)
-            return client;
-
-        // Letting one call at a time open the connection
-        await _openingLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            // Checking again: the client may have been disposed, or another call may have opened the connection while this one waited
-            ThrowIfDisposed();
-            client = _current;
-            if (client is not null && !client.Completion.IsCompleted)
-                return client;
-
-            // Releasing the lost connection
-            if (client is not null)
-            {
-                try
-                {
-                    await client.DisposeAsync().ConfigureAwait(false);
-                }
-                catch (Exception exception)
-                {
-                    LogCloseFailed(exception);
-                }
-            }
-
-            // Opening the new connection
-            ITransportConnection connection;
-            try
-            {
-                connection = await ConnectAsync(cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                LogConnectionFailed(exception, _host, _port);
-                throw;
-            }
-            client = new RequestClient(connection, _codec);
-            _current = client;
-            LogConnectionOpened(_host, _port);
-            _ = WatchConnectionAsync(client);
-
-            // Function's return
-            return client;
-        }
-        finally
-        {
-            _openingLock.Release();
-        }
-    }
-
-    /// <summary>
-    /// Method used to refuse a call once the client is disposed
-    /// </summary>
-    /// <exception cref="ObjectDisposedException">If the client is disposed</exception>
-    private void ThrowIfDisposed()
-    {
-        // Check
-        if (Volatile.Read(ref _isDisposed) == 1)
-            throw new ObjectDisposedException(nameof(VeryBackClient), "The Very Back client has been disposed");
-    }
+    // #N/A
 
     #endregion
 
@@ -372,16 +151,10 @@ public sealed partial class VeryBackClient : IAsyncDisposable
     /// <exception cref="IOException">If the connection closes before the response arrives</exception>
     /// <exception cref="InvalidDataException">If the response is malformed</exception>
     /// <exception cref="OperationCanceledException">If the caller cancels</exception>
-    public async Task<PingResponse> PingAsync(CancellationToken cancellationToken = default)
+    public Task<PingResponse> PingAsync(CancellationToken cancellationToken = default)
     {
-        // Check
-        ThrowIfDisposed();
-
-        // Getting the connection, then sending the request
-        RequestClient client = await GetRequestClientAsync(cancellationToken).ConfigureAwait(false);
-
         // Function's return
-        return await client.SendAsync<PingRequest, PingResponse>(VeryBackOperations.Ping, new PingRequest(), cancellationToken).ConfigureAwait(false);
+        return _link.SendAsync<PingRequest, PingResponse>(VeryBackOperations.Ping, new PingRequest(), cancellationToken);
     }
 
     /// <summary>
@@ -390,25 +163,10 @@ public sealed partial class VeryBackClient : IAsyncDisposable
     /// <returns>
     /// A task that completes when the connection is closed
     /// </returns>
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        // Disposing once
-        if (Interlocked.Exchange(ref _isDisposed, 1) == 1)
-            return;
-
-        // Waiting for a connection being opened, then closing the current one; a call that waited for the lock finds the client disposed
-        await _openingLock.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            RequestClient? client = _current;
-            _current = null;
-            if (client is not null)
-                await client.DisposeAsync().ConfigureAwait(false);
-        }
-        finally
-        {
-            _openingLock.Release();
-        }
+        // Function's return
+        return _link.DisposeAsync();
     }
 
     #endregion
