@@ -29,7 +29,7 @@ namespace BoardGamesPlatform.Gateway.Tests.Hubs;
 /// <remarks>
 /// <para><b>Purpose:</b> proves that the Gateway, as wired by its own startup (settings, client, hub), reaches a Back on a socket.</para>
 /// <para><b>Behavior:</b> each test starts the real Gateway in process with its real Back client, configured by <c>Back:Port</c> to reach a fake
-/// Back on a loopback socket, or a port where nothing listens.</para>
+/// Back on a loopback socket, or a port where nothing listens. The cancellation test replaces the client by one that never answers.</para>
 /// </remarks>
 public sealed class PlatformHubBackLinkTests
 {
@@ -158,16 +158,22 @@ public sealed class PlatformHubBackLinkTests
     }
 
     /// <summary>
-    /// An invalid Back:Port stops the startup, and the failure names the setting
+    /// An invalid Back setting stops the startup, and the failure names the setting without echoing the value
     /// </summary>
+    /// <param name="setting">Key of the invalid setting</param>
+    /// <param name="value">Invalid value; distinctive, so that its absence from the message proves it is not echoed</param>
     [Theory(Timeout = TestTimeout)]
-    [InlineData("0")]
-    [InlineData("65536")]
-    public void AnInvalidBackPortStopsTheStartup(string port)
+    [InlineData("Back:Port", "70123")]
+    [InlineData("Back:Port", "-70123")]
+    [InlineData("Back:Host", "   ")]
+    [InlineData("Back:ConnectTimeout", "00:00:00")]
+    [InlineData("Back:ConnectTimeout", "00:05:01")]
+    public void AnInvalidBackSettingStopsTheStartup(string setting, string value)
     {
-        // Starting the Gateway with an invalid port
+        // Starting the Gateway with an invalid setting
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        using GatewayFactory factory = new GatewayFactory(backPort: port);
+        Dictionary<string, string?> settings = new Dictionary<string, string?> { [setting] = value };
+        using GatewayFactory factory = new GatewayFactory(extraSettings: settings);
 
         // Checks: an options validation failure, found in the exception chain, that names the setting and not its value
         Exception error = Should.Throw<Exception>(() => factory.CreateClient());
@@ -175,8 +181,58 @@ public sealed class PlatformHubBackLinkTests
         for (Exception? current = error; current is not null && validation is null; current = current.InnerException)
             validation = current as OptionsValidationException;
         validation.ShouldNotBeNull();
-        validation.Message.ShouldContain("Back:Port");
-        validation.Message.ShouldNotContain(port);
+        validation.Message.ShouldContain(setting);
+        if (value.Trim().Length > 0)
+            validation.Message.ShouldNotContain(value);
+    }
+
+    /// <summary>
+    /// When the front disconnects, the call to the Back client is canceled
+    /// </summary>
+    [Fact(Timeout = TestTimeout)]
+    public async Task WhenTheFrontDisconnectsTheCallToTheBackClientIsCanceledAsync()
+    {
+        // Starting the Gateway with a Back client that never answers, and a front that asks Ping without waiting for the answer
+        CancellationToken token = TestContext.Current.CancellationToken;
+        HangingBackClient back = new HangingBackClient();
+        await using GatewayFactory factory = new GatewayFactory(back);
+        await using HubConnection connection = factory.CreateHubConnection(PlatformHubContract.DefaultPath);
+        await connection.StartAsync(token);
+        Task<PingResponse> pending = connection.InvokeAsync<PingResponse>(PlatformHubContract.Ping, token);
+
+        // Waiting until the Back client holds the call, then disconnecting the front
+        await back.CallReceived.WaitAsync(token);
+        back.CallCanceled.IsCompleted.ShouldBeFalse();
+        await connection.StopAsync(token);
+
+        // Checks: the token of the call is canceled, and the call of the front ends with an error
+        await back.CallCanceled.WaitAsync(token);
+        await Should.ThrowAsync<Exception>(async () => await pending);
+    }
+
+    /// <summary>
+    /// Disposing the host disposes the Back client, which closes its connection to the Back
+    /// </summary>
+    [Fact(Timeout = TestTimeout)]
+    public async Task DisposingTheHostClosesTheConnectionToTheBackAsync()
+    {
+        // Starting a fake Back and the Gateway, and making one Ping so that the connection is open
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using FakeBack back = FakeBack.Start();
+        GatewayFactory factory = new GatewayFactory(backPort: back.Port.ToString(CultureInfo.InvariantCulture));
+        await using (HubConnection connection = factory.CreateHubConnection(PlatformHubContract.DefaultPath))
+        {
+            await connection.StartAsync(token);
+            PingResponse response = await connection.InvokeAsync<PingResponse>(PlatformHubContract.Ping, token);
+            response.ServerTime.ShouldBe(FakeBack.PingTime);
+        }
+        back.ConnectionClosed.IsCompleted.ShouldBeFalse();
+
+        // Disposing the host
+        await factory.DisposeAsync();
+
+        // Checks: the fake Back sees its connection close
+        await back.ConnectionClosed.WaitAsync(token);
     }
 
     #endregion

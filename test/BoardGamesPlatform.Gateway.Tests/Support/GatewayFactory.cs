@@ -61,6 +61,11 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
     /// </summary>
     private readonly string? _backPort;
 
+    /// <summary>
+    /// Other settings added to the configuration, by key; null for none
+    /// </summary>
+    private readonly IReadOnlyDictionary<string, string?>? _extraSettings;
+
     #endregion
 
     #region Delegates
@@ -107,12 +112,15 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
     /// <param name="backClient">[Can be null] Back client that replaces the one of the Gateway</param>
     /// <param name="hubPath">[Can be null] Value of the Gateway:HubPath setting</param>
     /// <param name="backPort">[Can be null] Value of the Back:Port setting</param>
-    public GatewayFactory(IBackClient? backClient = null, string? hubPath = null, string? backPort = null)
+    /// <param name="extraSettings">[Can be null] Other settings to add to the configuration, by key (for example Back:Host)</param>
+    public GatewayFactory(IBackClient? backClient = null, string? hubPath = null, string? backPort = null,
+        IReadOnlyDictionary<string, string?>? extraSettings = null)
     {
         // Setting
         _backClient = backClient;
         _hubPath = hubPath;
         _backPort = backPort;
+        _extraSettings = extraSettings;
     }
 
     #endregion
@@ -174,6 +182,11 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
             settings["Gateway:HubPath"] = _hubPath;
         if (_backPort is not null)
             settings["Back:Port"] = _backPort;
+        if (_extraSettings is not null)
+        {
+            foreach (KeyValuePair<string, string?> setting in _extraSettings)
+                settings[setting.Key] = setting.Value;
+        }
         if (settings.Count > 0)
             builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(settings));
 

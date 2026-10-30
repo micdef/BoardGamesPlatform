@@ -14,7 +14,6 @@ using BoardGamesPlatform.Protocol.Framing;
 using BoardGamesPlatform.Protocol.Links;
 using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
-using BoardGamesPlatform.TestKit;
 
 // Static using
 // #N/A
@@ -30,9 +29,11 @@ namespace BoardGamesPlatform.Gateway.Tests.Support;
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> gives the Gateway a real peer on a real socket, whose answer the test controls.</para>
-/// <para><b>Behavior:</b> listens on the loopback address with port 0 (the system picks the port, so that tests never collide), serves every
-/// accepted connection with the real <see cref="LinkServer"/> and answers Ping with <see cref="PingTime"/>. Disposing it stops the listener and
-/// waits for everything it started.</para>
+/// <para><b>Behavior:</b> <see cref="Start"/> listens on the loopback address with port 0 (the system picks the port, so that two fake Backs
+/// started by tests never collide), serves every accepted connection with the real <see cref="LinkServer"/> and answers Ping with
+/// <see cref="PingTime"/>. <see cref="ConnectionClosed"/> completes when a connection to it ends, so that a test waits for the event.
+/// <see cref="GetClosedPortAsync"/> is different: it gives a port that was free a moment ago, with no guarantee that it stays free.
+/// Disposing the fake Back stops the listener and waits for everything it started.</para>
 /// </remarks>
 internal sealed class FakeBack : IAsyncDisposable
 {
@@ -66,6 +67,11 @@ internal sealed class FakeBack : IAsyncDisposable
     /// </summary>
     private int _isDisposed;
 
+    /// <summary>
+    /// Completed when the link server reports a closed connection
+    /// </summary>
+    private readonly TaskCompletionSource _connectionClosed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
     #endregion
 
     #region Delegates
@@ -97,6 +103,11 @@ internal sealed class FakeBack : IAsyncDisposable
     /// </summary>
     public int Port { get; }
 
+    /// <summary>
+    /// Task completed when a connection to the fake Back is closed
+    /// </summary>
+    public Task ConnectionClosed => _connectionClosed.Task;
+
     #endregion
 
     #region Delegates
@@ -120,7 +131,8 @@ internal sealed class FakeBack : IAsyncDisposable
         OperationDispatcher dispatcher = new OperationDispatcher()
             .Register<PingRequest, PingResponse>(BackOperations.Ping, (_, _) => Task.FromResult(new PingResponse(PingTime)));
         RequestServer server = new RequestServer(new FrameCodec(), dispatcher.HandleAsync);
-        LinkServer link = new LinkServer(listener, server, "the fake Back", new CapturingLogger<FakeBack>(), LinkServer.DefaultAcceptFailurePause);
+        LinkServer link = new LinkServer(
+            listener, server, "the fake Back", new ConnectionSignalLogger(() => _connectionClosed.TrySetResult()), LinkServer.DefaultAcceptFailurePause);
         _stopping = new CancellationTokenSource();
         _running = link.RunAsync(_stopping.Token);
     }

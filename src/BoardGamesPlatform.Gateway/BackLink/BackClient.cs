@@ -29,7 +29,9 @@ namespace BoardGamesPlatform.Gateway.BackLink;
 /// options, is shared by all the concurrent calls, and a new one opens on the next call once it is lost. A request that fails is never retried
 /// here (retries come with 0.4.0). The settings are copied once validated, at construction: changing the settings object afterwards has no
 /// effect. After <see cref="DisposeAsync"/>, every call throws an <see cref="ObjectDisposedException"/>. The link is plain TCP, for development
-/// only, until TLS comes in 0.5.0. The logs give the address of the Back only.</para>
+/// only, until TLS comes in 0.5.0. The logs give the address of the Back only. The reconnection after a lost connection and the connect
+/// timeout belong to <see cref="LinkClient"/>: they are proven by its own tests and by those of the Very Back client, not again by the tests of
+/// this class.</para>
 /// </remarks>
 public sealed class BackClient : IBackClient, IAsyncDisposable
 {
