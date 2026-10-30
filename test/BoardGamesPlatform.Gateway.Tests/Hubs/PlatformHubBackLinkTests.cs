@@ -113,7 +113,35 @@ public sealed class PlatformHubBackLinkTests
 
     #region Privates
 
-    // #N/A
+    /// <summary>
+    /// Method used to find an options validation failure in an exception tree: its inner exceptions, and every exception of an aggregate
+    /// </summary>
+    /// <param name="exception">[Can be null] Root of the tree</param>
+    /// <returns>
+    /// The first options validation failure found, or null when there is none
+    /// </returns>
+    private static OptionsValidationException? FindValidationFailure(Exception? exception)
+    {
+        // The exception itself
+        if (exception is null)
+            return null;
+        if (exception is OptionsValidationException validation)
+            return validation;
+
+        // Every exception of an aggregate, then the inner exception
+        if (exception is AggregateException aggregate)
+        {
+            foreach (Exception inner in aggregate.InnerExceptions)
+            {
+                OptionsValidationException? found = FindValidationFailure(inner);
+                if (found is not null)
+                    return found;
+            }
+        }
+
+        // Function's return
+        return FindValidationFailure(exception.InnerException);
+    }
 
     #endregion
 
@@ -181,12 +209,11 @@ public sealed class PlatformHubBackLinkTests
         Dictionary<string, string?> settings = new Dictionary<string, string?> { [setting] = value };
         using GatewayFactory factory = new GatewayFactory(extraSettings: settings);
 
-        // Checks: an options validation failure, found in the exception chain, that names the setting and not its value
+        // Checks: an options validation failure, found anywhere in the exception tree (an aggregate holds several), that names the setting and
+        // not its value; the whole exception is given to the assertion, so that a failure in the CI says what was thrown instead
         Exception error = Should.Throw<Exception>(() => factory.CreateClient());
-        OptionsValidationException? validation = null;
-        for (Exception? current = error; current is not null && validation is null; current = current.InnerException)
-            validation = current as OptionsValidationException;
-        validation.ShouldNotBeNull();
+        OptionsValidationException? validation = FindValidationFailure(error);
+        validation.ShouldNotBeNull(error.ToString());
         validation.Message.ShouldContain(setting);
         if (value.Trim().Length > 0)
             validation.Message.ShouldNotContain(value);
