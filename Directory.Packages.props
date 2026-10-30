@@ -37,6 +37,11 @@
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.20.1" />
   </ItemGroup>
 
+  <!-- Logging: abstractions used by the libraries that log (the hosts choose the providers) -->
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.14" />
+  </ItemGroup>
+
   <!-- Database: SQL client of the SQL tests (and of the Very Back, the only tier allowed to use it) -->
   <ItemGroup>
     <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.1" />
@@ -59,6 +64,12 @@
     <PackageVersion Include="Microsoft.Testing.Extensions.TrxReport" Version="2.5.2" />
     <PackageVersion Include="TngTech.ArchUnitNET.xUnitV3" Version="0.13.5" />
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.0" />
+  </ItemGroup>
+
+  <!-- Gateway tests: the Gateway started in process, and the SignalR client that calls its hub -->
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.14" />
   </ItemGroup>
 
   <!-- Blazor: website (server and WebAssembly parts) -->
