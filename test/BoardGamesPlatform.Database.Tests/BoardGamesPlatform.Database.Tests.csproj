@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Tests of the SQL project: conventions of its files (run everywhere) and behavior of its objects on a TEST_ or DEV_ database (skipped without one) -->
+
+  <!-- Projects: the TestKit, to find the files of the repository -->
+  <ItemGroup>
+    <ProjectReference Include="..\BoardGamesPlatform.TestKit\BoardGamesPlatform.TestKit.csproj" />
+  </ItemGroup>
+
+  <!-- Packages (versions in Directory.Packages.props) -->
+  <ItemGroup>
+    <!-- Database -->
+    <PackageReference Include="Microsoft.Data.SqlClient" />
+  </ItemGroup>
+
+</Project>

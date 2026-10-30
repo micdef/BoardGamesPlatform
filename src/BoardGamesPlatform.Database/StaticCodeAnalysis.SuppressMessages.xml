@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+	@file @prj/src/BoardGamesPlatform.Database/StaticCodeAnalysis.SuppressMessages.xml
+	@author Defraene Michaël (AKA Sonic) (co-written by Claude)
+
+	@brief Accepted SSDT static code analysis warnings (RunSqlCodeAnalysis = True in BoardGamesPlatform.Database.sqlproj).
+	       Every suppression below is a deliberate decision, with its justification.
+
+	Rules of this file :
+	- A suppression applies to ONE rule in ONE file, never to the whole project : a rule stays active everywhere else.
+	- A suppression covers the WHOLE file : a new occurrence of the same rule in the same file is hidden too.
+	  => When a suppressed file is modified, re-check the rule by hand (or remove the suppression, rebuild, read, restore).
+	- A suppression is never added to hide a real defect : real defects are fixed in the code.
+	- When the condition given in the justification is no longer true, the suppression must be removed.
+	- FilePath is relative to the project folder and MUST use backslashes (\) : the original SSDT of Visual Studio 2026
+	  silently ignores slashes.
+	- After a change in this file, use Rebuild (not Build) : an incremental build may skip the code analysis.
+
+	Reference : https://learn.microsoft.com/sql/tools/sql-database-projects/concepts/sql-code-analysis/sql-code-analysis
+
+	Suppressed rules :
+	==================
+
+	SR0016 - Avoid using sp_ as a prefix for stored procedures (naming)
+	- Why the rule exists : sp_ designates system procedures. If Microsoft creates a system procedure with the same
+	  name later, an UNQUALIFIED call binds to the system procedure instead of ours. The model collation is CI,
+	  so the prefix SP_ is seen as sp_.
+	- Why it is accepted : SP_ is the project naming convention. The procedures live in dedicated schemas (ServerCore)
+	  and every call is schema-qualified ([ServerCore].[SP_...]), in T-SQL and in the Very Back. The conflict only
+	  happens for calls without schema, so it cannot happen here; the full names (SP_<Schema>_<Subject>_<Action>) also
+	  make a collision with a system procedure name unrealistic.
+	- Condition : every call (T-SQL AND Very Back) stays schema-qualified.
+
+	SR0013 - Output parameter is not populated in all code paths (design)
+	- Why the rule exists : a caller could read an output parameter that was never set.
+	- Why it is accepted : the only path that does not set @Result is the CATCH block, which always ends with THROW.
+	  The procedure never ends normally without @Result : the caller receives the error, not a result.
+	- Condition : the CATCH block always ends with THROW.
+-->
+<StaticCodeAnalysis version="2" xmlns="urn:Microsoft.Data.Tools.Schema.StaticCodeAnalysis">
+
+	<!-- ServerCore.Server -->
+	<SuppressedFile FilePath="StoredProcedures\ServerCore\Server\SP_ServerCore_Server_Ping.sql">
+		<SuppressedRule Category="Microsoft.Rules.Data" RuleId="SR0016" />
+		<SuppressedRule Category="Microsoft.Rules.Data" RuleId="SR0013" />
+	</SuppressedFile>
+
+</StaticCodeAnalysis>

@@ -70,5 +70,14 @@
     <Folder Include="Triggers" />
     <Folder Include="Indexes" />
     <Folder Include="FileGroups" />
+    <Folder Include="Security" />
+  </ItemGroup>
+  <ItemGroup>
+    <Build Include="Schemas\ServerCore.sql" />
+    <Build Include="Security\ApplicationRole.sql" />
+    <Build Include="StoredProcedures\ServerCore\Server\SP_ServerCore_Server_Ping.sql" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="StaticCodeAnalysis.SuppressMessages.xml" />
   </ItemGroup>
 </Project>
