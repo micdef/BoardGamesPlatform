@@ -71,14 +71,15 @@ public sealed class TestPortBlock : IDisposable
     public const string BaseVariable = "BOARDGAMESPLATFORM_TEST_PORT_BASE";
 
     /// <summary>
-    /// Highest start of the range: the range must stay below 32768, outside the dynamic ports of Windows and of Linux
+    /// Highest start of the range: the last multiple of the block size that keeps the whole range below 32768, outside the dynamic ports of
+    /// Windows and of Linux (31700, so that the range ends at 32699)
     /// </summary>
-    private const int MaxBase = 32768 - (BlockSize * BlockCount);
+    private const int MaxBase = ((32768 - (BlockSize * BlockCount)) / BlockSize) * BlockSize;
 
     /// <summary>
-    /// Lowest start of the range: above the well-known ports
+    /// Lowest start of the range: the first multiple of the block size above the well-known ports (1100)
     /// </summary>
-    private const int MinBase = 1024;
+    private const int MinBase = ((1024 + BlockSize - 1) / BlockSize) * BlockSize;
 
     /// <summary>
     /// Win32 error ERROR_SHARING_VIOLATION, carried by the HResult of the IOException when another process holds the file
