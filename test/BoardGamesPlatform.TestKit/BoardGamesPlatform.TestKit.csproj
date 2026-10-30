@@ -1,6 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- Helpers shared by the test projects: repository paths, fake time, a logger that keeps the messages, a listener that fails on demand (more helpers are added when a second test project needs them) -->
 
+  <!-- The protocol tests reach the internal constructor of the test port block, which takes the start of the range as a parameter (no environment variable to set for the whole process) -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="BoardGamesPlatform.Protocol.Tests" />
+  </ItemGroup>
+
   <!-- Projects: the socket protocol, whose listener interface the fake listener implements -->
   <ItemGroup>
     <ProjectReference Include="..\..\src\BoardGamesPlatform.Protocol\BoardGamesPlatform.Protocol.csproj" />

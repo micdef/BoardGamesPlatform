@@ -29,8 +29,8 @@ namespace BoardGamesPlatform.Back.Tests;
 /// <remarks>
 /// <para><b>Purpose:</b> the other tests use test ports; this one proves that the port written in the delivered <c>appsettings.json</c>,
 /// the one the firewall rules open, is the port the Back really listens on.</para>
-/// <para><b>Behavior:</b> the host is built as Program.cs builds it, from the delivered <c>appsettings.json</c> only (no environment
-/// variable, no user secret); the Very Back is not needed, since the Back reaches it only on the first request. It needs that port free: a
+/// <para><b>Behavior:</b> the host is built with the part of Program.cs that sets up the settings and the listener (<c>AddPlatformBack</c>), from
+/// the delivered <c>appsettings.json</c> only (no environment variable, no user secret); the Very Back is not needed, since the Back reaches it only on the first request. It needs that port free: a
 /// Back running on the machine makes the test fail at once, with a message saying so.</para>
 /// </remarks>
 public sealed class DeliveredConfigurationTests
@@ -119,6 +119,10 @@ public sealed class DeliveredConfigurationTests
     [Fact(Timeout = TestTimeout)]
     public async Task TheBackListensOnThePortOfItsDeliveredConfigurationAsync()
     {
+        // Taking the lock of the block of this project first: two runs of this project (two worktrees) must not both pass the check of the
+        // delivered port, then collide on it
+        _ = TestPorts.Block;
+
         // Reading the delivered configuration, then checking its port is free
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         string deliveredSettings = Path.Combine(RepositoryPaths.GetSourceFolder(), "BoardGamesPlatform.Back", "appsettings.json");

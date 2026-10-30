@@ -40,7 +40,8 @@ internal static class TestPorts
 
     /// <summary>
     /// Block of ports of this test project, locked on first use; an error (an invalid variable, another run holding the block) is thrown as
-    /// it is, not hidden in a type initialization error
+    /// it is, not hidden in a type initialization error, and cached for the whole run: every later use throws the same exception, nothing is
+    /// retried
     /// </summary>
     private static readonly Lazy<TestPortBlock> _block = new Lazy<TestPortBlock>(() => new TestPortBlock(TestPortBlocks.PlatformInfrastructure), LazyThreadSafetyMode.ExecutionAndPublication);
 

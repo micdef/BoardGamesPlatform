@@ -26,7 +26,8 @@ namespace BoardGamesPlatform.Protocol.Tests.Transport;
 /// <remarks>
 /// <para><b>Purpose:</b> first loopback integration tests of the platform: frames travel through a real TCP connection, as between two tiers.</para>
 /// <para><b>Behavior:</b> every listener binds a fixed test port of the block of this project on the loopback address (see
-/// <see cref="TestPorts"/>), never a port handed out by the system. Each test is limited in time, so that a missing frame fails the test instead of blocking the run.</para>
+/// <see cref="TestPorts"/>), never a port handed out by the system. Each test is limited in time, so that a missing frame fails the test
+/// instead of blocking the run.</para>
 /// </remarks>
 public sealed class TcpTransportTests
 {

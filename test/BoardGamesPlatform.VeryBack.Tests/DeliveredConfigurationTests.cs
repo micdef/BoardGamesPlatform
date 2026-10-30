@@ -29,8 +29,8 @@ namespace BoardGamesPlatform.VeryBack.Tests;
 /// <remarks>
 /// <para><b>Purpose:</b> the other tests use test ports; this one proves that the port written in the delivered <c>appsettings.json</c>,
 /// the one the firewall rules open, is the port the Very Back really listens on.</para>
-/// <para><b>Behavior:</b> the host is built as Program.cs builds it, from the delivered <c>appsettings.json</c> only (no environment
-/// variable, no user secret), plus a connection string the SQL client can read, which is never opened. It needs that port free: a Very Back
+/// <para><b>Behavior:</b> the host is built with the part of Program.cs that sets up the settings and the listener
+/// (<c>AddPlatformVeryBack</c>), from the delivered <c>appsettings.json</c> only (no environment variable, no user secret), plus a connection string the SQL client can read, which is never opened. It needs that port free: a Very Back
 /// running on the machine makes the test fail at once, with a message saying so.</para>
 /// </remarks>
 public sealed class DeliveredConfigurationTests
@@ -124,6 +124,10 @@ public sealed class DeliveredConfigurationTests
     [Fact(Timeout = TestTimeout)]
     public async Task TheVeryBackListensOnThePortOfItsDeliveredConfigurationAsync()
     {
+        // Taking the lock of the block of this project first: two runs of this project (two worktrees) must not both pass the check of the
+        // delivered port, then collide on it
+        _ = TestPorts.Block;
+
         // Reading the delivered configuration, then checking its port is free
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         string deliveredSettings = Path.Combine(RepositoryPaths.GetSourceFolder(), "BoardGamesPlatform.VeryBack", "appsettings.json");

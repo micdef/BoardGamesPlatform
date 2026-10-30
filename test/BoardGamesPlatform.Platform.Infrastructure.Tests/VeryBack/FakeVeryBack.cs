@@ -29,9 +29,10 @@ namespace BoardGamesPlatform.Platform.Infrastructure.Tests.VeryBack;
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> gives the client a real peer on a real socket, whose behavior the test controls and observes.</para>
-/// <para><b>Behavior:</b> listens on the loopback address, on a fixed test port of the block of this project (each fake has its own, so that tests never collide), serves
-/// every accepted connection with the real <see cref="RequestServer"/> and answers Ping with <see cref="PingTime"/>. It counts the connections
-/// it accepted and the requests it received, can drop every connection, and can make the handler fail.</para>
+/// <para><b>Behavior:</b> listens on the loopback address, on a fixed test port of the block of this project (each fake has its own, so that
+/// tests never collide), serves every accepted connection with the real <see cref="RequestServer"/> and answers Ping with
+/// <see cref="PingTime"/>. It counts the connections it accepted and the requests it received, can drop every connection, and can make the
+/// handler fail.</para>
 /// </remarks>
 internal sealed class FakeVeryBack : IAsyncDisposable
 {

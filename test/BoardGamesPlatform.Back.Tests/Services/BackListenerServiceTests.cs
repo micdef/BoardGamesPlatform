@@ -38,8 +38,8 @@ namespace BoardGamesPlatform.Back.Tests.Services;
 /// <remarks>
 /// <para><b>Purpose:</b> proves the Ping operation of the Back end to end up to a fake Very Back, and that the Back never runs without
 /// listening. The rules of the accept loop itself are proven by the tests of the link server, in the protocol tests.</para>
-/// <para><b>Behavior:</b> every listener binds a fixed test port of the block of this project (see <see cref="TestPorts"/>) on the loopback address; each test is limited in time and waits for responses or for the
-/// close of a connection, never for a fixed delay.</para>
+/// <para><b>Behavior:</b> every listener binds a fixed test port of the block of this project (see <see cref="TestPorts"/>) on the loopback
+/// address; each test is limited in time and waits for responses or for the close of a connection, never for a fixed delay.</para>
 /// </remarks>
 public sealed class BackListenerServiceTests
 {
