@@ -195,6 +195,57 @@ public sealed class VeryBackClientOptionsTests
         new VeryBackClientOptions { ConnectTimeout = VeryBackClientOptions.MaxConnectTimeout }.Validate();
     }
 
+    /// <summary>
+    /// Valid settings, the defaults and the limits included, have no problem
+    /// </summary>
+    [Fact]
+    public void ValidSettingsHaveNoProblem()
+    {
+        // Checks
+        new VeryBackClientOptions().FindProblem().ShouldBeNull();
+        new VeryBackClientOptions { Port = 1 }.FindProblem().ShouldBeNull();
+        new VeryBackClientOptions { Port = 65535 }.FindProblem().ShouldBeNull();
+        new VeryBackClientOptions { ConnectTimeout = VeryBackClientOptions.MaxConnectTimeout }.FindProblem().ShouldBeNull();
+    }
+
+    /// <summary>
+    /// Each invalid setting is reported by a message that names it
+    /// </summary>
+    /// <param name="host">Host to check</param>
+    /// <param name="port">Port to check</param>
+    /// <param name="seconds">Connect timeout to check, in seconds</param>
+    /// <param name="setting">Setting expected in the message</param>
+    [Theory]
+    [InlineData("", 7822, 5, "VeryBack:Host")]
+    [InlineData("   ", 7822, 5, "VeryBack:Host")]
+    [InlineData("127.0.0.1", 0, 5, "VeryBack:Port")]
+    [InlineData("127.0.0.1", 65536, 5, "VeryBack:Port")]
+    [InlineData("127.0.0.1", 7822, 0, "VeryBack:ConnectTimeout")]
+    [InlineData("127.0.0.1", 7822, -1, "VeryBack:ConnectTimeout")]
+    [InlineData("127.0.0.1", 7822, 3600, "VeryBack:ConnectTimeout")]
+    public void AnInvalidSettingIsReportedByName(string host, int port, int seconds, string setting)
+    {
+        // Reading the problem
+        string? problem = new VeryBackClientOptions { Host = host, Port = port, ConnectTimeout = TimeSpan.FromSeconds(seconds) }.FindProblem();
+
+        // Checks
+        problem.ShouldNotBeNull();
+        problem.ShouldContain(setting);
+    }
+
+    /// <summary>
+    /// The exception of <see cref="VeryBackClientOptions.Validate"/> carries the message of <see cref="VeryBackClientOptions.FindProblem"/>
+    /// </summary>
+    [Fact]
+    public void TheExceptionCarriesTheProblem()
+    {
+        // Reading both
+        VeryBackClientOptions options = new VeryBackClientOptions { Port = 0 };
+
+        // Check
+        Should.Throw<InvalidOperationException>(options.Validate).Message.ShouldBe(options.FindProblem());
+    }
+
     #endregion
 
     #endregion
