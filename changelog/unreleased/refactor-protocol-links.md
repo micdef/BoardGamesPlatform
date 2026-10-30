@@ -1,4 +1,0 @@
-### Changed
-
-- Protocol: the hardened accept loop of the Very Back moves to `LinkServer` (`BoardGamesPlatform.Protocol.Links`), and the connection management of the Back's Very Back client moves to `LinkClient`, so that the Back and the Gateway reuse them instead of a copy per tier. No change of behavior (the tests of the Very Back and of the client run unchanged), except two texts: the stop of a listener is logged as "Listener of the Very Back stopped", and a call after the disposal says "The client of the Very Back has been disposed". The events of these classes take the ids 9001-9005 and 9011-9018, reserved for them.
-- TestKit: the logger that keeps the messages and the listener whose accepts fail on demand move there from the Very Back tests; the Protocol tests check the link server and the link client directly, under another tier name.
