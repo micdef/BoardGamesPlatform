@@ -219,6 +219,7 @@ public sealed class SqlPingProcedureTests
     [InlineData("Server=localhost;Database=TEST_BoardGamesPlatform;Integrated Security=true")]
     [InlineData("Server=localhost;Max Pool Size=7;Pooling=true")]
     [InlineData("Server=localhost;Application Name=")]
+    [InlineData("Server=localhost;App=")]
     public void TheDefaultApplicationNameIsAddedWhenAbsent(string connectionString)
     {
         // Check
@@ -239,6 +240,7 @@ public sealed class SqlPingProcedureTests
     [InlineData("Server=localhost;Application Name=Admin.Choice", "Admin.Choice")]
     [InlineData("Server=localhost;App=Admin.Choice", "Admin.Choice")]
     [InlineData("Server=localhost;APP=Admin.Choice", "Admin.Choice")]
+    [InlineData("Server=localhost;application name=x", "x")]
     [InlineData("Server=localhost;Application Name=.Net SqlClient Data Provider", ".Net SqlClient Data Provider")]
     public void AnApplicationNameSetByTheAdministratorIsKept(string connectionString, string expected)
     {
@@ -246,6 +248,29 @@ public sealed class SqlPingProcedureTests
         string result = SqlPingProcedure.WithApplicationName(connectionString);
         result.ShouldBe(connectionString);
         new SqlConnectionStringBuilder(result).ApplicationName.ShouldBe(expected);
+    }
+
+    #endregion
+
+    #region Disposal
+
+    /// <summary>
+    /// A call after the disposal is refused, so that it never opens a new pool (and a new session) once the Very Back is stopped; disposing
+    /// twice is harmless
+    /// </summary>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    [Fact(Timeout = TestTimeout)]
+    public async Task ACallAfterTheDisposalIsRefusedAsync()
+    {
+        // Disposing a procedure that never opened a connection (nothing reaches the network)
+        SqlPingProcedure procedure = new SqlPingProcedure(Options.Create(new ConnectionStringsOptions { Main = "Server=localhost;Database=TEST_BoardGamesPlatform;Integrated Security=true" }));
+        procedure.Dispose();
+        procedure.Dispose();
+
+        // Check
+        await Should.ThrowAsync<ObjectDisposedException>(() => procedure.GetServerTimeAsync(TestContext.Current.CancellationToken));
     }
 
     #endregion

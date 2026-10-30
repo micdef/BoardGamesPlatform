@@ -89,9 +89,9 @@ public sealed partial class SqlPingProcedure : IPingProcedure, IDisposable
     #region Variables
 
     /// <summary>
-    /// Whether the pool has been cleared (Dispose is idempotent)
+    /// Whether the pool has been cleared: 0 = no, 1 = yes (set with Interlocked.Exchange, so that Dispose clears the pool once)
     /// </summary>
-    private bool _disposed;
+    private int _disposed;
 
     #endregion
 
@@ -193,9 +193,9 @@ public sealed partial class SqlPingProcedure : IPingProcedure, IDisposable
     /// <para><b>Purpose:</b> lets an administrator recognize the sessions of the Very Back on SQL Server (program_name), and tell them from the
     /// ones of another application.</para>
     /// <para><b>Behavior:</b> if the connection string sets <c>Application Name</c> (or its synonym <c>App</c>) with a value, even the default one
-    /// of the SQL client, it is returned untouched: a value set by the administrator is always kept. An empty value counts as no value. Otherwise <see cref="DefaultApplicationName"/> is added. The string is
-    /// never logged, and the errors of the SQL client, which can quote a piece of it, are not caught here: the caller has already checked that it
-    /// is well formed.</para>
+    /// of the SQL client, it is returned untouched: a value set by the administrator is always kept. An empty value counts as no value.
+    /// Otherwise <see cref="DefaultApplicationName"/> is added. The string is never logged, and the errors of the SQL client, which can quote a
+    /// piece of it, are not caught here: the caller has already checked that it is well formed.</para>
     /// </remarks>
     /// <param name="connectionString">[Cannot be null] A connection string the SQL client can read</param>
     /// <returns>
@@ -272,8 +272,12 @@ public sealed partial class SqlPingProcedure : IPingProcedure, IDisposable
     /// <exception cref="SqlException">If the connection or the procedure fails</exception>
     /// <exception cref="InvalidDataException">If the database answers something else than the documented result</exception>
     /// <exception cref="OperationCanceledException">If the call is canceled</exception>
+    /// <exception cref="ObjectDisposedException">If the procedure is disposed: a call must not open a new pool after the stop</exception>
     public async Task<DateTimeOffset> GetServerTimeAsync(CancellationToken cancellationToken)
     {
+        // Check: no new session once the pool is cleared (a request that outlasts the shutdown timeout of the host ends here)
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) == 1, this);
+
         // Opening the connection and calling the procedure
         await using SqlConnection connection = new SqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
@@ -303,15 +307,14 @@ public sealed partial class SqlPingProcedure : IPingProcedure, IDisposable
     /// <para><b>Behavior:</b> clears the pool of the connection string of this procedure, not all the pools of the process
     /// (<c>ClearAllPools</c>): the Very Back owns no other pool today, but this procedure must not close the sessions of a pool it did not open.
     /// The idle sessions are closed; one still in use would be discarded when its connection is closed. Called once, the next calls do nothing.
-    /// A call to the database after the disposal would open a new pool, nothing calls it: the host disposes this procedure after the listener
-    /// has stopped.</para>
+    /// A call to the database after the disposal is refused with an <see cref="ObjectDisposedException"/>, so that it never opens a new pool:
+    /// it can only happen when requests outlast the shutdown timeout of the host.</para>
     /// </remarks>
     public void Dispose()
     {
         // Doing it once
-        if (_disposed)
+        if (Interlocked.Exchange(ref _disposed, 1) == 1)
             return;
-        _disposed = true;
 
         // Clearing the pool of this connection string (building the connection opens nothing)
         using SqlConnection poolOwner = new SqlConnection(_connectionString);
