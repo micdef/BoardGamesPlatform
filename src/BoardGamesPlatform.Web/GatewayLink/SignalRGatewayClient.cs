@@ -158,6 +158,9 @@ public sealed class SignalRGatewayClient : IGatewayClient, IAsyncDisposable
         await _connectLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            // Giving up when the call was canceled while it waited: the lock can be granted just after a disposal canceled the calls
+            cancellationToken.ThrowIfCancellationRequested();
+
             // Starting the connection when it is not connected; nothing to do when it is
             if (_connection.State == HubConnectionState.Disconnected)
                 await _connection.StartAsync(cancellationToken).ConfigureAwait(false);
@@ -186,11 +189,20 @@ public sealed class SignalRGatewayClient : IGatewayClient, IAsyncDisposable
         using CancellationTokenSource call = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposing.Token);
         call.CancelAfter(_timeout);
 
-        // Connecting on first use
-        await EnsureConnectedAsync(call.Token).ConfigureAwait(false);
+        try
+        {
+            // Connecting on first use
+            await EnsureConnectedAsync(call.Token).ConfigureAwait(false);
 
-        // Function's return
-        return await _connection.InvokeAsync<PingResponse>(PlatformHubContract.Ping, call.Token).ConfigureAwait(false);
+            // Function's return
+            return await _connection.InvokeAsync<PingResponse>(PlatformHubContract.Ping, call.Token).ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException exception) when (Volatile.Read(ref _disposed) == 1)
+        {
+            // The client was disposed during the call, between the check of the token and the use of the connection: one contract for every call
+            // ended by the disposal, a cancellation
+            throw new OperationCanceledException("The client of the Gateway was disposed during the call", exception, call.Token);
+        }
     }
 
     /// <summary>

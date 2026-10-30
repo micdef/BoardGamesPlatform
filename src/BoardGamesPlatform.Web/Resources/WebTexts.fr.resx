@@ -28,4 +28,61 @@
   <data name="Ping_Error" xml:space="preserve">
     <value>La plateforme n'a pas répondu. Veuillez réessayer plus tard.</value>
   </data>
+  <data name="Home_Title" xml:space="preserve">
+    <value>BoardGamesPlatform</value>
+  </data>
+  <data name="NotFound_Title" xml:space="preserve">
+    <value>Introuvable</value>
+  </data>
+  <data name="NotFound_Message" xml:space="preserve">
+    <value>Désolé, le contenu que vous cherchez n'existe pas.</value>
+  </data>
+  <data name="Error_Title" xml:space="preserve">
+    <value>Erreur</value>
+  </data>
+  <data name="Error_Heading" xml:space="preserve">
+    <value>Erreur.</value>
+  </data>
+  <data name="Error_Message" xml:space="preserve">
+    <value>Une erreur s'est produite pendant le traitement de votre demande.</value>
+  </data>
+  <data name="Error_RequestId" xml:space="preserve">
+    <value>Identifiant de la demande :</value>
+  </data>
+  <data name="Layout_ErrorBanner" xml:space="preserve">
+    <value>Une erreur inattendue s'est produite.</value>
+  </data>
+  <data name="Layout_ErrorReload" xml:space="preserve">
+    <value>Recharger</value>
+  </data>
+  <data name="Reconnect_FirstAttempt" xml:space="preserve">
+    <value>Reconnexion au serveur...</value>
+  </data>
+  <data name="Reconnect_RepeatedAttemptBefore" xml:space="preserve">
+    <value>La reconnexion a échoué... nouvelle tentative dans </value>
+  </data>
+  <data name="Reconnect_RepeatedAttemptAfter" xml:space="preserve">
+    <value> secondes.</value>
+  </data>
+  <data name="Reconnect_Failed" xml:space="preserve">
+    <value>La reconnexion a échoué.</value>
+  </data>
+  <data name="Reconnect_FailedAdvice" xml:space="preserve">
+    <value>Veuillez réessayer ou recharger la page.</value>
+  </data>
+  <data name="Reconnect_Retry" xml:space="preserve">
+    <value>Réessayer</value>
+  </data>
+  <data name="Reconnect_Paused" xml:space="preserve">
+    <value>La session a été mise en pause par le serveur.</value>
+  </data>
+  <data name="Reconnect_ResumeFailed" xml:space="preserve">
+    <value>La reprise de la session a échoué.</value>
+  </data>
+  <data name="Reconnect_ResumeFailedAdvice" xml:space="preserve">
+    <value>Veuillez réessayer ou recharger la page.</value>
+  </data>
+  <data name="Reconnect_Resume" xml:space="preserve">
+    <value>Reprendre</value>
+  </data>
 </root>
