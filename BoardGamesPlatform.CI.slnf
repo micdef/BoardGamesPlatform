@@ -22,7 +22,8 @@
       "test\\BoardGamesPlatform.Gateway.Tests\\BoardGamesPlatform.Gateway.Tests.csproj",
       "test\\BoardGamesPlatform.Platform.Infrastructure.Tests\\BoardGamesPlatform.Platform.Infrastructure.Tests.csproj",
       "test\\BoardGamesPlatform.Protocol.Tests\\BoardGamesPlatform.Protocol.Tests.csproj",
-      "test\\BoardGamesPlatform.TestKit\\BoardGamesPlatform.TestKit.csproj"
+      "test\\BoardGamesPlatform.TestKit\\BoardGamesPlatform.TestKit.csproj",
+      "test\\BoardGamesPlatform.VeryBack.Tests\\BoardGamesPlatform.VeryBack.Tests.csproj"
     ]
   }
 }
