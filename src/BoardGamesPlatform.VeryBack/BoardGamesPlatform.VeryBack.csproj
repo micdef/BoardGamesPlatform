@@ -6,6 +6,11 @@
     <UserSecretsId>598113eb-a7f2-44f1-b7a2-b7cbd549135a</UserSecretsId>
   </PropertyGroup>
 
+  <!-- The tests reach the internal constructor of the listener service, to make its accept loop fail -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="BoardGamesPlatform.VeryBack.Tests" />
+  </ItemGroup>
+
   <!-- Projects -->
   <ItemGroup>
     <ProjectReference Include="..\BoardGamesPlatform.Observability\BoardGamesPlatform.Observability.csproj" />

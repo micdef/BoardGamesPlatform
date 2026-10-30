@@ -178,13 +178,47 @@ public sealed class OptionsValidationTests
     }
 
     /// <summary>
-    /// A connection string is accepted, and its value is never repeated in a failure
+    /// A connection string the SQL client reads is accepted, including a quoted value holding a semicolon
     /// </summary>
-    [Fact]
-    public void AConnectionStringIsAccepted()
+    /// <param name="connectionString">Valid connection string</param>
+    [Theory]
+    [InlineData("Server=localhost;Database=X")]
+    [InlineData("Server=localhost;Database=X;User Id=app;Password=\"ab;cd\"")]
+    [InlineData("Server=localhost;Database=X;User Id=app;Password='ab;cd'")]
+    public void AConnectionStringIsAccepted(string connectionString)
     {
         // Check
-        new ConnectionStringsOptionsValidator().Validate(null, new ConnectionStringsOptions { Main = "Server=localhost;Database=X" }).Succeeded.ShouldBeTrue();
+        new ConnectionStringsOptionsValidator().Validate(null, new ConnectionStringsOptions { Main = connectionString }).Succeeded.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// The risk is real: the error of the SQL client on a malformed string quotes the unknown keyword, here a piece of a password holding
+    /// a semicolon
+    /// </summary>
+    [Fact]
+    public void TheErrorOfTheSqlClientQuotesAPieceOfTheString()
+    {
+        // Check
+        ArgumentException exception = Should.Throw<ArgumentException>(() => new Microsoft.Data.SqlClient.SqlConnection("Server=localhost;Password=ab;Kx9secret=cd"));
+        exception.Message.ShouldContain("Kx9secret", Case.Insensitive);
+    }
+
+    /// <summary>
+    /// A connection string the SQL client cannot read is refused at startup, and the message repeats nothing of it
+    /// </summary>
+    /// <param name="connectionString">Malformed connection string, holding the text "Kx9secret"</param>
+    [Theory]
+    [InlineData("Server=localhost;Password=ab;Kx9secret=cd")]
+    [InlineData("Server=localhost;Password='Kx9secret")]
+    [InlineData("Server=localhost;Connect Timeout=Kx9secret")]
+    [InlineData("Server=localhost;Encrypt=Kx9secret")]
+    public void AnUnreadableConnectionStringIsRefusedWithoutRepeatingIt(string connectionString)
+    {
+        // Check
+        Microsoft.Extensions.Options.ValidateOptionsResult result = new ConnectionStringsOptionsValidator().Validate(null, new ConnectionStringsOptions { Main = connectionString });
+        result.Failed.ShouldBeTrue();
+        result.FailureMessage.ShouldContain("ConnectionStrings:Main");
+        result.FailureMessage.ShouldNotContain("Kx9secret", Case.Insensitive);
     }
 
     #endregion

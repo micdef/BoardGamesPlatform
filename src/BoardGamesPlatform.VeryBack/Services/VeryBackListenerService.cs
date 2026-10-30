@@ -32,12 +32,21 @@ namespace BoardGamesPlatform.VeryBack.Services;
 /// <remarks>
 /// <para><b>Purpose:</b> the server side of the link Back to Very Back (plain TCP in 0.3.0 and 0.4.0, development only).</para>
 /// <para><b>Behavior:</b> the listener is started when the host starts, so that a port already in use or an invalid endpoint stops the host
-/// at once, and <see cref="LocalEndPoint"/> is known as soon as the start has returned. The accept loop follows the rule of
-/// <see cref="ITransportListener"/>: a disposed listener or a cancellation ends it; any other exception concerns one incoming connection, is
-/// logged, and the loop keeps accepting. Each accepted connection is served in its own task by a <see cref="RequestServer"/>, and disposed when
-/// its service ends, whatever the reason (the peer closes, a protocol violation, a failing procedure). A failure of one connection never
-/// reaches the others. When the host stops, the listener is disposed and the service of every connection is awaited.</para>
-/// <para>The logs hold the remote end point and the exception, never a secret: the connection string never reaches this class.</para>
+/// at once, and <see cref="LocalEndPoint"/> is known as soon as the start has returned. A listen address other than loopback is accepted (the
+/// tiers may run on separate machines) but logged as a warning, since the link is neither encrypted nor authenticated yet.</para>
+/// <para>The accept loop follows the rule of <see cref="ITransportListener"/>, with one addition: it never ends silently.</para>
+/// <list type="bullet">
+/// <item><description>A disposed listener or a cancellation ends it when the host stops.</description></item>
+/// <item><description>The same exceptions without a stop request mean the listener is lost: the service fails, so that the host stops instead
+/// of running without listening.</description></item>
+/// <item><description>Any other exception concerns one incoming connection: it is logged and the loop keeps accepting after a short pause;
+/// after <see cref="MaxConsecutiveAcceptFailures"/> failures in a row, the service fails the same way.</description></item>
+/// </list>
+/// <para>Each accepted connection is served in its own task by a <see cref="RequestServer"/>, and disposed when its service ends, whatever the
+/// reason (the peer closes, a protocol violation, a failing procedure). A failure of one connection never reaches the others. When the
+/// service ends, the listener is disposed and the service of every connection is awaited: the stopping token ends them.</para>
+/// <para>The logs hold the remote end point and the exception, never the connection string. A SQL error may still name the server, the
+/// database or the login, as SQL Server writes them in its messages.</para>
 /// </remarks>
 public sealed partial class VeryBackListenerService : BackgroundService
 {
@@ -46,9 +55,14 @@ public sealed partial class VeryBackListenerService : BackgroundService
     #region Constants
 
     /// <summary>
+    /// Number of accept failures in a row after which the listener is considered broken and the service fails
+    /// </summary>
+    public const int MaxConsecutiveAcceptFailures = 50;
+
+    /// <summary>
     /// Pause after an accept failure, so that a failure that repeats cannot make the loop spin and flood the logs
     /// </summary>
-    private static readonly TimeSpan _acceptFailurePause = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan _defaultAcceptFailurePause = TimeSpan.FromMilliseconds(100);
 
     #endregion
 
@@ -57,18 +71,26 @@ public sealed partial class VeryBackListenerService : BackgroundService
     /// <summary>
     /// Listener of the link; null until the service is started
     /// </summary>
-    private TcpTransportListener? _listener;
+    private ITransportListener? _listener;
 
     /// <summary>
     /// Services of the connections accepted and not yet swept; only the accept loop reads and writes it
     /// </summary>
     private readonly List<Task> _connectionTasks = new List<Task>();
 
+    /// <summary>
+    /// Pause after an accept failure (shorter in the tests)
+    /// </summary>
+    private readonly TimeSpan _acceptFailurePause;
+
     #endregion
 
     #region Delegates
 
-    // #N/A
+    /// <summary>
+    /// Function that starts the listener on an end point (plain TCP outside the tests)
+    /// </summary>
+    private readonly Func<IPEndPoint, ITransportListener> _startListener;
 
     #endregion
 
@@ -90,7 +112,7 @@ public sealed partial class VeryBackListenerService : BackgroundService
     /// <summary>
     /// Call of the Ping procedure
     /// </summary>
-    private readonly IPingProcedure _pingProcedure;
+    private readonly IPingProcedure _svcPingProcedure;
 
     /// <summary>
     /// Logger of the service
@@ -122,26 +144,49 @@ public sealed partial class VeryBackListenerService : BackgroundService
     #region Constructors
 
     /// <summary>
-    /// Constructor
+    /// Constructor, listening on plain TCP
     /// </summary>
     /// <param name="options">[Cannot be null] Settings of the listener, validated at startup</param>
-    /// <param name="pingProcedure">[Cannot be null] Call of the Ping procedure</param>
+    /// <param name="svcPingProcedure">[Cannot be null] Call of the Ping procedure</param>
     /// <param name="logger">[Cannot be null] Logger of the service</param>
     /// <exception cref="ArgumentNullException">If a parameter is null</exception>
-    public VeryBackListenerService(IOptions<VeryBackOptions> options, IPingProcedure pingProcedure, ILogger<VeryBackListenerService> logger)
+    public VeryBackListenerService(IOptions<VeryBackOptions> options, IPingProcedure svcPingProcedure, ILogger<VeryBackListenerService> logger)
+        : this(options, svcPingProcedure, logger, endPoint => TcpTransportListener.Start(endPoint), _defaultAcceptFailurePause)
+    {
+    }
+
+    /// <summary>
+    /// Constructor with the function that starts the listener and the pause after an accept failure, so that the tests can make the accept
+    /// loop fail quickly
+    /// </summary>
+    /// <param name="options">[Cannot be null] Settings of the listener, validated at startup</param>
+    /// <param name="svcPingProcedure">[Cannot be null] Call of the Ping procedure</param>
+    /// <param name="logger">[Cannot be null] Logger of the service</param>
+    /// <param name="startListener">[Cannot be null] Function that starts the listener on an end point</param>
+    /// <param name="acceptFailurePause">Pause after an accept failure; zero or more</param>
+    /// <exception cref="ArgumentNullException">If a parameter is null</exception>
+    /// <exception cref="ArgumentOutOfRangeException">If the pause is negative</exception>
+    internal VeryBackListenerService(IOptions<VeryBackOptions> options, IPingProcedure svcPingProcedure, ILogger<VeryBackListenerService> logger,
+        Func<IPEndPoint, ITransportListener> startListener, TimeSpan acceptFailurePause)
     {
         // Checks
         if (options is null)
             throw new ArgumentNullException(nameof(options), $"The value of the parameter: {nameof(options)} cannot be null");
-        if (pingProcedure is null)
-            throw new ArgumentNullException(nameof(pingProcedure), $"The value of the parameter: {nameof(pingProcedure)} cannot be null");
+        if (svcPingProcedure is null)
+            throw new ArgumentNullException(nameof(svcPingProcedure), $"The value of the parameter: {nameof(svcPingProcedure)} cannot be null");
         if (logger is null)
             throw new ArgumentNullException(nameof(logger), $"The value of the parameter: {nameof(logger)} cannot be null");
+        if (startListener is null)
+            throw new ArgumentNullException(nameof(startListener), $"The value of the parameter: {nameof(startListener)} cannot be null");
+        if (acceptFailurePause < TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(acceptFailurePause), $"The value of the parameter: {nameof(acceptFailurePause)} cannot be negative");
 
         // Setting services
         _options = options.Value;
-        _pingProcedure = pingProcedure;
+        _svcPingProcedure = svcPingProcedure;
         _logger = logger;
+        _startListener = startListener;
+        _acceptFailurePause = acceptFailurePause;
     }
 
     #endregion
@@ -168,7 +213,7 @@ public sealed partial class VeryBackListenerService : BackgroundService
     /// </summary>
     /// <param name="remoteEndPoint">Address and port of the Back</param>
     [LoggerMessage(EventId = 11, Level = LogLevel.Information, Message = "Connection accepted from {RemoteEndPoint}")]
-    private partial void LogAccepted(EndPoint remoteEndPoint);
+    private partial void LogAccepted(string remoteEndPoint);
 
     /// <summary>
     /// Method used to log the normal end of the service of a connection
@@ -199,6 +244,29 @@ public sealed partial class VeryBackListenerService : BackgroundService
     private partial void LogStoppedListening();
 
     /// <summary>
+    /// Method used to warn that the Very Back listens on an address that other machines can reach
+    /// </summary>
+    /// <param name="endPoint">Address and port listened to</param>
+    [LoggerMessage(EventId = 16, Level = LogLevel.Warning,
+        Message = "Very Back listening on {EndPoint}, which is not a loopback address: the link is neither encrypted nor authenticated yet, restrict it with the firewall")]
+    private partial void LogNotLoopback(IPEndPoint endPoint);
+
+    /// <summary>
+    /// Method used to log that the listener was lost without a stop request
+    /// </summary>
+    /// <param name="exception">How the loss showed</param>
+    [LoggerMessage(EventId = 17, Level = LogLevel.Critical, Message = "The listener of the Very Back was closed without a stop request; the Very Back stops")]
+    private partial void LogListenerLost(Exception exception);
+
+    /// <summary>
+    /// Method used to log that the accept failures repeat
+    /// </summary>
+    /// <param name="exception">Last failure</param>
+    /// <param name="failures">Number of failures in a row</param>
+    [LoggerMessage(EventId = 18, Level = LogLevel.Critical, Message = "{Failures} accept failures in a row: the listener of the Very Back is broken; the Very Back stops")]
+    private partial void LogAcceptFailuresRepeated(Exception exception, int failures);
+
+    /// <summary>
     /// Method used to answer a Ping request with the time of the database server
     /// </summary>
     /// <param name="request">Body of the request, which holds nothing</param>
@@ -209,7 +277,7 @@ public sealed partial class VeryBackListenerService : BackgroundService
     private async Task<PingResponse> PingAsync(PingRequest request, CancellationToken cancellationToken)
     {
         // Asking the database
-        DateTimeOffset serverTime = await _pingProcedure.GetServerTimeAsync(cancellationToken).ConfigureAwait(false);
+        DateTimeOffset serverTime = await _svcPingProcedure.GetServerTimeAsync(cancellationToken).ConfigureAwait(false);
 
         // Function's return
         return new PingResponse(serverTime);
@@ -220,7 +288,8 @@ public sealed partial class VeryBackListenerService : BackgroundService
     /// </summary>
     /// <remarks>
     /// <para><b>Behavior:</b> never throws: the cause of an end is logged. Runs in its own task, so that a slow or failing connection never
-    /// delays the others.</para>
+    /// delays the others. Any end once the host stops is a close, not a failure, whatever the exception (the SQL client may report a
+    /// canceled call as a SQL error).</para>
     /// </remarks>
     /// <param name="connection">[Cannot be null] Accepted connection; disposed by this method</param>
     /// <param name="server">[Cannot be null] Server that answers the requests</param>
@@ -230,15 +299,16 @@ public sealed partial class VeryBackListenerService : BackgroundService
     /// </returns>
     private async Task ServeConnectionAsync(ITransportConnection connection, RequestServer server, CancellationToken cancellationToken)
     {
-        // Reading the remote end point first: it can no longer be read once the connection is disposed
+        // Reading the remote end point first (read once when the connection was accepted)
         string remoteEndPoint = connection.RemoteEndPoint.ToString() ?? "unknown";
+        LogAccepted(remoteEndPoint);
         try
         {
             // Serving the connection to its end
             await server.ServeAsync(connection, cancellationToken).ConfigureAwait(false);
             LogClosed(remoteEndPoint);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
             // The host stops: not a failure
             LogClosed(remoteEndPoint);
@@ -284,8 +354,12 @@ public sealed partial class VeryBackListenerService : BackgroundService
             throw new InvalidOperationException("The listener is already started");
 
         // Starting the listener on the configured end point
-        _listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Parse(_options.ListenAddress), _options.Port));
-        LogListening(_listener.LocalEndPoint);
+        _listener = _startListener(new IPEndPoint(IPAddress.Parse(_options.ListenAddress), _options.Port));
+        IPEndPoint localEndPoint = _listener.LocalEndPoint;
+        if (IPAddress.IsLoopback(localEndPoint.Address))
+            LogListening(localEndPoint);
+        else
+            LogNotLoopback(localEndPoint);
 
         // Function's return
         return base.StartAsync(cancellationToken);
@@ -298,17 +372,20 @@ public sealed partial class VeryBackListenerService : BackgroundService
     /// <returns>
     /// A task that completes once the listener is disposed and every connection served to its end
     /// </returns>
+    /// <exception cref="InvalidOperationException">If the listener is lost without a stop request, or the accept failures repeat; the host
+    /// then stops</exception>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Preparing the codec and the routing of the operations, shared by every connection
-        TcpTransportListener listener = _listener ?? throw new InvalidOperationException("The listener is not started");
+        ITransportListener listener = _listener ?? throw new InvalidOperationException("The listener is not started");
         FrameCodec codec = new FrameCodec();
         OperationDispatcher dispatcher = new OperationDispatcher().Register<PingRequest, PingResponse>(VeryBackOperations.Ping, PingAsync);
         RequestServer server = new RequestServer(codec, dispatcher.HandleAsync);
+        int consecutiveFailures = 0;
 
         try
         {
-            // Accepting connections until the listener is closed or the host stops
+            // Accepting connections until the host stops
             while (true)
             {
                 ITransportConnection connection;
@@ -318,20 +395,31 @@ public sealed partial class VeryBackListenerService : BackgroundService
                 }
                 catch (Exception exception) when (exception is OperationCanceledException or ObjectDisposedException)
                 {
-                    // The accept loop rule: the listener is closed or the tier stops
-                    break;
+                    // The accept loop rule: the tier stops; without a stop request, nothing would listen any more while the host runs
+                    if (stoppingToken.IsCancellationRequested)
+                        break;
+                    LogListenerLost(exception);
+                    throw new InvalidOperationException("The listener of the Very Back was closed without a stop request", exception);
                 }
                 catch (Exception exception)
                 {
-                    // The accept loop rule: this exception concerns one incoming connection; the pause is cut short when the host stops
+                    // The accept loop rule: this exception concerns one incoming connection, unless it repeats
+                    consecutiveFailures++;
+                    if (consecutiveFailures >= MaxConsecutiveAcceptFailures)
+                    {
+                        LogAcceptFailuresRepeated(exception, consecutiveFailures);
+                        throw new InvalidOperationException($"{consecutiveFailures} accept failures in a row: the listener of the Very Back is broken", exception);
+                    }
+
+                    // Pausing before the next accept; the pause is cut short when the host stops
                     LogAcceptFailed(exception);
                     await Task.Delay(_acceptFailurePause, stoppingToken).ConfigureAwait(false);
                     continue;
                 }
 
                 // Serving the connection in its own task, after forgetting the services that ended
+                consecutiveFailures = 0;
                 _connectionTasks.RemoveAll(task => task.IsCompleted);
-                LogAccepted(connection.RemoteEndPoint);
                 _connectionTasks.Add(Task.Run(() => ServeConnectionAsync(connection, server, stoppingToken), CancellationToken.None));
             }
         }
@@ -343,8 +431,8 @@ public sealed partial class VeryBackListenerService : BackgroundService
         {
             // Closing the listener, then waiting for the service of every connection: the stopping token ends them
             await listener.DisposeAsync().ConfigureAwait(false);
-            await Task.WhenAll(_connectionTasks).ConfigureAwait(false);
             LogStoppedListening();
+            await Task.WhenAll(_connectionTasks).ConfigureAwait(false);
         }
     }
 
@@ -363,7 +451,7 @@ public sealed partial class VeryBackListenerService : BackgroundService
         }
         finally
         {
-            // Idempotent: the listener is already disposed when the accept loop ended normally
+            // Idempotent: the listener is already disposed when the accept loop ended
             if (_listener is not null)
                 await _listener.DisposeAsync().ConfigureAwait(false);
         }

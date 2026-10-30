@@ -31,7 +31,9 @@ namespace BoardGamesPlatform.VeryBack.Procedures;
 /// stored procedure only.</para>
 /// <para><b>Behavior:</b> opens a connection with the main connection string, runs the procedure (schema-qualified) and reads its output
 /// parameter, a JSON object <c>{"ServerTime":"…"}</c>. The result is read strictly by <see cref="ParseServerTime"/>: Contract as a Service, the Very
-/// Back checks what the database returns instead of trusting it. The connection string is never logged and never put in an exception message.</para>
+/// Back checks what the database returns instead of trusting it. The connection string is never logged and never put in an exception message:
+/// it is checked at construction, so that the parsing error of the SQL client, which quotes the unknown keyword, can never be raised by a
+/// call. The errors of SQL Server itself may still name the server, the database or the login.</para>
 /// </remarks>
 public sealed partial class SqlPingProcedure : IPingProcedure
 {
@@ -55,7 +57,8 @@ public sealed partial class SqlPingProcedure : IPingProcedure
     private const string ServerTimeProperty = "ServerTime";
 
     /// <summary>
-    /// Format accepted for the server time: date and time to the second, optional fraction up to seven digits, then the offset
+    /// Format used to read the server time once its shape is checked: to the second, an optional fraction, then the offset (the shape check
+    /// refuses a dot without digits, which this format alone would accept)
     /// </summary>
     private const string ServerTimeFormat = "yyyy'-'MM'-'dd'T'HH':'mm':'ss.FFFFFFFK";
 
@@ -113,17 +116,20 @@ public sealed partial class SqlPingProcedure : IPingProcedure
     /// </summary>
     /// <param name="options">[Cannot be null] Connection strings of the Very Back, already validated at startup</param>
     /// <exception cref="ArgumentNullException">If the options are null</exception>
-    /// <exception cref="InvalidOperationException">If the main connection string is missing</exception>
+    /// <exception cref="InvalidOperationException">If the main connection string is missing, or the SQL client cannot read it</exception>
     public SqlPingProcedure(IOptions<ConnectionStringsOptions> options)
     {
         // Check
         if (options is null)
             throw new ArgumentNullException(nameof(options), $"The value of the parameter: {nameof(options)} cannot be null");
 
-        // Reading the connection string (a missing one is a configuration error, named without its value)
+        // Reading the connection string (a missing or unreadable one is a configuration error, named without its value nor the error of the
+        // SQL client, which can quote a piece of it)
         string? connectionString = options.Value.Main;
         if (string.IsNullOrWhiteSpace(connectionString))
             throw new InvalidOperationException($"{ConnectionStringsOptions.SectionName}:{nameof(ConnectionStringsOptions.Main)} is missing");
+        if (!ConnectionStringsOptionsValidator.IsWellFormed(connectionString))
+            throw new InvalidOperationException($"{ConnectionStringsOptions.SectionName}:{nameof(ConnectionStringsOptions.Main)} is not a connection string the SQL client can read");
 
         // Setting
         _connectionString = connectionString;
@@ -142,13 +148,14 @@ public sealed partial class SqlPingProcedure : IPingProcedure
     #region Privates
 
     /// <summary>
-    /// Method used to get the pattern that checks that a date text ends with an explicit offset
+    /// Method used to get the pattern that checks the whole shape of a date text
     /// </summary>
     /// <returns>
-    /// The compiled pattern: "Z", or a sign followed by hours and minutes, at the end of the text
+    /// The compiled pattern: date, "T", time to the second, an optional dot followed by one to seven digits, then "Z" or a sign followed by
+    /// hours and minutes; ASCII digits only, nothing before or after
     /// </returns>
-    [GeneratedRegex(@"(Z|[+-][0-9]{2}:[0-9]{2})\z", RegexOptions.CultureInvariant)]
-    private static partial Regex ExplicitOffsetPattern();
+    [GeneratedRegex(@"\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,7})?(Z|[+-][0-9]{2}:[0-9]{2})\z", RegexOptions.CultureInvariant)]
+    private static partial Regex ServerTimePattern();
 
     #endregion
 
@@ -159,7 +166,7 @@ public sealed partial class SqlPingProcedure : IPingProcedure
     /// </summary>
     /// <remarks>
     /// <para><b>Behavior:</b> accepts exactly one JSON object holding exactly one property, <c>ServerTime</c>, a string with a date, a time
-    /// and an explicit offset (<c>Z</c> or <c>±hh:mm</c>, 0 to 7 fraction digits). Anything else is refused.</para>
+    /// and an explicit offset (<c>Z</c> or <c>±hh:mm</c>; no fraction, or a dot followed by 1 to 7 digits). Anything else is refused.</para>
     /// </remarks>
     /// <param name="json">Output parameter of the procedure; null when the database returned NULL</param>
     /// <returns>
@@ -184,9 +191,10 @@ public sealed partial class SqlPingProcedure : IPingProcedure
             if (!root.TryGetProperty(ServerTimeProperty, out JsonElement serverTime) || serverTime.ValueKind != JsonValueKind.String)
                 throw new InvalidDataException($"The property {ServerTimeProperty} of the Ping result must be a string");
 
-            // A date with its time and an explicit offset: an offset-less date would mean another instant on another machine
+            // A date with its time and an explicit offset (an offset-less date would mean another instant on another machine): the pattern
+            // checks the shape, the parsing checks the ranges (month, hour, offset)
             string text = serverTime.GetString() ?? string.Empty;
-            if (!ExplicitOffsetPattern().IsMatch(text)
+            if (!ServerTimePattern().IsMatch(text)
                 || !DateTimeOffset.TryParseExact(text, ServerTimeFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTimeOffset value))
             {
                 throw new InvalidDataException($"The property {ServerTimeProperty} of the Ping result must be an ISO 8601 date with its time and an explicit offset");

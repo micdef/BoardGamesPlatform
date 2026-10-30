@@ -169,6 +169,10 @@ public sealed class SqlPingProcedureTests
     [InlineData("{\"ServerTime\":\"2026-10-30T09:15:00+0100\"}")]
     [InlineData("{\"ServerTime\":\"2026-10-30T09:15:00.12345678Z\"}")]
     [InlineData("{\"ServerTime\":\"yesterday\"}")]
+    [InlineData("{\"ServerTime\":\"2026-10-30T09:15:00.Z\"}")]
+    [InlineData("{\"ServerTime\":\"2026-10-30T09:15:00.+01:00\"}")]
+    [InlineData("{\"ServerTime\":\"٢026-10-30T09:15:00Z\"}")]
+    [InlineData("{\"ServerTime\":\" 2026-10-30T09:15:00Z\"}")]
     public void AnythingElseIsRefused(string? json)
     {
         // Check
@@ -188,6 +192,21 @@ public sealed class SqlPingProcedureTests
         // Check
         InvalidOperationException exception = Should.Throw<InvalidOperationException>(() => new SqlPingProcedure(Options.Create(new ConnectionStringsOptions())));
         exception.Message.ShouldContain("ConnectionStrings:Main");
+    }
+
+    /// <summary>
+    /// A connection string the SQL client cannot read is refused when the procedure is created, without the error of the SQL client, which
+    /// quotes a piece of the string
+    /// </summary>
+    [Fact]
+    public void AnUnreadableConnectionStringIsRefusedWithoutRepeatingIt()
+    {
+        // Check
+        ConnectionStringsOptions options = new ConnectionStringsOptions { Main = "Server=localhost;Password=ab;Kx9secret=cd" };
+        InvalidOperationException exception = Should.Throw<InvalidOperationException>(() => new SqlPingProcedure(Options.Create(options)));
+        exception.Message.ShouldContain("ConnectionStrings:Main");
+        exception.Message.ShouldNotContain("Kx9secret", Case.Insensitive);
+        exception.InnerException.ShouldBeNull();
     }
 
     #endregion
