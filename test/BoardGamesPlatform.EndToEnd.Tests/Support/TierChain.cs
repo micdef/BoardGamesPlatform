@@ -31,11 +31,13 @@ namespace BoardGamesPlatform.EndToEnd.Tests.Support;
 /// <remarks>
 /// <para><b>Purpose:</b> one place that knows how to start the chain front, Gateway, Back, Very Back, procedure, so that each end-to-end test
 /// only states what it proves.</para>
-/// <para><b>Behavior:</b> the tiers start in dependency order (Very Back, Back, Gateway) and stop in the reverse order. The Very Back and
-/// the Back are built with <c>AddPlatformVeryBack</c> and <c>AddPlatformBack</c>, as their Program.cs build them, from settings in memory, and
-/// listen on two fixed ports of the block of the project, on the loopback address. The Gateway is its own Program, in memory, with its real
-/// Back client pointed at the port of the Back. Only the Ping procedure may be replaced by a fake: with a fake, the chain stops at the
-/// procedure; without one, the real <see cref="SqlPingProcedure"/> calls the database of the connection string.</para>
+/// <para><b>Behavior:</b> the tiers start in dependency order (Very Back, Back, Gateway) and stop in the reverse order, each stop under a
+/// grace period (<see cref="TierStops"/>). The Very Back and the Back are built with <c>AddPlatformVeryBack</c> and <c>AddPlatformBack</c>,
+/// as their Program.cs build them, from settings in memory, and listen on two fixed ports of the block of the project, on the loopback
+/// address. The Gateway is its own Program, in memory, with its real Back client pointed at the port of the Back. The front reaches the hub of
+/// the Gateway through the in-memory test server by long polling, not through a socket: only the hops Gateway to Back to Very Back are real
+/// TCP connections. Only the Ping procedure may be replaced by a fake: with a fake, the chain stops at the procedure; without one, the real
+/// <see cref="SqlPingProcedure"/> calls the database of the connection string.</para>
 /// </remarks>
 internal sealed class TierChain : IAsyncDisposable
 {
@@ -48,24 +50,34 @@ internal sealed class TierChain : IAsyncDisposable
     /// </summary>
     private const string UnusedConnectionString = "Server=localhost;Database=TEST_BoardGamesPlatformE2E;Integrated Security=true";
 
+    /// <summary>
+    /// Name under which the Very Back registers its stop action
+    /// </summary>
+    private const string VeryBackName = "Very Back";
+
+    /// <summary>
+    /// Name under which the Back registers its stop action
+    /// </summary>
+    private const string BackName = "Back";
+
+    /// <summary>
+    /// Name under which the Gateway registers its stop action
+    /// </summary>
+    private const string GatewayName = "Gateway";
+
     #endregion
 
     #region Variables
 
     /// <summary>
-    /// Host of the Very Back; null once stopped
+    /// Stop actions of the started tiers
     /// </summary>
-    private IHost? _veryBack;
+    private readonly TierStops _stops;
 
     /// <summary>
-    /// Host of the Back; null once stopped
+    /// The Gateway, to build the front
     /// </summary>
-    private IHost? _back;
-
-    /// <summary>
-    /// The Gateway; null once stopped
-    /// </summary>
-    private GatewayFactory? _gateway;
+    private readonly GatewayFactory _gateway;
 
     #endregion
 
@@ -110,14 +122,12 @@ internal sealed class TierChain : IAsyncDisposable
     /// <summary>
     /// Constructor; use <see cref="StartAsync"/> to build a started chain
     /// </summary>
-    /// <param name="veryBack">[Cannot be null] Started host of the Very Back</param>
-    /// <param name="back">[Cannot be null] Started host of the Back</param>
+    /// <param name="stops">[Cannot be null] Stop actions of the started tiers</param>
     /// <param name="gateway">[Cannot be null] The Gateway, in process</param>
-    private TierChain(IHost veryBack, IHost back, GatewayFactory gateway)
+    private TierChain(TierStops stops, GatewayFactory gateway)
     {
         // Setting
-        _veryBack = veryBack;
-        _back = back;
+        _stops = stops;
         _gateway = gateway;
     }
 
@@ -193,23 +203,26 @@ internal sealed class TierChain : IAsyncDisposable
     }
 
     /// <summary>
-    /// Method used to stop a host and release it
+    /// Method used to build the stop action of a host: stops it, then releases it even when the stop fails
     /// </summary>
-    /// <param name="host">[Cannot be null] Host to stop</param>
+    /// <param name="host">[Cannot be null] Started host</param>
     /// <returns>
-    /// A task that completes when the host is stopped and disposed
+    /// The stop action
     /// </returns>
-    private static async Task StopAsync(IHost host)
+    private static Func<CancellationToken, Task> StopHost(IHost host)
     {
-        // Stopping the host, then releasing it
-        try
+        // Function's return
+        return async cancellationToken =>
         {
-            await host.StopAsync();
-        }
-        finally
-        {
-            host.Dispose();
-        }
+            try
+            {
+                await host.StopAsync(cancellationToken);
+            }
+            finally
+            {
+                host.Dispose();
+            }
+        };
     }
 
     #endregion
@@ -222,7 +235,8 @@ internal sealed class TierChain : IAsyncDisposable
     /// <remarks>
     /// <para><b>Purpose:</b> a running chain for a test.</para>
     /// <para><b>Behavior:</b> starts the Very Back, then the Back, then the Gateway. The listeners of the Very Back and of the Back are bound
-    /// when their host has started. If a tier fails to start, the tiers already started are stopped before the exception is thrown.</para>
+    /// when their host has started. If a tier fails to start, the tiers already started are stopped, each in its own try; the exception of the
+    /// start is the one thrown, and the failures of the stops, if any, are kept in its <c>Data["StopFailures"]</c>.</para>
     /// </remarks>
     /// <param name="procedure">[Can be null] Fake that replaces the Ping procedure; null for the real one, which needs the connection string</param>
     /// <param name="connectionString">[Can be null] Main connection string of the Very Back, for the real procedure</param>
@@ -236,31 +250,33 @@ internal sealed class TierChain : IAsyncDisposable
         int veryBackPort = TestPorts.Block.Next();
         int backPort = TestPorts.Block.Next();
 
-        // Starting the Very Back, then the Back, then the Gateway; a failure stops what is already started
-        IHost veryBack = BuildVeryBack(veryBackPort, procedure, connectionString);
-        IHost? back = null;
-        GatewayFactory? gateway = null;
+        // Starting the Very Back, then the Back, then the Gateway, registering the stop of each as soon as it has started
+        TierStops stops = new TierStops();
         try
         {
+            IHost veryBack = BuildVeryBack(veryBackPort, procedure, connectionString);
+            stops.Add(VeryBackName, StopHost(veryBack));
             await veryBack.StartAsync(cancellationToken);
-            back = BuildBack(backPort, veryBackPort);
+
+            IHost back = BuildBack(backPort, veryBackPort);
+            stops.Add(BackName, StopHost(back));
             await back.StartAsync(cancellationToken);
-            gateway = new GatewayFactory(backPort);
+
+            GatewayFactory gateway = new GatewayFactory(backPort);
+            stops.Add(GatewayName, _ => gateway.DisposeAsync().AsTask());
             _ = gateway.Server;
+
+            // Function's return
+            return new TierChain(stops, gateway);
         }
-        catch
+        catch (Exception startFailure)
         {
-            // Stopping in the reverse order
-            if (gateway is not null)
-                await gateway.DisposeAsync();
-            if (back is not null)
-                await StopAsync(back);
-            await StopAsync(veryBack);
+            // Stopping what is already started, in the reverse order; the start failure stays the exception thrown
+            IReadOnlyList<Exception> stopFailures = await stops.StopAllAsync(TierStops.DefaultGrace, CancellationToken.None);
+            if (stopFailures.Count > 0)
+                startFailure.Data["StopFailures"] = new AggregateException(stopFailures).ToString();
             throw;
         }
-
-        // Function's return
-        return new TierChain(veryBack, back, gateway);
     }
 
     /// <summary>
@@ -269,14 +285,10 @@ internal sealed class TierChain : IAsyncDisposable
     /// <returns>
     /// The connection, not started; the caller starts and disposes it
     /// </returns>
-    /// <exception cref="InvalidOperationException">If the Gateway is stopped</exception>
     public HubConnection CreateFront()
     {
-        // Check
-        GatewayFactory gateway = _gateway ?? throw new InvalidOperationException("The Gateway is stopped");
-
         // Function's return
-        return gateway.CreateHubConnection();
+        return _gateway.CreateHubConnection();
     }
 
     /// <summary>
@@ -284,7 +296,8 @@ internal sealed class TierChain : IAsyncDisposable
     /// </summary>
     /// <remarks>
     /// <para><b>Purpose:</b> proves what the other tiers do when the tier below them is gone.</para>
-    /// <para><b>Behavior:</b> stops and disposes the host of the Very Back; its port is closed. Does nothing if it is already stopped.</para>
+    /// <para><b>Behavior:</b> stops and disposes the host of the Very Back, under the grace period; its port is closed. Does nothing if it is
+    /// already stopped.</para>
     /// </remarks>
     /// <returns>
     /// A task that completes when the Very Back is stopped
@@ -292,32 +305,27 @@ internal sealed class TierChain : IAsyncDisposable
     public async Task StopVeryBackAsync()
     {
         // Stopping the Very Back
-        IHost? veryBack = _veryBack;
-        _veryBack = null;
-        if (veryBack is not null)
-            await StopAsync(veryBack);
+        await _stops.StopOneAsync(VeryBackName, TierStops.DefaultGrace);
     }
 
     /// <summary>
     /// Method used to stop the tiers, in the reverse order of the start: the Gateway, the Back, then the Very Back
     /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> leave no tier running, with its port bound, whatever happens to one of them.</para>
+    /// <para><b>Behavior:</b> every tier that is still running is stopped, each in its own try and under the grace period. If one or more
+    /// stops failed, an <see cref="AggregateException"/> with the failures is thrown once all the tiers have been stopped.</para>
+    /// </remarks>
     /// <returns>
     /// A task that completes when every tier is stopped
     /// </returns>
+    /// <exception cref="AggregateException">If one or more tiers failed to stop</exception>
     public async ValueTask DisposeAsync()
     {
-        // Stopping the Gateway, then the Back
-        GatewayFactory? gateway = _gateway;
-        _gateway = null;
-        if (gateway is not null)
-            await gateway.DisposeAsync();
-        IHost? back = _back;
-        _back = null;
-        if (back is not null)
-            await StopAsync(back);
-
-        // Stopping the Very Back last
-        await StopVeryBackAsync();
+        // Stopping every tier, then reporting the failures
+        IReadOnlyList<Exception> failures = await _stops.StopAllAsync(TierStops.DefaultGrace);
+        if (failures.Count > 0)
+            throw new AggregateException("One or more tiers failed to stop", failures);
     }
 
     #endregion

@@ -6,6 +6,7 @@
  */
 
 // Using
+using BoardGamesPlatform.TestKit;
 using BoardGamesPlatform.VeryBack.Procedures;
 using BoardGamesPlatform.VeryBack.Settings;
 using Microsoft.Extensions.Options;
@@ -25,18 +26,14 @@ namespace BoardGamesPlatform.VeryBack.Tests.Procedures;
 /// <remarks>
 /// <para><b>Purpose:</b> the Very Back must read the result of the database strictly: exactly the documented JSON, with an explicit offset.</para>
 /// <para><b>Behavior:</b> the parsing tests need no database. The call test runs on the database named by the environment variable
-/// <see cref="TestDatabaseVariable"/> (the same as the SQL tests), and is reported as skipped without one.</para>
+/// <see cref="TestDatabase.ConnectionStringVariable"/> (the same as the SQL tests, with the same guard: only a TEST_ or DEV_ database), and is
+/// reported as skipped without one.</para>
 /// </remarks>
 public sealed class SqlPingProcedureTests
 {
     #region Members
 
     #region Constants
-
-    /// <summary>
-    /// Environment variable holding the connection string of the throwaway database, shared with the SQL tests
-    /// </summary>
-    private const string TestDatabaseVariable = "BOARDGAMESPLATFORM_TEST_DATABASE";
 
     /// <summary>
     /// Longest duration of the database test, in milliseconds
@@ -223,13 +220,19 @@ public sealed class SqlPingProcedureTests
     public async Task TheRealProcedureAnswersTheServerTimeAsync()
     {
         // Skipping the test when no database is configured
-        string? connectionString = Environment.GetEnvironmentVariable(TestDatabaseVariable);
-        Assert.SkipWhen(string.IsNullOrWhiteSpace(connectionString),
-            $"No SQL test database: set {TestDatabaseVariable} after deploying one with tools/database/Deploy-TestDatabase.ps1");
+        CancellationToken token = TestContext.Current.CancellationToken;
+        string? connectionString = TestDatabase.ReadConnectionString();
+        if (connectionString is null)
+            Assert.Skip(TestDatabase.SkipReason);
+
+        // Refusing any database that is not a throwaway one (the connection only proves the name of the database)
+        await using (await TestDatabase.OpenAsync(connectionString, token))
+        {
+        }
 
         // Calling the procedure
         SqlPingProcedure procedure = new SqlPingProcedure(Options.Create(new ConnectionStringsOptions { Main = connectionString }));
-        DateTimeOffset serverTime = await procedure.GetServerTimeAsync(TestContext.Current.CancellationToken);
+        DateTimeOffset serverTime = await procedure.GetServerTimeAsync(token);
 
         // Check: the clock of the server is that of this machine, within a day
         (serverTime - DateTimeOffset.UtcNow).Duration().ShouldBeLessThan(TimeSpan.FromDays(1));
