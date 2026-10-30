@@ -7,3 +7,5 @@
 ### Changed
 
 - Observability: `HostExitCode` gives the exit code of any executable once its host has run (moved from the Very Back, which uses it too).
+- Platform.Infrastructure: `VeryBackClient.PingAsync` returns the time of the database server itself, so that no message type of the Very Back reaches the Back.
+- Back and Very Back: the startup log is written once the listener is bound.

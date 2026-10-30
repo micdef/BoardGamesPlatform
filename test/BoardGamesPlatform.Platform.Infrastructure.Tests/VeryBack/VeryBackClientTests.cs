@@ -9,7 +9,6 @@
 using System.Net.Sockets;
 using BoardGamesPlatform.Platform.Infrastructure.VeryBack;
 using BoardGamesPlatform.Protocol.Transport;
-using BoardGamesPlatform.VeryBack.Contracts.Ping;
 
 // Static using
 // #N/A
@@ -129,10 +128,10 @@ public sealed class VeryBackClientTests
         CancellationToken token = TestContext.Current.CancellationToken;
         await using FakeVeryBack fake = FakeVeryBack.Start();
         await using VeryBackClient client = CreateClient(fake.Port, new SignalingLogger<VeryBackClient>());
-        PingResponse response = await client.PingAsync(token);
+        DateTimeOffset serverTime = await client.PingAsync(token);
 
         // Check
-        response.ServerTime.ShouldBe(FakeVeryBack.PingTime);
+        serverTime.ShouldBe(FakeVeryBack.PingTime);
     }
 
     /// <summary>
@@ -166,10 +165,10 @@ public sealed class VeryBackClientTests
         CancellationToken token = TestContext.Current.CancellationToken;
         await using FakeVeryBack fake = FakeVeryBack.Start();
         await using VeryBackClient client = CreateClient(fake.Port, new SignalingLogger<VeryBackClient>());
-        PingResponse[] responses = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => client.PingAsync(token)));
+        DateTimeOffset[] serverTimes = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => client.PingAsync(token)));
 
         // Checks (the fake counts a connection when it accepts it, before it can answer)
-        responses.ShouldAllBe(response => response.ServerTime == FakeVeryBack.PingTime);
+        serverTimes.ShouldAllBe(serverTime => serverTime == FakeVeryBack.PingTime);
         fake.AcceptedConnections.ShouldBe(1);
         fake.ReceivedRequests.ShouldBe(20);
     }
@@ -213,10 +212,10 @@ public sealed class VeryBackClientTests
         await logger.WaitForAsync("lost").WaitAsync(token);
 
         // Pinging again
-        PingResponse response = await client.PingAsync(token);
+        DateTimeOffset serverTime = await client.PingAsync(token);
 
         // Checks
-        response.ServerTime.ShouldBe(FakeVeryBack.PingTime);
+        serverTime.ShouldBe(FakeVeryBack.PingTime);
         fake.AcceptedConnections.ShouldBe(2);
     }
 
@@ -296,7 +295,7 @@ public sealed class VeryBackClientTests
         HangingConnector connector = new HangingConnector();
         VeryBackClientOptions options = new VeryBackClientOptions { ConnectTimeout = TimeSpan.FromMinutes(1) };
         await using VeryBackClient client = new VeryBackClient(options, connector, new SignalingLogger<VeryBackClient>());
-        Task<PingResponse> ping = client.PingAsync(canceling.Token);
+        Task<DateTimeOffset> ping = client.PingAsync(canceling.Token);
 
         // Canceling once the attempt has begun
         await connector.Started.WaitAsync(TestContext.Current.CancellationToken);
@@ -384,8 +383,8 @@ public sealed class VeryBackClientTests
         options.Port = 1;
 
         // Check: the client still reaches the fake
-        PingResponse response = await client.PingAsync(token);
-        response.ServerTime.ShouldBe(FakeVeryBack.PingTime);
+        DateTimeOffset serverTime = await client.PingAsync(token);
+        serverTime.ShouldBe(FakeVeryBack.PingTime);
     }
 
     #endregion

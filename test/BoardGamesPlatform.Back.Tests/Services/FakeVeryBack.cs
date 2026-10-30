@@ -26,12 +26,13 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace BoardGamesPlatform.Back.Tests.Services;
 
 /// <summary>
-/// Fake Very Back answering the Ping operation with a fixed time
+/// Fake Very Back answering the Ping operation with a fixed time, or never answering it
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> lets the tests of the Back prove the path Gateway → Back → Very Back without a database.</para>
 /// <para><b>Behavior:</b> a real link server on port 0 of the loopback address, so that the Back speaks to it exactly as to the real Very
-/// Back; disposing the fake stops it and closes its connections.</para>
+/// Back. A fake that does not answer waits until it is disposed, like a Very Back stuck on its database. Disposing the fake stops it and closes
+/// its connections.</para>
 /// </remarks>
 internal sealed class FakeVeryBack : IAsyncDisposable
 {
@@ -59,6 +60,11 @@ internal sealed class FakeVeryBack : IAsyncDisposable
     /// Task of the running link server
     /// </summary>
     private readonly Task _running;
+
+    /// <summary>
+    /// Completed when a Ping request has been received
+    /// </summary>
+    private readonly TaskCompletionSource _received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     #endregion
 
@@ -91,6 +97,11 @@ internal sealed class FakeVeryBack : IAsyncDisposable
     /// </summary>
     public int Port { get; }
 
+    /// <summary>
+    /// Task completed when a Ping request has been received
+    /// </summary>
+    public Task Received => _received.Task;
+
     #endregion
 
     #region Delegates
@@ -106,13 +117,23 @@ internal sealed class FakeVeryBack : IAsyncDisposable
     /// <summary>
     /// Constructor; starts listening at once
     /// </summary>
-    public FakeVeryBack()
+    /// <param name="answers">Whether the Ping is answered; when false, it waits until the fake is disposed</param>
+    public FakeVeryBack(bool answers = true)
     {
         // Starting the listener and the link server
         TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, 0));
         Port = listener.LocalEndPoint.Port;
         OperationDispatcher dispatcher = new OperationDispatcher().Register<PingRequest, PingResponse>(VeryBackOperations.Ping,
-            (_, _) => Task.FromResult(new PingResponse(PingTime)));
+            async (_, cancellationToken) =>
+            {
+                // Telling the test, then answering or waiting until the fake stops
+                _received.TrySetResult();
+                if (!answers)
+                    await Task.Delay(Timeout.Infinite, cancellationToken);
+
+                // Function's return
+                return new PingResponse(PingTime);
+            });
         _stopping = new CancellationTokenSource();
         _running = new LinkServer(listener, new RequestServer(new FrameCodec(), dispatcher.HandleAsync), "the fake Very Back", NullLogger.Instance,
             LinkServer.DefaultAcceptFailurePause).RunAsync(_stopping.Token);

@@ -140,9 +140,24 @@ public sealed class BackListenerServiceTests
     /// </returns>
     private static async Task<BackListenerService> StartBackAsync(VeryBackClient veryBackClient, CancellationToken cancellationToken)
     {
+        // Function's return
+        return await StartBackAsync(veryBackClient, NullLogger<BackListenerService>.Instance, cancellationToken);
+    }
+
+    /// <summary>
+    /// Method used to start a Back listening on port 0 of the loopback address, with a given logger
+    /// </summary>
+    /// <param name="veryBackClient">[Cannot be null] Client of the Very Back used by the Back</param>
+    /// <param name="logger">[Cannot be null] Logger of the service</param>
+    /// <param name="cancellationToken">Token of the test</param>
+    /// <returns>
+    /// The started service
+    /// </returns>
+    private static async Task<BackListenerService> StartBackAsync(VeryBackClient veryBackClient, ILogger<BackListenerService> logger, CancellationToken cancellationToken)
+    {
         // Creating and starting the service
         BackListenerService service = new BackListenerService(Options.Create(new BackOptions { ListenAddress = LoopbackHost, Port = 0 }), veryBackClient,
-            NullLogger<BackListenerService>.Instance);
+            logger);
         await service.StartAsync(cancellationToken);
 
         // Function's return
@@ -214,7 +229,8 @@ public sealed class BackListenerServiceTests
         int veryBackPort = stopped.Port;
         await stopped.DisposeAsync();
         await using VeryBackClient veryBackClient = CreateVeryBackClient(veryBackPort);
-        BackListenerService service = await StartBackAsync(veryBackClient, cancellationToken);
+        CapturingLogger<BackListenerService> logger = new CapturingLogger<BackListenerService>();
+        BackListenerService service = await StartBackAsync(veryBackClient, logger, cancellationToken);
         try
         {
             // Checks: each connection of the Gateway is served, and its Ping fails with the close of the connection
@@ -229,6 +245,37 @@ public sealed class BackListenerServiceTests
         {
             await service.StopAsync(CancellationToken.None);
         }
+
+        // Check: each failed connection is logged as a warning, for the operator who looks for the cause
+        logger.Entries.Count(entry => entry.Level == LogLevel.Warning && entry.Message.Contains("failed and the connection is closed")).ShouldBe(2);
+    }
+
+    /// <summary>
+    /// Stopping the Back while a Ping waits for the Very Back cancels the call: the stop completes, the service ends normally and the Gateway
+    /// sees its connection close
+    /// </summary>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    [Fact(Timeout = TestTimeout)]
+    public async Task AStopCancelsAPingWaitingForTheVeryBackAsync()
+    {
+        // Starting a Very Back that never answers and the Back, then sending a Ping that stays in progress
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        await using FakeVeryBack veryBack = new FakeVeryBack(answers: false);
+        await using VeryBackClient veryBackClient = CreateVeryBackClient(veryBack.Port);
+        BackListenerService service = await StartBackAsync(veryBackClient, cancellationToken);
+        await using RequestClient gateway = await ConnectAsGatewayAsync(service, cancellationToken);
+        Task<PingResponse> ping = gateway.SendAsync<PingRequest, PingResponse>(BackOperations.Ping, new PingRequest(), cancellationToken);
+        await veryBack.Received.WaitAsync(cancellationToken);
+
+        // Stopping the Back (the test timeout fails it if the stop waits for the Very Back)
+        await service.StopAsync(cancellationToken);
+
+        // Checks
+        service.ExecuteTask.ShouldNotBeNull().IsCompletedSuccessfully.ShouldBeTrue();
+        await Should.ThrowAsync<IOException>(() => ping);
+        await gateway.Completion;
     }
 
     /// <summary>

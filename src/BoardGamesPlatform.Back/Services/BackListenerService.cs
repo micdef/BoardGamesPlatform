@@ -215,8 +215,8 @@ public sealed partial class BackListenerService : BackgroundService
     /// </returns>
     private async Task<PingResponse> PingAsync(PingRequest request, CancellationToken cancellationToken)
     {
-        // Asking the Very Back (its response type belongs to the contracts of the Very Back, read through its client)
-        DateTimeOffset serverTime = (await _svcVeryBackClient.PingAsync(cancellationToken).ConfigureAwait(false)).ServerTime;
+        // Asking the Very Back
+        DateTimeOffset serverTime = await _svcVeryBackClient.PingAsync(cancellationToken).ConfigureAwait(false);
 
         // Function's return
         return new PingResponse(serverTime);
