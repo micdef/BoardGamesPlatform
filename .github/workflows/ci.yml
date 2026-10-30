@@ -28,6 +28,25 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
 jobs:
+  # Pull requests only: a pull request adds its changelog fragment and never edits CHANGELOG.md, so that two open pull requests
+  # never conflict on it; only docs/release-* merges the fragments (see changelog/unreleased/README.md)
+  changelog:
+    name: Check the changelog
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      # The whole history, so that the pull request can be compared with its base
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check that CHANGELOG.md is not edited directly
+        shell: pwsh
+        run: ./.github/scripts/Test-ChangelogUntouched.ps1 -BaseRef "origin/${{ github.base_ref }}" -HeadBranch "${{ github.head_ref }}"
+
   build:
     name: Build and test
     # Windows: the target platform of the solution

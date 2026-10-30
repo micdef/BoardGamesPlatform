@@ -4,6 +4,7 @@
     <File Path=".gitattributes" />
     <File Path=".gitignore" />
     <File Path="CHANGELOG.md" />
+    <File Path="changelog/unreleased/README.md" />
     <File Path="CONTRIBUTING.md" />
     <File Path="Directory.Build.props" />
     <File Path="Directory.Packages.props" />
@@ -14,10 +15,12 @@
     <File Path="BoardGamesPlatform.CI.slnf" />
   </Folder>
   <Folder Name="/.github/">
+    <File Path=".github/scripts/Test-ChangelogUntouched.ps1" />
     <File Path=".github/scripts/Test-CISolutionFilter.ps1" />
     <File Path=".github/workflows/ci.yml" />
   </Folder>
   <Folder Name="/tools/">
+    <File Path="tools/changelog/Merge-ChangelogFragments.ps1" />
     <File Path="tools/database/Deploy-TestDatabase.ps1" />
     <File Path="tools/database/README.md" />
   </Folder>
@@ -73,6 +76,7 @@
     <File Path="test/Directory.Build.props" />
     <Project Path="test/BoardGamesPlatform.Architecture.Tests/BoardGamesPlatform.Architecture.Tests.csproj" />
     <Project Path="test/BoardGamesPlatform.Database.Tests/BoardGamesPlatform.Database.Tests.csproj" />
+    <Project Path="test/BoardGamesPlatform.Gateway.Tests/BoardGamesPlatform.Gateway.Tests.csproj" />
     <Project Path="test/BoardGamesPlatform.Platform.Infrastructure.Tests/BoardGamesPlatform.Platform.Infrastructure.Tests.csproj" />
     <Project Path="test/BoardGamesPlatform.Protocol.Tests/BoardGamesPlatform.Protocol.Tests.csproj" />
     <Project Path="test/BoardGamesPlatform.TestKit/BoardGamesPlatform.TestKit.csproj" />
