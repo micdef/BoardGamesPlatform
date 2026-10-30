@@ -35,4 +35,4 @@ IHostedService[] hostedServices = host.Services.GetServices<IHostedService>().To
 
 // Running the host until it is stopped, then telling the service manager whether a background service failed
 await host.RunAsync();
-Environment.ExitCode = VeryBackExtensions.GetExitCode(hostedServices);
+Environment.ExitCode = HostExitCode.FromHostedServices(hostedServices);

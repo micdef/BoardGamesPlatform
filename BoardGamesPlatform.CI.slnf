@@ -18,6 +18,7 @@
       "src\\BoardGamesPlatform.Web\\BoardGamesPlatform.Web.csproj",
       "src\\BoardGamesPlatform.Web.Client\\BoardGamesPlatform.Web.Client.csproj",
       "test\\BoardGamesPlatform.Architecture.Tests\\BoardGamesPlatform.Architecture.Tests.csproj",
+      "test\\BoardGamesPlatform.Back.Tests\\BoardGamesPlatform.Back.Tests.csproj",
       "test\\BoardGamesPlatform.Database.Tests\\BoardGamesPlatform.Database.Tests.csproj",
       "test\\BoardGamesPlatform.Gateway.Tests\\BoardGamesPlatform.Gateway.Tests.csproj",
       "test\\BoardGamesPlatform.Platform.Infrastructure.Tests\\BoardGamesPlatform.Platform.Infrastructure.Tests.csproj",

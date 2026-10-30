@@ -5,6 +5,7 @@ One folder per test project. In Visual Studio, they are grouped in the `9 - Test
 | Project | Type | Purpose |
 |---------|------|---------|
 | `BoardGamesPlatform.Architecture.Tests` | Tests | Architecture rules: allowed project references, game isolation, dependencies between layers |
+| `BoardGamesPlatform.Back.Tests` | Tests | Back: validation of its settings (listen address and port, address of the Very Back), the host setup (invalid settings stop it before it listens), and its listener of the Gateway on loopback sockets with a fake Very Back (Ping round trip with the offset, a Very Back that is down fails the Ping without stopping the Back, lost listener, warning off loopback) |
 | `BoardGamesPlatform.Database.Tests` | Tests | SQL project: conventions of its files (run everywhere); the Ping procedure and the permissions of the application role on a `TEST_` or `DEV_` database (skipped without one, see `tools/database/README.md`) |
 | `BoardGamesPlatform.Gateway.Tests` | Tests | Gateway started in process with a fake Back client and called by a SignalR client: the `Ping` method of the hub (time and offset), errors without internal message, hub path setting, `/health` |
 | `BoardGamesPlatform.Platform.Infrastructure.Tests` | Tests | Platform adapters: the Very Back client of the Back against a fake Very Back on a loopback socket (shared connection, reconnection on the next call, no automatic retry, connect timeout, disposal) and the validation of its settings |

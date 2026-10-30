@@ -6,6 +6,7 @@
  */
 
 // Using
+using BoardGamesPlatform.Back;
 using BoardGamesPlatform.Back.Services;
 using BoardGamesPlatform.Observability;
 
@@ -22,9 +23,16 @@ using BoardGamesPlatform.Observability;
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddHostedService<StartupService>();
 
+// Registering the settings (checked at startup: fail closed), the client of the Very Back and the listener of the Gateway
+builder.AddPlatformBack();
+
 // Sending the telemetry to the OpenTelemetry collector, when one is configured
 builder.AddPlatformObservability();
 IHost host = builder.Build();
 
-// Running the host until it is stopped
+// Keeping the hosted services, read before the host runs since it is disposed afterwards
+IHostedService[] hostedServices = host.Services.GetServices<IHostedService>().ToArray();
+
+// Running the host until it is stopped, then telling the service manager whether a background service failed
 await host.RunAsync();
+Environment.ExitCode = HostExitCode.FromHostedServices(hostedServices);
