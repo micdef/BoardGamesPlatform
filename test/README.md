@@ -5,7 +5,6 @@ One folder per test project. In Visual Studio, they are grouped in the `9 - Test
 | Project | Type | Purpose |
 |---------|------|---------|
 | `BoardGamesPlatform.Architecture.Tests` | Tests | Architecture rules: allowed project references, game isolation, dependencies between layers |
-
 | `BoardGamesPlatform.Database.Tests` | Tests | SQL project: conventions of its files (run everywhere); the Ping procedure and the permissions of the application role on a `TEST_` or `DEV_` database (skipped without one, see `tools/database/README.md`) |
 | `BoardGamesPlatform.Gateway.Tests` | Tests | Gateway started in process with a fake Back client and called by a SignalR client: the `Ping` method of the hub (time and offset), errors without internal message, hub path setting, `/health` |
 | `BoardGamesPlatform.Protocol.Tests` | Tests | Socket protocol: framing (partial and grouped reads, end of stream, maximum length, wire format); plain TCP transport on loopback sockets (port 0, round trip, clean end, cancellation); request/response correlation (pairing in any order, closes, cancellation, protocol violations, limit per connection); JSON message envelopes (wire format, strict reading, operation routing, dates with offset) and the Ping contracts |

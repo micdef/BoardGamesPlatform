@@ -23,7 +23,7 @@ namespace BoardGamesPlatform.Gateway;
 /// <remarks>
 /// <para><b>Purpose:</b> lets an administrator change what the fronts see of the Gateway through its configuration only.</para>
 /// <para><b>Behavior:</b> read from the "Gateway" section of the configuration (appsettings.json or environment variables such as
-/// <c>Gateway__HubPath</c>). The values are validated when the Gateway starts: an invalid setting stops the startup.</para>
+/// <c>Gateway__HubPath</c>). The values are validated at startup, when the hub is mapped: an invalid setting stops the startup. Only the leading slash is checked: the path is set by an administrator.</para>
 /// </remarks>
 public sealed class GatewayOptions
 {

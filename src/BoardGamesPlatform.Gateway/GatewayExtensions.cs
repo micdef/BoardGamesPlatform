@@ -107,7 +107,7 @@ public static class GatewayExtensions
     /// </summary>
     /// <remarks>
     /// <para><b>Purpose:</b> everything the hub needs, declared once.</para>
-    /// <para><b>Behavior:</b> binds "Gateway" to <see cref="GatewayOptions"/>, validated when the host starts (the hub path must start with
+    /// <para><b>Behavior:</b> binds "Gateway" to <see cref="GatewayOptions"/>, validated at startup: when <see cref="MapPlatformHub"/> reads the hub path, and again by ValidateOnStart as a safety net (the hub path must start with
     /// a slash); adds SignalR with detailed errors off, so that no internal message reaches a front; registers
     /// <see cref="UnavailableBackClient"/> as the client of the Back when none is registered yet (TEMPORARY, replaced by the real client
     /// in feature/back-gateway-link).</para>

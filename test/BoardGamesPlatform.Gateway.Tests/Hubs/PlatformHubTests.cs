@@ -12,6 +12,7 @@ using BoardGamesPlatform.Gateway.Contracts.Ping;
 using BoardGamesPlatform.Gateway.Tests.Support;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.Options;
 
 // Static using
 // #N/A
@@ -36,6 +37,11 @@ public sealed class PlatformHubTests
     #region Members
 
     #region Constants
+
+    /// <summary>
+    /// Message a front receives when the Ping method fails on the server, detailed errors being off (Microsoft Learn, SignalR hubs, handle errors)
+    /// </summary>
+    private const string GenericPingError = "An unexpected error occurred invoking 'Ping' on the server.";
 
     /// <summary>
     /// Longest duration of a test, in milliseconds
@@ -148,9 +154,9 @@ public sealed class PlatformHubTests
         HubException error = await Should.ThrowAsync<HubException>(
             async () => await connection.InvokeAsync<PingResponse>(PlatformHubContract.Ping, token));
 
-        // Checks
+        // Checks: the generic message of SignalR when detailed errors are off, and nothing else
+        error.Message.ShouldBe(GenericPingError);
         error.Message.ShouldNotContain(InternalMessage);
-        error.Message.ShouldNotContain(nameof(InvalidOperationException));
     }
 
     /// <summary>
@@ -169,8 +175,8 @@ public sealed class PlatformHubTests
         HubException error = await Should.ThrowAsync<HubException>(
             async () => await connection.InvokeAsync<PingResponse>(PlatformHubContract.Ping, token));
 
-        // Checks (the connection still works after the failure)
-        error.Message.ShouldNotContain("not wired");
+        // Checks (the generic message only, and the connection still works after the failure)
+        error.Message.ShouldBe(GenericPingError);
         connection.State.ShouldBe(HubConnectionState.Connected);
     }
 
@@ -208,9 +214,13 @@ public sealed class PlatformHubTests
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         using GatewayFactory factory = new GatewayFactory(new FakeBackClient(DateTimeOffset.UtcNow), "hubs/platform");
 
-        // Checks (the exception names the setting)
+        // Checks: an options validation failure, found in the exception chain, that names the setting
         Exception error = Should.Throw<Exception>(() => factory.CreateClient());
-        error.ToString().ShouldContain("Gateway:HubPath");
+        OptionsValidationException? validation = null;
+        for (Exception? current = error; current is not null && validation is null; current = current.InnerException)
+            validation = current as OptionsValidationException;
+        validation.ShouldNotBeNull();
+        validation.Message.ShouldContain("Gateway:HubPath");
     }
 
     /// <summary>
