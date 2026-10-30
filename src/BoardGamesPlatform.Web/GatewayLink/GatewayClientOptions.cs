@@ -42,6 +42,11 @@ public sealed class GatewayClientOptions
     /// </summary>
     public const string DefaultHubUrl = "http://localhost:5273" + PlatformHubContract.DefaultPath;
 
+    /// <summary>
+    /// Greatest accepted value of <see cref="RequestTimeout"/>, in seconds
+    /// </summary>
+    public const int MaxRequestTimeoutSeconds = 60;
+
     #endregion
 
     #region Variables
@@ -78,6 +83,11 @@ public sealed class GatewayClientOptions
     /// Full address of the SignalR hub of the Gateway; an absolute HTTP or HTTPS address
     /// </summary>
     public string HubUrl { get; set; } = DefaultHubUrl;
+
+    /// <summary>
+    /// Longest duration of a call to the Gateway, connection included; greater than zero and at most <see cref="MaxRequestTimeoutSeconds"/> seconds
+    /// </summary>
+    public TimeSpan RequestTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
     #endregion
 
@@ -127,6 +137,23 @@ public sealed class GatewayClientOptions
         // Function's return
         return Uri.TryCreate(HubUrl, UriKind.Absolute, out Uri? uri)
             && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+    }
+
+    /// <summary>
+    /// Method used to check that the request timeout is greater than zero and at most one minute
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> a Gateway that accepts the connection but never answers must not leave a player waiting forever.</para>
+    /// <para><b>Behavior:</b> refuses zero, negative values and values above <see cref="MaxRequestTimeoutSeconds"/> seconds.</para>
+    /// </remarks>
+    /// <returns>
+    /// True  ==> The timeout is valid<br/>
+    /// False ==> The timeout is zero, negative or too long
+    /// </returns>
+    public bool IsRequestTimeoutValid()
+    {
+        // Function's return
+        return RequestTimeout > TimeSpan.Zero && RequestTimeout <= TimeSpan.FromSeconds(MaxRequestTimeoutSeconds);
     }
 
     #endregion

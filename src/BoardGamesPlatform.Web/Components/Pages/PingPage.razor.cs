@@ -225,6 +225,10 @@ public sealed partial class PingPage : ComponentBase, IDisposable
     /// </returns>
     private async Task OnPingClickedAsync()
     {
+        // Ignoring a click while a call is already running (the button is disabled, this covers two clicks before the page redraws)
+        if (_state == PingState.InProgress)
+            return;
+
         // Showing the progress
         _state = PingState.InProgress;
         _resultText = null;
@@ -259,9 +263,15 @@ public sealed partial class PingPage : ComponentBase, IDisposable
     /// </summary>
     public void Dispose()
     {
-        // Cancelling and releasing
-        _leaving.Cancel();
-        _leaving.Dispose();
+        // Cancelling, then releasing even if a callback of the cancellation fails
+        try
+        {
+            _leaving.Cancel();
+        }
+        finally
+        {
+            _leaving.Dispose();
+        }
     }
 
     #endregion

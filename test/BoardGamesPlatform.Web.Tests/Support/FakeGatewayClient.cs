@@ -58,6 +58,11 @@ public sealed class FakeGatewayClient : IGatewayClient
     /// </summary>
     private int _pingCalls;
 
+    /// <summary>
+    /// Completed when a held call is canceled
+    /// </summary>
+    private readonly TaskCompletionSource _canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
     #endregion
 
     #region Delegates
@@ -88,6 +93,11 @@ public sealed class FakeGatewayClient : IGatewayClient
     /// Number of Ping calls received
     /// </summary>
     public int PingCalls => Volatile.Read(ref _pingCalls);
+
+    /// <summary>
+    /// Completes when a held call is canceled
+    /// </summary>
+    public Task Canceled => _canceled.Task;
 
     #endregion
 
@@ -158,7 +168,17 @@ public sealed class FakeGatewayClient : IGatewayClient
 
         // Waiting to be released when asked to
         if (_gate is not null)
-            await _gate.Task.WaitAsync(cancellationToken);
+        {
+            try
+            {
+                await _gate.Task.WaitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                _canceled.TrySetResult();
+                throw;
+            }
+        }
 
         // Failing when asked to
         if (_failure is not null)

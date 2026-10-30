@@ -26,7 +26,7 @@ namespace BoardGamesPlatform.Web.Tests.Support;
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> lets the real Gateway answer to the website without a Back, a socket or a database.</para>
-/// <para><b>Behavior:</b> answers with the time it was given, or throws the exception it was given.</para>
+/// <para><b>Behavior:</b> answers with the time it was given, throws the exception it was given, or never answers.</para>
 /// </remarks>
 public sealed class FakeBackClient : IBackClient
 {
@@ -49,6 +49,16 @@ public sealed class FakeBackClient : IBackClient
     /// Exception thrown by the Ping operation; null when the client answers
     /// </summary>
     private readonly Exception? _failure;
+
+    /// <summary>
+    /// True when the client never answers (until the call is canceled)
+    /// </summary>
+    private readonly bool _hold;
+
+    /// <summary>
+    /// Completed when the first Ping call reaches the client
+    /// </summary>
+    private readonly TaskCompletionSource _entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     #endregion
 
@@ -76,7 +86,10 @@ public sealed class FakeBackClient : IBackClient
 
     #region Members & Properties
 
-    // #N/A
+    /// <summary>
+    /// Completes when the first Ping call reaches the client
+    /// </summary>
+    public Task Entered => _entered.Task;
 
     #endregion
 
@@ -98,6 +111,19 @@ public sealed class FakeBackClient : IBackClient
     {
         // Setting
         _serverTime = serverTime;
+    }
+
+    /// <summary>
+    /// Constructor of a client that never answers
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> lets a test hold a call open in the Gateway.</para>
+    /// <para><b>Behavior:</b> the call ends only when it is canceled, for example when the front disconnects.</para>
+    /// </remarks>
+    public FakeBackClient()
+    {
+        // Setting
+        _hold = true;
     }
 
     /// <summary>
@@ -129,14 +155,19 @@ public sealed class FakeBackClient : IBackClient
     #region Publics
 
     /// <inheritdoc/>
-    public Task<PingResponse> PingAsync(CancellationToken cancellationToken)
+    public async Task<PingResponse> PingAsync(CancellationToken cancellationToken)
     {
+        // Telling the test that the call arrived, and holding it when asked to
+        _entered.TrySetResult();
+        if (_hold)
+            await new TaskCompletionSource().Task.WaitAsync(cancellationToken);
+
         // Failing when asked to
         if (_failure is not null)
             throw _failure;
 
         // Function's return
-        return Task.FromResult(new PingResponse(_serverTime!.Value));
+        return new PingResponse(_serverTime!.Value);
     }
 
     #endregion

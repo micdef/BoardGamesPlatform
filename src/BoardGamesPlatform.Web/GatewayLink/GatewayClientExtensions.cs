@@ -105,7 +105,7 @@ public static class GatewayClientExtensions
     /// </summary>
     /// <remarks>
     /// <para><b>Purpose:</b> everything the pages need to call the Gateway, declared once.</para>
-    /// <para><b>Behavior:</b> validates <see cref="GatewayClientOptions"/> at startup (the message names the setting, never its value), and
+    /// <para><b>Behavior:</b> validates <see cref="GatewayClientOptions"/> at startup (hub address and request timeout; the message names the setting, never its value), and
     /// registers a scoped <see cref="SignalRGatewayClient"/> on a connection built from the hub address. Nothing connects before the first call.</para>
     /// </remarks>
     /// <param name="builder">[Cannot be null] Builder of the web host</param>
@@ -125,6 +125,9 @@ public static class GatewayClientExtensions
             .Validate(
                 options => options.IsHubUrlValid(),
                 $"The setting {GatewayClientOptions.SectionName}:HubUrl must be an absolute http or https address, for example {GatewayClientOptions.DefaultHubUrl}")
+            .Validate(
+                options => options.IsRequestTimeoutValid(),
+                $"The setting {GatewayClientOptions.SectionName}:RequestTimeout must be greater than zero and at most {GatewayClientOptions.MaxRequestTimeoutSeconds} seconds, for example 00:00:10")
             .ValidateOnStart();
 
         // The client of the Gateway: one per circuit, disposed with it
@@ -134,7 +137,7 @@ public static class GatewayClientExtensions
             HubConnection connection = new HubConnectionBuilder()
                 .WithUrl(options.HubUrl)
                 .Build();
-            return new SignalRGatewayClient(connection);
+            return new SignalRGatewayClient(connection, options.RequestTimeout);
         });
 
         // Function's return

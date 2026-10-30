@@ -9,12 +9,14 @@
 extern alias GatewayApp;
 
 // Using
+using BoardGamesPlatform.Gateway.Contracts;
 using GatewayApp::BoardGamesPlatform.Gateway.BackLink;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -33,7 +35,9 @@ namespace BoardGamesPlatform.Web.Tests.Support;
 /// <remarks>
 /// <para><b>Purpose:</b> one place that knows how to start the real Gateway (its Program) and how to reach its hub like the website does.</para>
 /// <para><b>Behavior:</b> the Back client of the Gateway is replaced by the one given. The hub is reached through the in-memory test
-/// server, by long polling, the transport that works in memory: no socket and no port are used.</para>
+/// server, by long polling, the transport that works in memory: no socket and no port are used. <b>WebSockets, the transport a real
+/// website uses first, are therefore NOT tested here.</b> The environment and the settings the Gateway reads are pinned, so that a variable
+/// of the machine (such as <c>Gateway__HubPath</c>) cannot change the result.</para>
 /// </remarks>
 public sealed class GatewayHost : WebApplicationFactory<GatewayApp::Program>
 {
@@ -133,17 +137,18 @@ public sealed class GatewayHost : WebApplicationFactory<GatewayApp::Program>
     /// <para><b>Behavior:</b> the connection is built, not started; the caller starts and disposes it.</para>
     /// </remarks>
     /// <param name="path">[Cannot be null] Path of the hub</param>
+    /// <param name="probe">[Can be null] Probe that counts, fails or holds the negotiation requests</param>
     /// <returns>
     /// The connection, not started
     /// </returns>
-    public HubConnection CreateHubConnection(string path)
+    public HubConnection CreateHubConnection(string path, ConnectionProbe? probe = null)
     {
         // Reaching the hub through the test server, by long polling
         TestServer server = Server;
         return new HubConnectionBuilder()
             .WithUrl(new Uri(server.BaseAddress, path), options =>
             {
-                options.HttpMessageHandlerFactory = _ => server.CreateHandler();
+                options.HttpMessageHandlerFactory = _ => probe is null ? server.CreateHandler() : new ProbingHandler(server.CreateHandler(), probe);
                 options.Transports = HttpTransportType.LongPolling;
             })
             .Build();
@@ -160,6 +165,15 @@ public sealed class GatewayHost : WebApplicationFactory<GatewayApp::Program>
     /// <inheritdoc/>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        // Pinning the environment and the settings the Gateway reads; added last, they win over the environment variables of the machine
+        builder.UseEnvironment("Testing");
+        builder.ConfigureAppConfiguration((_, configuration) =>
+            configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Gateway:HubPath"] = PlatformHubContract.DefaultPath,
+                ["Observability:OtlpEndpoint"] = string.Empty
+            }));
+
         // Replacing the Back client
         builder.ConfigureTestServices(services =>
         {

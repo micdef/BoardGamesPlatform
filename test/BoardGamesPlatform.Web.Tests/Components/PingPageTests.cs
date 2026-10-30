@@ -283,6 +283,63 @@ public sealed class PingPageTests
             TimeSpan.FromSeconds(EventTimeoutSeconds));
     }
 
+
+    /// <summary>
+    /// Two quick clicks call the Gateway once
+    /// </summary>
+    [Fact(Timeout = TestTimeout)]
+    public async Task TwoClicksCallTheGatewayOnceAsync()
+    {
+        // Stopping at once when the test run is canceled
+        Xunit.TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+
+        // Rendering the page with a fake Gateway that holds its answer
+        FakeGatewayClient client = new FakeGatewayClient(new DateTimeOffset(2026, 10, 30, 9, 15, 0, TimeSpan.Zero), hold: true);
+        await using BunitContext context = new BunitContext();
+        IRenderedComponent<PingPage> page = RenderPage(context, client, "en-US");
+
+        // Clicking twice before the answer
+        page.Find(ButtonSelector).Click();
+        page.Find(ButtonSelector).Click();
+        client.Release();
+        page.WaitForAssertion(
+            () => page.Find(StatusSelector).TextContent.ShouldStartWith("SQL Server answered:"),
+            TimeSpan.FromSeconds(EventTimeoutSeconds));
+
+        // Checks: one call only
+        client.PingCalls.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// Leaving the page cancels the call in progress and shows no error message
+    /// </summary>
+    [Fact(Timeout = TestTimeout)]
+    public async Task LeavingThePageCancelsTheCallWithoutAnErrorAsync()
+    {
+        // Stopping at once when the test run is canceled
+        Xunit.TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+
+        // Rendering the page with a fake Gateway that holds its answer, and clicking
+        FakeGatewayClient client = new FakeGatewayClient(new DateTimeOffset(2026, 10, 30, 9, 15, 0, TimeSpan.Zero), hold: true);
+        await using BunitContext context = new BunitContext();
+        IRenderedComponent<PingPage> page = RenderPage(context, client, "en-US");
+        page.Find(ButtonSelector).Click();
+        page.WaitForAssertion(
+            () => client.PingCalls.ShouldBe(1),
+            TimeSpan.FromSeconds(EventTimeoutSeconds));
+
+        // Leaving the page: its disposal cancels the call
+        await page.InvokeAsync(() => page.Instance.Dispose());
+        await client.Canceled.WaitAsync(TimeSpan.FromSeconds(EventTimeoutSeconds), Xunit.TestContext.Current.CancellationToken);
+
+        // Letting the page handle the cancellation: the dispatcher runs its work in order, so this runs after the handler of the page
+        await page.InvokeAsync(() => { });
+
+        // Checks: no error message, no result
+        page.Markup.ShouldNotContain("The platform did not answer");
+        page.Markup.ShouldNotContain("SQL Server answered");
+    }
+
     #endregion
 
     #endregion

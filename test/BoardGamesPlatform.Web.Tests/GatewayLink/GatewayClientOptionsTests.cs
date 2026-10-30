@@ -12,6 +12,7 @@ using BoardGamesPlatform.Web.GatewayLink;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration.EnvironmentVariables;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -107,16 +108,23 @@ public sealed class GatewayClientOptionsTests
     /// Method used to build the host of the website's gateway setup, on the in-memory test server
     /// </summary>
     /// <param name="hubUrl">[Can be null] Value of the Gateway:HubUrl setting; null to leave the setting out</param>
+    /// <param name="requestTimeout">[Can be null] Value of the Gateway:RequestTimeout setting; null to leave the setting out</param>
     /// <returns>
     /// The built application, not started
     /// </returns>
-    private static WebApplication BuildHost(string? hubUrl)
+    private static WebApplication BuildHost(string? hubUrl, string? requestTimeout = null)
     {
         // Building the host with the in-memory server and the setting
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
+
+        // Ignoring the environment variables of the machine (such as Gateway__HubUrl), which could change the result
+        foreach (IConfigurationSource source in builder.Configuration.Sources.OfType<EnvironmentVariablesConfigurationSource>().ToList())
+            builder.Configuration.Sources.Remove(source);
         if (hubUrl is not null)
             builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["Gateway:HubUrl"] = hubUrl });
+        if (requestTimeout is not null)
+            builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["Gateway:RequestTimeout"] = requestTimeout });
 
         // Registering the settings and the client of the Gateway
         builder.AddGatewayClient();
@@ -197,6 +205,57 @@ public sealed class GatewayClientOptionsTests
         // Checks: the setting is named, its value is not
         error.Message.ShouldContain("Gateway:HubUrl");
         error.Message.ShouldNotContain("SECRET");
+    }
+
+
+    /// <summary>
+    /// Without a setting, the request timeout is ten seconds
+    /// </summary>
+    [Fact(Timeout = TestTimeout)]
+    public async Task TheDefaultRequestTimeoutIsTenSecondsAsync()
+    {
+        // Starting the host without the setting
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using WebApplication app = BuildHost(null);
+        await app.StartAsync(token);
+
+        // Checks
+        app.Services.GetRequiredService<IOptions<GatewayClientOptions>>().Value.RequestTimeout.ShouldBe(TimeSpan.FromSeconds(10));
+    }
+
+    /// <summary>
+    /// A request timeout outside ]0, 1 minute] stops the startup and the message names the setting
+    /// </summary>
+    [Theory(Timeout = TestTimeout)]
+    [InlineData("00:00:00")]
+    [InlineData("-00:00:05")]
+    [InlineData("00:01:01")]
+    public async Task AnInvalidRequestTimeoutStopsTheStartupAsync(string requestTimeout)
+    {
+        // Building the host with an invalid setting
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using WebApplication app = BuildHost(null, requestTimeout);
+
+        // Starting it: the validation at startup refuses
+        OptionsValidationException error = await Should.ThrowAsync<OptionsValidationException>(async () => await app.StartAsync(token));
+
+        // Checks
+        error.Message.ShouldContain("Gateway:RequestTimeout");
+    }
+
+    /// <summary>
+    /// A request timeout inside the range is used
+    /// </summary>
+    [Fact(Timeout = TestTimeout)]
+    public async Task AValidRequestTimeoutIsUsedAsync()
+    {
+        // Starting the host with the setting
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using WebApplication app = BuildHost(null, "00:01:00");
+        await app.StartAsync(token);
+
+        // Checks
+        app.Services.GetRequiredService<IOptions<GatewayClientOptions>>().Value.RequestTimeout.ShouldBe(TimeSpan.FromMinutes(1));
     }
 
     #endregion

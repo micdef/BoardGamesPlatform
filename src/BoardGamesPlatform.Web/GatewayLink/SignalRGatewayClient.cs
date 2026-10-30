@@ -25,8 +25,10 @@ namespace BoardGamesPlatform.Web.GatewayLink;
 /// <remarks>
 /// <para><b>Purpose:</b> the website server is the only SignalR client of the Gateway; the browser never reaches it.</para>
 /// <para><b>Behavior:</b> registered as scoped, so one instance (and one connection) lives as long as the circuit of one player, and is
-/// disposed with it. The connection is started on the first call, and started again on the next call when it was lost. The hub is not
-/// authenticated until 0.10.0.</para>
+/// disposed with it. The connection is started on the first call, and started again on the next call when it was lost. The connection is
+/// built without automatic reconnection: a drop between the end of the start and the call gives one failure, which the next call recovers
+/// from. Each call is bounded by a timeout and by the caller's token; disposing the client cancels the calls in progress and the calls
+/// waiting to connect. The hub is not authenticated until 0.10.0.</para>
 /// </remarks>
 public sealed class SignalRGatewayClient : IGatewayClient, IAsyncDisposable
 {
@@ -46,14 +48,24 @@ public sealed class SignalRGatewayClient : IGatewayClient, IAsyncDisposable
     private readonly HubConnection _connection;
 
     /// <summary>
-    /// Lets one call at a time start the connection
+    /// Longest duration of a call, connection included
+    /// </summary>
+    private readonly TimeSpan _timeout;
+
+    /// <summary>
+    /// Lets one call at a time start the connection; never disposed, so that a call still using it cannot fail on a disposed semaphore
     /// </summary>
     private readonly SemaphoreSlim _connectLock = new SemaphoreSlim(1, 1);
 
     /// <summary>
-    /// True once the client has been disposed
+    /// Canceled when the client is disposed, to end the calls in progress and the calls waiting for the lock
     /// </summary>
-    private bool _disposed;
+    private readonly CancellationTokenSource _disposing = new CancellationTokenSource();
+
+    /// <summary>
+    /// 1 once the client has been disposed, otherwise 0 (read and written with Interlocked)
+    /// </summary>
+    private int _disposed;
 
     #endregion
 
@@ -99,15 +111,20 @@ public sealed class SignalRGatewayClient : IGatewayClient, IAsyncDisposable
     /// Constructor
     /// </summary>
     /// <param name="connection">[Cannot be null] Connection to the hub, not started; the client owns it and disposes it</param>
+    /// <param name="timeout">Longest duration of a call, connection included; greater than zero</param>
     /// <exception cref="ArgumentNullException">If the connection is null</exception>
-    public SignalRGatewayClient(HubConnection connection)
+    /// <exception cref="ArgumentOutOfRangeException">If the timeout is not greater than zero</exception>
+    public SignalRGatewayClient(HubConnection connection, TimeSpan timeout)
     {
         // Check
         if (connection is null)
             throw new ArgumentNullException(nameof(connection), $"The value of the parameter: {nameof(connection)} cannot be null");
+        if (timeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(timeout), $"The value of the parameter: {nameof(timeout)} must be greater than zero");
 
         // Setting
         _connection = connection;
+        _timeout = timeout;
     }
 
     #endregion
@@ -127,21 +144,25 @@ public sealed class SignalRGatewayClient : IGatewayClient, IAsyncDisposable
     /// </summary>
     /// <remarks>
     /// <para><b>Purpose:</b> connects on first use, and again after a lost connection.</para>
-    /// <para><b>Behavior:</b> one caller at a time starts the connection; the others wait, then find it connected.</para>
+    /// <para><b>Behavior:</b> one caller at a time starts the connection; the others wait, then find it connected. A failure of the start
+    /// is raised to the caller, which reports it (the page logs it).</para>
     /// </remarks>
     /// <param name="cancellationToken">Token used to give up</param>
     /// <returns>
     /// A task that ends when the connection is connected
     /// </returns>
+    /// <exception cref="InvalidOperationException">If the connection is in a state that cannot be handled (connecting or reconnecting)</exception>
     private async Task EnsureConnectedAsync(CancellationToken cancellationToken)
     {
         // Waiting for our turn
         await _connectLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            // Starting the connection when it is not connected
+            // Starting the connection when it is not connected; nothing to do when it is
             if (_connection.State == HubConnectionState.Disconnected)
                 await _connection.StartAsync(cancellationToken).ConfigureAwait(false);
+            else if (_connection.State != HubConnectionState.Connected)
+                throw new InvalidOperationException($"The connection to the Gateway is in the unexpected state {_connection.State}");
         }
         finally
         {
@@ -155,34 +176,45 @@ public sealed class SignalRGatewayClient : IGatewayClient, IAsyncDisposable
 
     /// <inheritdoc/>
     /// <exception cref="ObjectDisposedException">If the client is disposed</exception>
+    /// <exception cref="OperationCanceledException">If the caller cancels, the timeout elapses, or the client is disposed during the call</exception>
     public async Task<PingResponse> PingAsync(CancellationToken cancellationToken)
     {
         // Check
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) == 1, this);
+
+        // Bounding the call by the caller's token, the timeout and the disposal of the client
+        using CancellationTokenSource call = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposing.Token);
+        call.CancelAfter(_timeout);
 
         // Connecting on first use
-        await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        await EnsureConnectedAsync(call.Token).ConfigureAwait(false);
 
         // Function's return
-        return await _connection.InvokeAsync<PingResponse>(PlatformHubContract.Ping, cancellationToken).ConfigureAwait(false);
+        return await _connection.InvokeAsync<PingResponse>(PlatformHubContract.Ping, call.Token).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Method used to close the connection when the circuit of the player ends
     /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> frees the connection with the circuit, without leaving a call hanging.</para>
+    /// <para><b>Behavior:</b> the first call cancels the calls in progress, then disposes the connection; the next ones do nothing.</para>
+    /// </remarks>
     /// <returns>
     /// A task that ends when the connection is disposed
     /// </returns>
     public async ValueTask DisposeAsync()
     {
         // Disposing once
-        if (_disposed)
+        if (Interlocked.Exchange(ref _disposed, 1) == 1)
             return;
-        _disposed = true;
 
-        // Releasing the connection and the lock
+        // Ending the calls in progress and the calls waiting to connect
+        _disposing.Cancel();
+
+        // Releasing the connection (the lock is left alone: a call may still be leaving it)
         await _connection.DisposeAsync().ConfigureAwait(false);
-        _connectLock.Dispose();
+        _disposing.Dispose();
     }
 
     #endregion
