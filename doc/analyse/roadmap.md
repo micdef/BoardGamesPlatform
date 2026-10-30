@@ -72,9 +72,9 @@ Other UIs   ┘
 
 #### 0.4.0 — Robust socket protocol [SEC]
 
-- **Content**: protocol versioning and negotiation, serialization format, heartbeat, reconnection with back-off, request timeouts, message size limits, rejection of malformed frames; errors carried as codes, never as display texts.
+- **Content**: protocol versioning and negotiation, serialization format, heartbeat, reconnection with back-off, request timeouts, message size limits, rejection of malformed frames; errors carried as codes, never as display texts; **request cancellation propagated across the tiers** (decided in 0.3.0): a cancel message carrying the correlation identifier, so that a request abandoned by its caller (a player who closes the tab) stops the work of the Back and of the Very Back instead of running to its end. Until then, canceling a request stops the wait only.
 - **Done**: the Very Back is stopped in the middle of a session; the Back reconnects, and pending requests either resume or fail cleanly.
-- **Tests**: property-based and fuzz tests of the framing, reconnection tests against a test server that can be killed.
+- **Tests**: property-based and fuzz tests of the framing, reconnection tests against a test server that can be killed; a request canceled by the front stops the call in progress in the Very Back.
 - **Branches**: `feature/protocol-versioning`, `feature/heartbeat`, `feature/reconnection`, `feature/protocol-limits`, `docs/protocol-specification`.
 
 #### 0.5.0 — Mutual TLS 1.3 [SEC]
