@@ -34,6 +34,10 @@ namespace BoardGamesPlatform.Platform.Infrastructure.VeryBack;
 /// <list type="bullet">
 /// <item><description>A request that fails is never retried here: the caller sees the error. Retries, back-off, heartbeat and request
 /// timeouts come with 0.4.0.</description></item>
+/// <item><description>A connection may close between the moment a call finds it open and the moment its request is sent: that call fails
+/// with an <see cref="IOException"/>, like any request on a lost connection, and the next call opens a new connection.</description></item>
+/// <item><description>The settings are copied once validated, at construction: changing the settings object afterwards has no
+/// effect.</description></item>
 /// <item><description>A call that waits for a response is stopped only by the token of its caller.</description></item>
 /// <item><description>After <see cref="DisposeAsync"/>, every call throws an <see cref="ObjectDisposedException"/>.</description></item>
 /// <item><description>The logs tell when a connection opens or is lost, with the address of the Very Back only.</description></item>
@@ -52,9 +56,19 @@ public sealed partial class VeryBackClient : IAsyncDisposable
     #region Variables
 
     /// <summary>
-    /// Settings of the link, validated at construction
+    /// Host of the Very Back, copied from the settings once they are validated, so that a later change of the settings object has no effect
     /// </summary>
-    private readonly VeryBackClientOptions _options;
+    private readonly string _host;
+
+    /// <summary>
+    /// Port of the Very Back, copied from the validated settings
+    /// </summary>
+    private readonly int _port;
+
+    /// <summary>
+    /// Longest time allowed to open a connection, copied from the validated settings
+    /// </summary>
+    private readonly TimeSpan _connectTimeout;
 
     /// <summary>
     /// Connector used to open the connection (plain TCP in production)
@@ -147,7 +161,9 @@ public sealed partial class VeryBackClient : IAsyncDisposable
         options.Validate();
 
         // Setting
-        _options = options;
+        _host = options.Host;
+        _port = options.Port;
+        _connectTimeout = options.ConnectTimeout;
         _connector = connector;
         _logger = logger;
         _codec = new FrameCodec();
@@ -192,6 +208,14 @@ public sealed partial class VeryBackClient : IAsyncDisposable
     private partial void LogConnectionFailed(Exception exception, string host, int port);
 
     /// <summary>
+    /// Method used to log that the connection to the Very Back is closed because the client is disposed
+    /// </summary>
+    /// <param name="host">Host of the Very Back</param>
+    /// <param name="port">Port of the Very Back</param>
+    [LoggerMessage(EventId = 5, Level = LogLevel.Information, Message = "Connection to the Very Back closed by the disposal of the client ({Host}:{Port})")]
+    private partial void LogConnectionClosed(string host, int port);
+
+    /// <summary>
     /// Method used to log that closing a lost connection failed
     /// </summary>
     /// <param name="exception">Why the closing failed</param>
@@ -202,7 +226,8 @@ public sealed partial class VeryBackClient : IAsyncDisposable
     /// Method used to tell when a connection is lost
     /// </summary>
     /// <remarks>
-    /// <para><b>Behavior:</b> waits for the end of the request client, then logs the loss, unless the client itself was disposed.</para>
+    /// <para><b>Behavior:</b> waits for the end of the request client, then always logs it: as a loss, or as a close when the client itself was
+    /// disposed (the disposal is marked before the connection is closed).</para>
     /// </remarks>
     /// <param name="client">[Cannot be null] Request client to watch</param>
     /// <returns>
@@ -213,9 +238,11 @@ public sealed partial class VeryBackClient : IAsyncDisposable
         // Waiting for the end of the connection (the completion never fails)
         await client.Completion.ConfigureAwait(false);
 
-        // Telling the loss, unless it is the disposal of the client
+        // Telling the end: a loss, or the disposal of the client
         if (Volatile.Read(ref _isDisposed) == 0)
-            LogConnectionLost(_options.Host, _options.Port);
+            LogConnectionLost(_host, _port);
+        else
+            LogConnectionClosed(_host, _port);
     }
 
     /// <summary>
@@ -232,17 +259,17 @@ public sealed partial class VeryBackClient : IAsyncDisposable
     {
         // Combining the token of the caller with the deadline
         using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(_options.ConnectTimeout);
+        deadline.CancelAfter(_connectTimeout);
 
         // Connecting; a cancellation that the caller did not ask for is the deadline
         try
         {
             // Function's return
-            return await _connector.ConnectAsync(_options.Host, _options.Port, deadline.Token).ConfigureAwait(false);
+            return await _connector.ConnectAsync(_host, _port, deadline.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new TimeoutException($"The connection to the Very Back was not open within {_options.ConnectTimeout}", exception);
+            throw new TimeoutException($"The connection to the Very Back was not open within {_connectTimeout}", exception);
         }
     }
 
@@ -295,12 +322,12 @@ public sealed partial class VeryBackClient : IAsyncDisposable
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                LogConnectionFailed(exception, _options.Host, _options.Port);
+                LogConnectionFailed(exception, _host, _port);
                 throw;
             }
             client = new RequestClient(connection, _codec);
             _current = client;
-            LogConnectionOpened(_options.Host, _options.Port);
+            LogConnectionOpened(_host, _port);
             _ = WatchConnectionAsync(client);
 
             // Function's return

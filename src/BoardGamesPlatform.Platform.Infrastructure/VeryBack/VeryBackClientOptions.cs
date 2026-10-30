@@ -46,7 +46,11 @@ public sealed class VeryBackClientOptions
 
     #region Variables
 
-    // #N/A
+    /// <summary>
+    /// Longest connect timeout accepted: waiting longer for a tier on the same network means it is down, and a far longer value could not be
+    /// set as a cancellation deadline (about 49.7 days at most)
+    /// </summary>
+    public static readonly TimeSpan MaxConnectTimeout = TimeSpan.FromMinutes(5);
 
     #endregion
 
@@ -85,7 +89,7 @@ public sealed class VeryBackClientOptions
     public int Port { get; set; } = DefaultPort;
 
     /// <summary>
-    /// Longest time allowed to open a connection to the Very Back; it must be greater than zero
+    /// Longest time allowed to open a connection to the Very Back; greater than zero, and at most <see cref="MaxConnectTimeout"/>
     /// </summary>
     public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(5);
 
@@ -126,8 +130,8 @@ public sealed class VeryBackClientOptions
     /// </summary>
     /// <remarks>
     /// <para><b>Purpose:</b> stops the startup of the Back on a wrong setting, rather than failing at the first call to the Very Back.</para>
-    /// <para><b>Behavior:</b> the host must not be empty, the port must be from 1 to 65535 and the connection timeout greater than zero.
-    /// The message names the setting, never its value.</para>
+    /// <para><b>Behavior:</b> the host must not be empty, the port must be from 1 to 65535 and the connection timeout greater than zero and at
+    /// most <see cref="MaxConnectTimeout"/>. The message names the setting, never its value.</para>
     /// </remarks>
     /// <exception cref="InvalidOperationException">If a setting is invalid</exception>
     public void Validate()
@@ -137,8 +141,8 @@ public sealed class VeryBackClientOptions
             throw new InvalidOperationException($"The setting {SectionName}:{nameof(Host)} must not be empty");
         if (Port < 1 || Port > IPEndPoint.MaxPort)
             throw new InvalidOperationException($"The setting {SectionName}:{nameof(Port)} must be between 1 and {IPEndPoint.MaxPort}");
-        if (ConnectTimeout <= TimeSpan.Zero)
-            throw new InvalidOperationException($"The setting {SectionName}:{nameof(ConnectTimeout)} must be greater than zero");
+        if (ConnectTimeout <= TimeSpan.Zero || ConnectTimeout > MaxConnectTimeout)
+            throw new InvalidOperationException($"The setting {SectionName}:{nameof(ConnectTimeout)} must be greater than zero and at most {MaxConnectTimeout}");
     }
 
     #endregion

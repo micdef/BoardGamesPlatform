@@ -347,8 +347,8 @@ public sealed class VeryBackClientTests
         await client.PingAsync(token);
         await client.DisposeAsync();
 
-        // Check (the fake finishes serving the connection once the client has closed it; disposing the fake waits for that)
-        await fake.DisposeAsync();
+        // Checks: the watch of the connection has run (it always logs the end), and it told a close, not a loss
+        await logger.WaitForAsync("closed by the disposal").WaitAsync(token);
         logger.Messages.ShouldNotContain(message => message.Contains("lost"));
     }
 
@@ -368,6 +368,24 @@ public sealed class VeryBackClientTests
         Should.Throw<ArgumentNullException>(() => new VeryBackClient(new VeryBackClientOptions(), null!, logger));
         Should.Throw<ArgumentNullException>(() => new VeryBackClient(new VeryBackClientOptions(), new TcpTransportConnector(), null!));
         Should.Throw<InvalidOperationException>(() => new VeryBackClient(new VeryBackClientOptions { Port = 0 }, new TcpTransportConnector(), logger));
+    }
+
+    /// <summary>
+    /// The settings are copied at construction: changing the settings object afterwards does not change where the client connects
+    /// </summary>
+    [Fact(Timeout = TestTimeout)]
+    public async Task ChangingTheSettingsAfterConstructionHasNoEffectAsync()
+    {
+        // Building the client, then pointing its settings object to a wrong port
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using FakeVeryBack fake = FakeVeryBack.Start();
+        VeryBackClientOptions options = new VeryBackClientOptions { Port = fake.Port };
+        await using VeryBackClient client = new VeryBackClient(options, new TcpTransportConnector(), new SignalingLogger<VeryBackClient>());
+        options.Port = 1;
+
+        // Check: the client still reaches the fake
+        PingResponse response = await client.PingAsync(token);
+        response.ServerTime.ShouldBe(FakeVeryBack.PingTime);
     }
 
     #endregion

@@ -170,6 +170,31 @@ public sealed class VeryBackClientOptionsTests
         exception.Message.ShouldContain("VeryBack:ConnectTimeout");
     }
 
+    /// <summary>
+    /// A connect timeout above the maximum is refused at startup, instead of making every call fail when the deadline is set
+    /// </summary>
+    /// <param name="minutes">Too long timeout, in minutes (about 49.7 days is the limit of a cancellation deadline)</param>
+    [Theory]
+    [InlineData(6)]
+    [InlineData(100000)]
+    public void ATooLongTimeoutIsRefused(int minutes)
+    {
+        // Check
+        InvalidOperationException exception = Should.Throw<InvalidOperationException>(
+            new VeryBackClientOptions { ConnectTimeout = TimeSpan.FromMinutes(minutes) }.Validate);
+        exception.Message.ShouldContain("VeryBack:ConnectTimeout");
+    }
+
+    /// <summary>
+    /// The maximum connect timeout itself is accepted
+    /// </summary>
+    [Fact]
+    public void TheMaximumTimeoutIsAccepted()
+    {
+        // Check
+        new VeryBackClientOptions { ConnectTimeout = VeryBackClientOptions.MaxConnectTimeout }.Validate();
+    }
+
     #endregion
 
     #endregion
