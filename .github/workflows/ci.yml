@@ -122,3 +122,21 @@ jobs:
           name: database-dacpac
           path: src/BoardGamesPlatform.Database/bin/Release/BoardGamesPlatform.Database.dacpac
           if-no-files-found: error
+
+  # Plain PowerShell tests of the script that merges the changelog fragments at release time: a change that breaks it
+  # is caught here, before the docs/release-X.Y.Z pull request runs it. Windows: one case of the tests needs it.
+  changelog-tools:
+    name: Test the changelog tools
+    runs-on: windows-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      # The script exits with 1 when a case fails, which fails the step
+      - name: Test the changelog merge script
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File tools/changelog/tests/Test-MergeChangelogFragments.ps1
+          if ($LASTEXITCODE -ne 0) { throw "The changelog tests failed (exit code $LASTEXITCODE)." }
