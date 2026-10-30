@@ -37,6 +37,11 @@
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.20.1" />
   </ItemGroup>
 
+  <!-- Logging: abstractions used by the libraries that log (the hosts choose the providers) -->
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.14" />
+  </ItemGroup>
+
   <!-- Database: SQL client of the SQL tests (and of the Very Back, the only tier allowed to use it) -->
   <ItemGroup>
     <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.1" />
