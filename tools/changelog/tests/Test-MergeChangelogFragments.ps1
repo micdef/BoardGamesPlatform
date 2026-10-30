@@ -139,6 +139,42 @@ foreach ($entry in '- Entry A.', '- Entry B,', '  on two lines.', '- Entry C.')
 {
     Assert $case (@($afterLines | Where-Object { $_ -ceq $entry }).Count -eq 1) "the merged line '$entry' is not there exactly once"
 }
+# Cases 9 to 11: an indented line that follows no entry of its own fragment, or a blank line inside an entry, stop the script, nothing written
+$refused = [ordered]@{
+    'indented line after an entry of another fragment' = @("# Changelog`n`n## [Unreleased]`n`n$published", @{ 'a.md' = "### Added`n`n- A one.`n"; 'b.md' = "### Added`n`n  stray line of b`n- B.`n" })
+    'blank line inside an entry of a fragment' = @("# Changelog`n`n## [Unreleased]`n`n$published", @{ 'a.md' = "### Added`n`n- Entry,`n`n  second paragraph.`n" })
+    'blank line inside an entry of [Unreleased]' = @("# Changelog`n`n## [Unreleased]`n`n### Added`n`n- e1`n`n  para2`n`n$published", @{ 'a.md' = $fragmentA })
+}
+foreach ($case in $refused.Keys)
+{
+    $root = New-Case $refused[$case][0] $refused[$case][1]
+    $before = Read-Changelog $root
+    $count = (Get-Fragments $root).Count
+    $run = Invoke-Merge $root
+    Assert $case ($run.ExitCode -eq 1) "exit code $($run.ExitCode), expected 1"
+    Assert $case ((Read-Changelog $root) -eq $before) 'the changelog was changed'
+    Assert $case ((Get-Fragments $root).Count -eq $count) 'a fragment was deleted'
+}
+
+# Case 12: a fragment without any entry is deleted with a warning
+$case = 'fragment without any entry'
+$root = New-Case "# Changelog`n`n## [Unreleased]`n`n$published" @{ 'a.md' = $fragmentA; 'empty.md' = "### Added`n" }
+$run = Invoke-Merge $root
+Assert $case ($run.ExitCode -eq 0) "exit code $($run.ExitCode): $($run.Output)"
+Assert $case ($run.Output -match '::warning::empty\.md holds no entry') 'no warning for the fragment without any entry'
+
+# Case 13: a changelog that cannot be written stops the script with an error; nothing is merged and the fragments stay
+$case = 'changelog that cannot be written'
+$root = New-Case "# Changelog`n`n## [Unreleased]`n`n$published" @{ 'a.md' = $fragmentA }
+$changelogFile = Get-Item (Join-Path $root 'CHANGELOG.md')
+$before = Read-Changelog $root
+$changelogFile.IsReadOnly = $true
+try { $run = Invoke-Merge $root } finally { $changelogFile.IsReadOnly = $false }
+Assert $case ($run.ExitCode -eq 1) "exit code $($run.ExitCode), expected 1"
+Assert $case ($run.Output -match '::error::CHANGELOG\.md could not be written') 'the error is not reported'
+Assert $case ((Read-Changelog $root) -eq $before) 'the changelog was changed'
+Assert $case ((Get-Fragments $root).Count -eq 1) 'the fragment was deleted'
+
 # Result
 Write-Host "$passed check(s) passed, $($failures.Count) failed."
 $failures | ForEach-Object { Write-Host "::error::$_" }
