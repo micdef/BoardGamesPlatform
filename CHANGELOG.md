@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Socket protocol, messages: JSON envelopes (`{"operation":…,"body":…}` for a request, `{"body":…}` for a response), read strictly (unknown members, missing parts, null bodies and deep nesting are protocol violations); an operation dispatcher that routes each request to the handler of its operation; typed requests on the request client.
+- Ping contracts: the `Ping` operation and its request and response bodies in the Very Back and Back contracts, and the platform hub path and `Ping` method in the Gateway contract.
 - Database: the `ServerCore` schema, the `ServerCore.SP_ServerCore_Server_Ping` procedure (the server time as JSON, with its offset) and the `ApplicationRole` role, allowed to execute the procedures of `ServerCore` only; accepted static analysis warnings documented in `StaticCodeAnalysis.SuppressMessages.xml`.
 - SQL tests (`BoardGamesPlatform.Database.Tests`): conventions of the SQL files (declared in the project, headers, procedure sections and naming), run everywhere; the Ping procedure and the permission matrix of the application role, on a `TEST_` or `DEV_` database, skipped without one.
 - `Microsoft.Data.SqlClient` 7.1.1, with its transitive `System.Security.Cryptography.Pkcs` pinned to 10.0.14 (CVE-2026-84008, CVE-2026-70162).
