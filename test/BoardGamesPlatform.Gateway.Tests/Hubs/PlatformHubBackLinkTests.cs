@@ -113,35 +113,7 @@ public sealed class PlatformHubBackLinkTests
 
     #region Privates
 
-    /// <summary>
-    /// Method used to find an options validation failure in an exception tree: its inner exceptions, and every exception of an aggregate
-    /// </summary>
-    /// <param name="exception">[Can be null] Root of the tree</param>
-    /// <returns>
-    /// The first options validation failure found, or null when there is none
-    /// </returns>
-    private static OptionsValidationException? FindValidationFailure(Exception? exception)
-    {
-        // The exception itself
-        if (exception is null)
-            return null;
-        if (exception is OptionsValidationException validation)
-            return validation;
-
-        // Every exception of an aggregate, then the inner exception
-        if (exception is AggregateException aggregate)
-        {
-            foreach (Exception inner in aggregate.InnerExceptions)
-            {
-                OptionsValidationException? found = FindValidationFailure(inner);
-                if (found is not null)
-                    return found;
-            }
-        }
-
-        // Function's return
-        return FindValidationFailure(exception.InnerException);
-    }
+    // #N/A
 
     #endregion
 
@@ -196,24 +168,22 @@ public sealed class PlatformHubBackLinkTests
     /// </summary>
     /// <param name="setting">Key of the invalid setting</param>
     /// <param name="value">Invalid value; distinctive, so that its absence from the message proves it is not echoed</param>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
     [Theory(Timeout = TestTimeout)]
     [InlineData("Back:Port", "70123")]
     [InlineData("Back:Port", "-70123")]
     [InlineData("Back:Host", "   ")]
     [InlineData("Back:ConnectTimeout", "00:00:00")]
     [InlineData("Back:ConnectTimeout", "00:05:01")]
-    public void AnInvalidBackSettingStopsTheStartup(string setting, string value)
+    public async Task AnInvalidBackSettingStopsTheStartupAsync(string setting, string value)
     {
-        // Starting the Gateway with an invalid setting
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        // Starting the Gateway with an invalid setting, as its Program does (see GatewayStartup for why not through the factory)
         Dictionary<string, string?> settings = new Dictionary<string, string?> { [setting] = value };
-        using GatewayFactory factory = new GatewayFactory(extraSettings: settings);
+        OptionsValidationException validation = await GatewayStartup.FindStartupFailureAsync(settings, TestContext.Current.CancellationToken);
 
-        // Checks: an options validation failure, found anywhere in the exception tree (an aggregate holds several), that names the setting and
-        // not its value; the whole exception is given to the assertion, so that a failure in the CI says what was thrown instead
-        Exception error = Should.Throw<Exception>(() => factory.CreateClient());
-        OptionsValidationException? validation = FindValidationFailure(error);
-        validation.ShouldNotBeNull(error.ToString());
+        // Checks: the failure names the setting and not its value
         validation.Message.ShouldContain(setting);
         if (value.Trim().Length > 0)
             validation.Message.ShouldNotContain(value);

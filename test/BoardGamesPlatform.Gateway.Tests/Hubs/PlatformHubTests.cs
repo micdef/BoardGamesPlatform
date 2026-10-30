@@ -186,19 +186,17 @@ public sealed class PlatformHubTests
     /// <summary>
     /// A hub path that does not start with a slash stops the startup
     /// </summary>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
     [Fact(Timeout = TestTimeout)]
-    public void AHubPathWithoutALeadingSlashStopsTheStartup()
+    public async Task AHubPathWithoutALeadingSlashStopsTheStartupAsync()
     {
-        // Starting the Gateway with an invalid path
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        using GatewayFactory factory = new GatewayFactory(new FakeBackClient(DateTimeOffset.UtcNow), "hubs/platform");
+        // Starting the Gateway with an invalid path, as its Program does (see GatewayStartup for why not through the factory)
+        Dictionary<string, string?> settings = new Dictionary<string, string?> { ["Gateway:HubPath"] = "hubs/platform" };
+        OptionsValidationException validation = await GatewayStartup.FindStartupFailureAsync(settings, TestContext.Current.CancellationToken);
 
-        // Checks: an options validation failure, found in the exception chain, that names the setting
-        Exception error = Should.Throw<Exception>(() => factory.CreateClient());
-        OptionsValidationException? validation = null;
-        for (Exception? current = error; current is not null && validation is null; current = current.InnerException)
-            validation = current as OptionsValidationException;
-        validation.ShouldNotBeNull();
+        // Check: the failure names the setting
         validation.Message.ShouldContain("Gateway:HubPath");
     }
 
