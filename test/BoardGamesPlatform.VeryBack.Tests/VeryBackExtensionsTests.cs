@@ -6,6 +6,7 @@
  */
 
 // Using
+using BoardGamesPlatform.Observability;
 using BoardGamesPlatform.VeryBack.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -193,9 +194,9 @@ public sealed class VeryBackExtensionsTests
         await Should.ThrowAsync<InvalidOperationException>(() => failing.ExecuteTask.ShouldNotBeNull().WaitAsync(cancellationToken));
 
         // Checks
-        VeryBackExtensions.GetExitCode(new IHostedService[] { new IdleHostedService(), failing }).ShouldBe(VeryBackExtensions.FailureExitCode);
-        VeryBackExtensions.GetExitCode(new IHostedService[] { new IdleHostedService() }).ShouldBe(VeryBackExtensions.SuccessExitCode);
-        VeryBackExtensions.GetExitCode(Array.Empty<IHostedService>()).ShouldBe(VeryBackExtensions.SuccessExitCode);
+        HostExitCode.FromHostedServices(new IHostedService[] { new IdleHostedService(), failing }).ShouldBe(HostExitCode.Failure);
+        HostExitCode.FromHostedServices(new IHostedService[] { new IdleHostedService() }).ShouldBe(HostExitCode.Success);
+        HostExitCode.FromHostedServices(Array.Empty<IHostedService>()).ShouldBe(HostExitCode.Success);
     }
 
     #endregion

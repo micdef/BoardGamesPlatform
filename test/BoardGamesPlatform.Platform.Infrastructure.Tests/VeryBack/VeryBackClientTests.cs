@@ -9,7 +9,6 @@
 using System.Net.Sockets;
 using BoardGamesPlatform.Platform.Infrastructure.VeryBack;
 using BoardGamesPlatform.Protocol.Transport;
-using BoardGamesPlatform.VeryBack.Contracts.Ping;
 
 // Static using
 // #N/A
@@ -25,8 +24,9 @@ namespace BoardGamesPlatform.Platform.Infrastructure.Tests.VeryBack;
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> the Back relies on one shared connection that opens on demand, comes back after a loss and never retries by itself.</para>
-/// <para><b>Behavior:</b> the tests run on a real loopback socket (port 0 only). They wait for events (a connection lost, a connection attempt
-/// begun), never for a fixed delay; every test has a timeout, so that a hang fails instead of blocking the run.</para>
+/// <para><b>Behavior:</b> the tests run on a real loopback socket, on fixed test ports of the block of this project. They wait for events (a
+/// connection lost, a connection attempt begun), never for a fixed delay; every test has a timeout, so that a hang fails instead of blocking
+/// the run.</para>
 /// </remarks>
 public sealed class VeryBackClientTests
 {
@@ -129,10 +129,10 @@ public sealed class VeryBackClientTests
         CancellationToken token = TestContext.Current.CancellationToken;
         await using FakeVeryBack fake = FakeVeryBack.Start();
         await using VeryBackClient client = CreateClient(fake.Port, new SignalingLogger<VeryBackClient>());
-        PingResponse response = await client.PingAsync(token);
+        DateTimeOffset serverTime = await client.PingAsync(token);
 
         // Check
-        response.ServerTime.ShouldBe(FakeVeryBack.PingTime);
+        serverTime.ShouldBe(FakeVeryBack.PingTime);
     }
 
     /// <summary>
@@ -166,10 +166,10 @@ public sealed class VeryBackClientTests
         CancellationToken token = TestContext.Current.CancellationToken;
         await using FakeVeryBack fake = FakeVeryBack.Start();
         await using VeryBackClient client = CreateClient(fake.Port, new SignalingLogger<VeryBackClient>());
-        PingResponse[] responses = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => client.PingAsync(token)));
+        DateTimeOffset[] serverTimes = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => client.PingAsync(token)));
 
         // Checks (the fake counts a connection when it accepts it, before it can answer)
-        responses.ShouldAllBe(response => response.ServerTime == FakeVeryBack.PingTime);
+        serverTimes.ShouldAllBe(serverTime => serverTime == FakeVeryBack.PingTime);
         fake.AcceptedConnections.ShouldBe(1);
         fake.ReceivedRequests.ShouldBe(20);
     }
@@ -213,10 +213,10 @@ public sealed class VeryBackClientTests
         await logger.WaitForAsync("lost").WaitAsync(token);
 
         // Pinging again
-        PingResponse response = await client.PingAsync(token);
+        DateTimeOffset serverTime = await client.PingAsync(token);
 
         // Checks
-        response.ServerTime.ShouldBe(FakeVeryBack.PingTime);
+        serverTime.ShouldBe(FakeVeryBack.PingTime);
         fake.AcceptedConnections.ShouldBe(2);
     }
 
@@ -248,18 +248,14 @@ public sealed class VeryBackClientTests
     /// When nothing listens, the call fails with a socket error instead of hanging
     /// </summary>
     /// <remarks>
-    /// <para><b>Behavior:</b> the port comes from a listener on port 0 that is stopped just before the call, so that it is a port that was
-    /// free a moment ago and has no listener; nothing is reserved in advance.</para>
+    /// <para><b>Behavior:</b> the port is a test port of the block of this project, where nothing listens.</para>
     /// </remarks>
     [Fact(Timeout = TestTimeout)]
     public async Task APingWhenNothingListensFailsWithASocketErrorAsync()
     {
-        // Taking the port of a Very Back that stops at once
+        // Pointing the client to a test port of the block where nothing listens
         CancellationToken token = TestContext.Current.CancellationToken;
-        FakeVeryBack fake = FakeVeryBack.Start();
-        int port = fake.Port;
-        await fake.DisposeAsync();
-        await using VeryBackClient client = CreateClient(port, new SignalingLogger<VeryBackClient>());
+        await using VeryBackClient client = CreateClient(TestPorts.Block.Next(), new SignalingLogger<VeryBackClient>());
 
         // Check
         await Should.ThrowAsync<SocketException>(() => client.PingAsync(token));
@@ -296,7 +292,7 @@ public sealed class VeryBackClientTests
         HangingConnector connector = new HangingConnector();
         VeryBackClientOptions options = new VeryBackClientOptions { ConnectTimeout = TimeSpan.FromMinutes(1) };
         await using VeryBackClient client = new VeryBackClient(options, connector, new SignalingLogger<VeryBackClient>());
-        Task<PingResponse> ping = client.PingAsync(canceling.Token);
+        Task<DateTimeOffset> ping = client.PingAsync(canceling.Token);
 
         // Canceling once the attempt has begun
         await connector.Started.WaitAsync(TestContext.Current.CancellationToken);
@@ -384,8 +380,8 @@ public sealed class VeryBackClientTests
         options.Port = 1;
 
         // Check: the client still reaches the fake
-        PingResponse response = await client.PingAsync(token);
-        response.ServerTime.ShouldBe(FakeVeryBack.PingTime);
+        DateTimeOffset serverTime = await client.PingAsync(token);
+        serverTime.ShouldBe(FakeVeryBack.PingTime);
     }
 
     #endregion

@@ -6,6 +6,7 @@
     <ProjectReference Include="..\..\src\BoardGamesPlatform.Platform.Infrastructure\BoardGamesPlatform.Platform.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\BoardGamesPlatform.Protocol\BoardGamesPlatform.Protocol.csproj" />
     <ProjectReference Include="..\..\src\BoardGamesPlatform.VeryBack.Contracts\BoardGamesPlatform.VeryBack.Contracts.csproj" />
+    <ProjectReference Include="..\BoardGamesPlatform.TestKit\BoardGamesPlatform.TestKit.csproj" />
   </ItemGroup>
 
 </Project>

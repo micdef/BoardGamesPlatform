@@ -143,7 +143,7 @@ public sealed class VeryBackClient : IAsyncDisposable
     /// </remarks>
     /// <param name="cancellationToken">Token used to stop waiting, for the connection as for the response</param>
     /// <returns>
-    /// The time of the SQL Server, as answered by the Very Back
+    /// The time of the SQL Server, as answered by the Very Back, with its offset (the message of the Very Back stays inside this client)
     /// </returns>
     /// <exception cref="ObjectDisposedException">If the client is disposed</exception>
     /// <exception cref="System.Net.Sockets.SocketException">If the Very Back cannot be reached</exception>
@@ -151,10 +151,13 @@ public sealed class VeryBackClient : IAsyncDisposable
     /// <exception cref="IOException">If the connection closes before the response arrives</exception>
     /// <exception cref="InvalidDataException">If the response is malformed</exception>
     /// <exception cref="OperationCanceledException">If the caller cancels</exception>
-    public Task<PingResponse> PingAsync(CancellationToken cancellationToken = default)
+    public async Task<DateTimeOffset> PingAsync(CancellationToken cancellationToken = default)
     {
+        // Sending the Ping operation on the shared connection
+        PingResponse response = await _link.SendAsync<PingRequest, PingResponse>(VeryBackOperations.Ping, new PingRequest(), cancellationToken).ConfigureAwait(false);
+
         // Function's return
-        return _link.SendAsync<PingRequest, PingResponse>(VeryBackOperations.Ping, new PingRequest(), cancellationToken);
+        return response.ServerTime;
     }
 
     /// <summary>
