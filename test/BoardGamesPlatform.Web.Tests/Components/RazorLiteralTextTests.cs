@@ -25,8 +25,12 @@ namespace BoardGamesPlatform.Web.Tests.Components;
 /// <para><b>Purpose:</b> the rule of the project is that no text shown to a user is written in the code; this guards it for the markup.</para>
 /// <para><b>Behavior:</b> a heuristic, not a Razor parser. It removes the Razor comments, the <c>@code</c> blocks, the script and style
 /// elements and the Razor expressions, then looks for text between two tags and for literal <c>title</c>, <c>aria-label</c>, <c>alt</c>
-/// and <c>placeholder</c> attributes. Text with a brace or a semicolon is taken for code (the cases of a <c>switch</c>). Symbols without a letter (such as the cross of the error banner) are allowed. It can miss a text
-/// written in an unusual way, and it is not a proof.</para>
+/// and <c>placeholder</c> attributes. Text with a brace or a semicolon is taken for code (the cases of a <c>switch</c>). Symbols without a
+/// letter (such as the cross of the error banner) are allowed.</para>
+/// <para><b>Blind spots (it is not a proof):</b> a text inside a Razor expression (<c>@("Hello")</c>), a text given to a component parameter
+/// (<c>&lt;Card Title="Hello" /&gt;</c>) and a text written in the <c>@code</c> block are not seen. Two tests document this.</para>
+/// <para><b>Opt-out:</b> a file that holds a legitimate text that is not translatable (a brand name, a technical identifier) carries the
+/// Razor comment <c>@* i18n-ignore *@</c> and is then skipped entirely. Use it sparingly: it covers the whole file.</para>
 /// </remarks>
 public sealed class RazorLiteralTextTests
 {
@@ -38,6 +42,11 @@ public sealed class RazorLiteralTextTests
     /// Longest duration of a test, in milliseconds
     /// </summary>
     private const int TestTimeout = 30000;
+
+    /// <summary>
+    /// Razor comment that excludes a whole file from the check
+    /// </summary>
+    private const string IgnoreMarker = "@* i18n-ignore *@";
 
     #endregion
 
@@ -108,6 +117,10 @@ public sealed class RazorLiteralTextTests
     /// </returns>
     private static List<string> FindLiteralTexts(string source)
     {
+        // Skipping a file that opted out
+        if (source.Contains(IgnoreMarker, StringComparison.Ordinal))
+            return new List<string>();
+
         // Removing what is not markup: Razor comments, the directives, the code block, the script and style elements, the Razor expressions
         string markup = Regex.Replace(source, @"@\*.*?\*@", string.Empty, RegexOptions.Singleline);
         markup = Regex.Replace(markup, @"^@(?:inject|using|page|layout|inherits|implements|attribute|rendermode|typeparam|namespace)\b[^\r\n]*", string.Empty, RegexOptions.Multiline);
@@ -151,7 +164,11 @@ public sealed class RazorLiteralTextTests
         IReadOnlyList<string> files = WebSources.RazorFiles();
         files.Count.ShouldBeGreaterThan(0);
         foreach (string path in files)
-            FindLiteralTexts(File.ReadAllText(path)).ShouldBeEmpty($"literal text in {Path.GetFileName(path)}");
+        {
+            FindLiteralTexts(File.ReadAllText(path)).ShouldBeEmpty(
+                $"{Path.GetFileName(path)} holds a literal text. Move it to Resources/WebTexts.resx and WebTexts.fr.resx and ask for it with Texts[\"Key\"], "
+                + $"or, if it is not translatable, add the comment {IgnoreMarker} to the file");
+        }
     }
 
     /// <summary>
@@ -168,6 +185,34 @@ public sealed class RazorLiteralTextTests
         FindLiteralTexts("<img alt=\"A cat\" />").ShouldHaveSingleItem().ShouldBe("A cat");
         FindLiteralTexts("<p>@Texts[\"Key\"]</p><span>🗙</span>").ShouldBeEmpty();
         FindLiteralTexts("<p>@Texts[\"Key\"] extra</p>").ShouldHaveSingleItem().ShouldBe("extra");
+    }
+
+    /// <summary>
+    /// The opt-out comment excludes a file
+    /// </summary>
+    [Fact(Timeout = TestTimeout)]
+    public void TheIgnoreMarkerExcludesTheFile()
+    {
+        // Stopping at once when the test run is canceled
+        Xunit.TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+
+        // Checks
+        FindLiteralTexts(IgnoreMarker + "<p>Hello</p>").ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// The blind spots of the heuristic: these texts are NOT caught, so a green result does not prove that no text is written in the markup
+    /// </summary>
+    [Fact(Timeout = TestTimeout)]
+    public void TheHeuristicDoesNotSeeTheseTexts()
+    {
+        // Stopping at once when the test run is canceled
+        Xunit.TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+
+        // Checks: a text inside a Razor expression, a text given to a component parameter, a text in the code block
+        FindLiteralTexts("<p>@(\"Hello\")</p>").ShouldBeEmpty();
+        FindLiteralTexts("<Card Title=\"Hello\" />").ShouldBeEmpty();
+        FindLiteralTexts("<p>@Texts[\"Key\"]</p> @code { private string _text = \"Hello\"; }").ShouldBeEmpty();
     }
 
     #endregion

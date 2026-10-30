@@ -8,7 +8,8 @@
 @using System.Globalization
 
 <!DOCTYPE html>
-<html lang="@CultureInfo.CurrentUICulture.TwoLetterISOLanguageName">
+@* The language of the document is the name of the UI culture of the request (a BCP 47 tag, for example "en" or "fr"; the two-letter name would give the invalid "iv" for the invariant culture) *@
+<html lang="@CultureInfo.CurrentUICulture.Name">
 
 <head>
     <meta charset="utf-8" />

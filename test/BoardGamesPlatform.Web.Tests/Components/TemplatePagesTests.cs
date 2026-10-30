@@ -106,7 +106,8 @@ public sealed class TemplatePagesTests
     /// <param name="cultureName">[Cannot be null] Name of the culture of the player</param>
     private static void Prepare(BunitContext context, string cultureName)
     {
-        // Giving the player's culture to the texts, as the localization middleware does
+        // Giving the player's culture to the texts, as the localization middleware does. Setting the current culture changes the
+        // async-local state of the running test only (xUnit runs each test in its own execution context), so it leaks to no other test
         CultureInfo culture = CultureInfo.GetCultureInfo(cultureName);
         CultureInfo.CurrentCulture = culture;
         CultureInfo.CurrentUICulture = culture;
@@ -163,12 +164,12 @@ public sealed class TemplatePagesTests
     }
 
     /// <summary>
-    /// The error page is written in the language of the player, shows the request identifier and nothing of an exception
+    /// The error page is written in the language of the player, shows the request identifier (and no exception: the page has no way to receive one)
     /// </summary>
     [Theory(Timeout = TestTimeout)]
-    [InlineData("en-US", "Error.", "Request ID:")]
-    [InlineData("fr-FR", "Erreur.", "Identifiant de la demande :")]
-    public async Task TheErrorPageIsLocalizedAsync(string cultureName, string heading, string requestIdLabel)
+    [InlineData("en-US", "Error.", "An error occurred while processing your request.", "Request ID:")]
+    [InlineData("fr-FR", "Erreur.", "Une erreur s'est produite pendant le traitement de votre demande.", "Identifiant de la demande :")]
+    public async Task TheErrorPageIsLocalizedAsync(string cultureName, string heading, string message, string requestIdLabel)
     {
         // Stopping at once when the test run is canceled
         Xunit.TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -182,18 +183,18 @@ public sealed class TemplatePagesTests
 
         // Checks
         page.Find("h1").TextContent.ShouldBe(heading);
+        page.Find("h2").TextContent.ShouldBe(message);
         page.Find("strong").TextContent.ShouldBe(requestIdLabel);
         page.Find("code").TextContent.ShouldBe(activity.Id);
-        page.Markup.ShouldNotContain("Exception");
     }
 
     /// <summary>
     /// The reconnection dialog is written in the language of the player, and its script holds no text
     /// </summary>
     [Theory(Timeout = TestTimeout)]
-    [InlineData("en-US", "Rejoining the server...", "Retry", "Resume")]
-    [InlineData("fr-FR", "Reconnexion au serveur...", "Réessayer", "Reprendre")]
-    public async Task TheReconnectDialogIsLocalizedAsync(string cultureName, string firstAttempt, string retry, string resume)
+    [InlineData("en-US", "Rejoining the server...", "Rejoin failed... trying again in  seconds.", "Retry", "Resume")]
+    [InlineData("fr-FR", "Reconnexion au serveur...", "La reconnexion a échoué... nouvelle tentative dans  secondes.", "Réessayer", "Reprendre")]
+    public async Task TheReconnectDialogIsLocalizedAsync(string cultureName, string firstAttempt, string repeatedAttempt, string retry, string resume)
     {
         // Stopping at once when the test run is canceled
         Xunit.TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -205,6 +206,8 @@ public sealed class TemplatePagesTests
 
         // Checks: the texts, and the countdown element that the Blazor script fills
         dialog.Find(".components-reconnect-first-attempt-visible").TextContent.Trim().ShouldBe(firstAttempt);
+        // The sentence around the countdown keeps a space on each side of the (empty) span that the script fills
+        dialog.Find(".components-reconnect-repeated-attempt-visible").TextContent.Trim().ShouldBe(repeatedAttempt);
         dialog.Find("#components-reconnect-button").TextContent.Trim().ShouldBe(retry);
         dialog.Find("#components-resume-button").TextContent.Trim().ShouldBe(resume);
         dialog.Find(".components-reconnect-repeated-attempt-visible #components-seconds-to-next-attempt").TextContent.ShouldBeEmpty();
