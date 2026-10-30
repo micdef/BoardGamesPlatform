@@ -150,7 +150,7 @@ A pull request with a failing build is not merged.
 The CI builds the projects listed in `BoardGamesPlatform.CI.slnf`, and fails when:
 
 - a `.csproj` under `src/` or `test/` is missing from `BoardGamesPlatform.slnx`, or a `.csproj` of the solution is missing from the filter ([Test-CISolutionFilter.ps1](.github/scripts/Test-CISolutionFilter.ps1)); a new project is therefore added to both files;
-- a test project runs no test.
+- a test project runs no test;
 - a test of the changelog merge script ([Test-MergeChangelogFragments.ps1](tools/changelog/tests/Test-MergeChangelogFragments.ps1)) fails.
 
 Each run publishes a `test-results` artifact: the TRX report and the Cobertura coverage report of every test project.
