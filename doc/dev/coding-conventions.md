@@ -137,6 +137,7 @@ public bool AddShip(string shipName)
 | Private fields `_camelCase`; injected services `_svcName`, with the parameter `svcName`; the logger is the exception: `_logger`, with the parameter `logger` | `_svcMailing`, `svcMailing`, `_logger` | Build (fields) / review (services) |
 | Interfaces `IName`, services `NameService`, asynchronous methods suffixed `Async` | `IMailingService`, `SendAsync` | Build |
 | Access modifiers always explicit, no `this.` | — | Build |
+| Logs through `[LoggerMessage]` source generation, with an `EventId` unique within the logger category. A library class that logs through the logger of the tier that uses it reserves a range of its own: `Protocol.Links` uses 9001-9005 (`LinkClient`) and 9011-9018 (`LinkServer`); the events of a tier stay below 9000 | `[LoggerMessage(EventId = 100, …)]` | Review |
 
 Build-enforced rules are configured in [.editorconfig](../../.editorconfig): a violation fails the build.
 
@@ -166,7 +167,11 @@ The sections that follow `@brief` depend on the kind of object:
 | Stored procedure | Parameters, Errors, Response Structure, Response Examples, Behavior |
 | Function | Parameters, Return |
 | View | Columns, Indexes |
-| Trigger, index, schema, filegroup | Brief only, plus the target object |
+| Schema | Information (family, exposure, owner, object types, object naming, filegroup), Purpose, Access |
+| Database role | Information (family, exposure, owner, members), Purpose, Access |
+| Trigger, index, filegroup | Brief only, plus the target object |
+
+Accepted warnings of the SSDT static code analysis are listed in `StaticCodeAnalysis.SuppressMessages.xml`, one rule for one file, each with its justification and the condition under which it stays valid.
 
 Each section is a title underlined with dashes, followed by a table framed with asterisks:
 

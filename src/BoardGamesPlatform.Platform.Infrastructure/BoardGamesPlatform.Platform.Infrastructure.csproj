@@ -1,6 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- Platform adapters: the Very Back client implementing the ports -->
 
+  <!-- Packages: the logging abstractions only (the host chooses the log providers) -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
   <!-- Projects -->
   <ItemGroup>
     <ProjectReference Include="..\BoardGamesPlatform.Platform.Application\BoardGamesPlatform.Platform.Application.csproj" />

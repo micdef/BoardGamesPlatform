@@ -2,12 +2,13 @@
  *	@file	src/BoardGamesPlatform.Web/Program.cs
  *	@author	Defraene Michaël (AKA Sonic) (co-written by Claude)
  *
- *	@brief	Entry point of the website: builds the Blazor Auto host (server and WebAssembly render modes) and runs it
+ *	@brief	Entry point of the website: builds the Blazor host (Interactive Server render mode only) and runs it
  */
 
 // Using
 using BoardGamesPlatform.Observability;
 using BoardGamesPlatform.Web.Components;
+using BoardGamesPlatform.Web.GatewayLink;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 
@@ -15,16 +16,24 @@ using OpenTelemetry.Trace;
 // #N/A
 
 // Named using
-using Client = BoardGamesPlatform.Web.Client;
+// #N/A
 
 // Namespace
 // #N/A (top-level statements)
 
-// Building the host with both interactive render modes (Auto switches from server to WebAssembly)
+// Languages of the website: the first one is the default; the texts are in Resources/WebTexts.<culture>.resx
+string[] supportedCultures = new string[] { "en", "fr" };
+
+// Building the host with the Interactive Server render mode only (no WebAssembly, no static rendering of the pages)
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
-    .AddInteractiveServerComponents()
-    .AddInteractiveWebAssemblyComponents();
+    .AddInteractiveServerComponents();
+
+// Registering the texts of the website
+builder.Services.AddLocalization(options => options.ResourcesPath = "Resources");
+
+// Registering the settings and the client of the Gateway (the website server is its only SignalR client)
+builder.AddGatewayClient();
 
 // Sending the telemetry of the server part to the OpenTelemetry collector, when one is configured, including the incoming HTTP requests
 builder.AddPlatformObservability(
@@ -33,12 +42,8 @@ builder.AddPlatformObservability(
 
 WebApplication app = builder.Build();
 
-// Setting the environment pipeline: WebAssembly debugging in development, generic error page and HSTS otherwise
-if (app.Environment.IsDevelopment())
-{
-    app.UseWebAssemblyDebugging();
-}
-else
+// Setting the environment pipeline: generic error page and HSTS outside development
+if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
     app.UseHsts();
@@ -50,11 +55,15 @@ app.UseHttpsRedirection();
 app.UseAntiforgery();
 app.MapStaticAssets();
 
-// Mapping the components of the server and of the WebAssembly parts
+// Choosing the culture of each request among the supported languages (the circuit of the player keeps it)
+app.UseRequestLocalization(new RequestLocalizationOptions()
+    .SetDefaultCulture(supportedCultures[0])
+    .AddSupportedCultures(supportedCultures)
+    .AddSupportedUICultures(supportedCultures));
+
+// Mapping the components of the website
 app.MapRazorComponents<App>()
-    .AddInteractiveServerRenderMode()
-    .AddInteractiveWebAssemblyRenderMode()
-    .AddAdditionalAssemblies(typeof(Client._Imports).Assembly);
+    .AddInteractiveServerRenderMode();
 
 // Running the host until it is stopped
 await app.RunAsync();

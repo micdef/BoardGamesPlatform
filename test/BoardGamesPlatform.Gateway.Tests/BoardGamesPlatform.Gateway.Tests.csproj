@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Tests of the Gateway, started in process: the SignalR hub, its settings and the health endpoint -->
+
+  <!-- Projects: the Gateway under test, and the contracts of its hub -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Gateway\BoardGamesPlatform.Gateway.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Gateway.Contracts\BoardGamesPlatform.Gateway.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Back.Contracts\BoardGamesPlatform.Back.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Protocol\BoardGamesPlatform.Protocol.csproj" />
+    <ProjectReference Include="..\BoardGamesPlatform.TestKit\BoardGamesPlatform.TestKit.csproj" />
+  </ItemGroup>
+
+  <!-- Packages (versions in Directory.Packages.props) -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
+  </ItemGroup>
+
+</Project>

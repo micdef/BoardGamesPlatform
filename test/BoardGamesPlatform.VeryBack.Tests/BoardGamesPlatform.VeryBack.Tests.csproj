@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Tests of the Very Back: its settings, the reading of the Ping procedure result, and its listener on loopback sockets -->
+
+  <!-- Projects: the Very Back under test, the protocol its clients speak, and the contracts of its messages -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.VeryBack\BoardGamesPlatform.VeryBack.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Protocol\BoardGamesPlatform.Protocol.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.VeryBack.Contracts\BoardGamesPlatform.VeryBack.Contracts.csproj" />
+    <ProjectReference Include="..\BoardGamesPlatform.TestKit\BoardGamesPlatform.TestKit.csproj" />
+  </ItemGroup>
+
+</Project>

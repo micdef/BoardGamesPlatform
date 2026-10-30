@@ -58,7 +58,8 @@ A key `Section:Key` becomes the variable `Section__Key` (double underscore), the
 |------|-----------------------------|------------|
 | systemd unit (Linux) | An `EnvironmentFile=` of the unit, for example `/etc/boardgamesplatform/very-back.env` | Owned by `root`, mode `600`: systemd reads it before starting the service |
 | Windows service | The `Environment` value of the service in the registry | Writable by administrators only |
-| Website and Gateway under IIS | The environment variables of the application pool (`applicationHost.config`), not the `web.config` of the site | Outside the site folder |
+
+The website and the gateway run as services too (on Kestrel, no IIS): the rows above apply to them. Their reverse proxy holds none of these settings.
 
 Environment variables are stored as plain text: whoever controls the machine or the process can read them
 ([Microsoft Learn](https://learn.microsoft.com/aspnet/core/security/app-secrets?view=aspnetcore-10.0#work-with-environment-variables)).
