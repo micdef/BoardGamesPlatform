@@ -9,6 +9,7 @@
 using BoardGamesPlatform.TestKit;
 using BoardGamesPlatform.VeryBack.Procedures;
 using BoardGamesPlatform.VeryBack.Settings;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Options;
 
 // Static using
@@ -204,6 +205,47 @@ public sealed class SqlPingProcedureTests
         exception.Message.ShouldContain("ConnectionStrings:Main");
         exception.Message.ShouldNotContain("Kx9secret", Case.Insensitive);
         exception.InnerException.ShouldBeNull();
+    }
+
+    #endregion
+
+    #region Application name
+
+    /// <summary>
+    /// A connection string without Application Name gets the name of the Very Back, and keeps its other keywords
+    /// </summary>
+    /// <param name="connectionString">Connection string without Application Name</param>
+    [Theory]
+    [InlineData("Server=localhost;Database=TEST_BoardGamesPlatform;Integrated Security=true")]
+    [InlineData("Server=localhost;Max Pool Size=7;Pooling=true")]
+    [InlineData("Server=localhost;Application Name=")]
+    public void TheDefaultApplicationNameIsAddedWhenAbsent(string connectionString)
+    {
+        // Check
+        SqlConnectionStringBuilder before = new SqlConnectionStringBuilder(connectionString);
+        SqlConnectionStringBuilder after = new SqlConnectionStringBuilder(SqlPingProcedure.WithApplicationName(connectionString));
+        after.ApplicationName.ShouldBe(SqlPingProcedure.DefaultApplicationName);
+        after.DataSource.ShouldBe(before.DataSource);
+        after.MaxPoolSize.ShouldBe(before.MaxPoolSize);
+        after.Pooling.ShouldBe(before.Pooling);
+    }
+
+    /// <summary>
+    /// An Application Name set by the administrator, under either of its two keywords (in any case) and whatever its value, is kept untouched
+    /// </summary>
+    /// <param name="connectionString">Connection string that sets the application name</param>
+    /// <param name="expected">Application name the administrator set</param>
+    [Theory]
+    [InlineData("Server=localhost;Application Name=Admin.Choice", "Admin.Choice")]
+    [InlineData("Server=localhost;App=Admin.Choice", "Admin.Choice")]
+    [InlineData("Server=localhost;APP=Admin.Choice", "Admin.Choice")]
+    [InlineData("Server=localhost;Application Name=.Net SqlClient Data Provider", ".Net SqlClient Data Provider")]
+    public void AnApplicationNameSetByTheAdministratorIsKept(string connectionString, string expected)
+    {
+        // Check
+        string result = SqlPingProcedure.WithApplicationName(connectionString);
+        result.ShouldBe(connectionString);
+        new SqlConnectionStringBuilder(result).ApplicationName.ShouldBe(expected);
     }
 
     #endregion
