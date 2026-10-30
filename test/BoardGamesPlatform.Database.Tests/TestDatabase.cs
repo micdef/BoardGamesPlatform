@@ -12,7 +12,7 @@ using Microsoft.Data.SqlClient;
 // #N/A
 
 // Named using
-// #N/A
+using Guard = BoardGamesPlatform.TestKit.TestDatabase;
 
 // Namespace
 namespace BoardGamesPlatform.Database.Tests;
@@ -23,10 +23,9 @@ namespace BoardGamesPlatform.Database.Tests;
 /// <remarks>
 /// <para><b>Purpose:</b> the SQL tests run against a real SQL Server, on a database deployed by tools/database/Deploy-TestDatabase.ps1. Without
 /// one (in the CI for example), they must be reported as skipped, never as passed.</para>
-/// <para><b>Behavior:</b> reads the connection string from the environment variable <see cref="ConnectionStringVariable"/>. When it is missing,
-/// the calling test is skipped. The database of the open connection must start with TEST_ or DEV_ (upper case): the tests create and drop
-/// objects, so a connection to another database is closed and refused instead of being used. The server itself is not checked (same limit as
-/// the deployment script): a TEST_ database must never be created on a production server.</para>
+/// <para><b>Behavior:</b> the rule itself (the variable, and the refusal of any database that does not start with TEST_ or DEV_) lives in
+/// <see cref="Guard"/>, in the TestKit, shared by every test project that uses a real SQL Server. This class only adds the skip, which belongs to
+/// an xUnit project.</para>
 /// </remarks>
 internal static class TestDatabase
 {
@@ -34,11 +33,7 @@ internal static class TestDatabase
 
     #region Constants
 
-    /// <summary>
-    /// Environment variable holding the connection string of the throwaway database, for example
-    /// "Server=localhost;Database=TEST_BoardGamesPlatform;Integrated Security=True;TrustServerCertificate=True"
-    /// </summary>
-    public const string ConnectionStringVariable = "BOARDGAMESPLATFORM_TEST_DATABASE";
+    // #N/A
 
     #endregion
 
@@ -117,24 +112,12 @@ internal static class TestDatabase
     public static async Task<SqlConnection> OpenAsync(CancellationToken cancellationToken)
     {
         // Skipping the test when no database is configured
-        string? connectionString = Environment.GetEnvironmentVariable(ConnectionStringVariable);
-        Assert.SkipWhen(string.IsNullOrWhiteSpace(connectionString),
-            $"No SQL test database: set {ConnectionStringVariable} after deploying one with tools/database/Deploy-TestDatabase.ps1");
-
-        // Opening the connection
-        SqlConnection connection = new SqlConnection(connectionString);
-        await connection.OpenAsync(cancellationToken);
-
-        // Check: a throwaway database only, read from the open connection (not from the text, which a server default could override)
-        if (!connection.Database.StartsWith("TEST_", StringComparison.Ordinal) && !connection.Database.StartsWith("DEV_", StringComparison.Ordinal))
-        {
-            string database = connection.Database;
-            await connection.DisposeAsync();
-            throw new InvalidOperationException($"The SQL tests only run on a TEST_ or DEV_ database, not on '{database}'");
-        }
+        string? connectionString = Guard.ReadConnectionString();
+        if (connectionString is null)
+            Assert.Skip(Guard.SkipReason);
 
         // Function's return
-        return connection;
+        return await Guard.OpenAsync(connectionString, cancellationToken);
     }
 
     #endregion
