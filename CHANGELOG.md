@@ -53,6 +53,8 @@ Walking skeleton: a button on a Blazor page shows the time of SQL Server, obtain
 - Very Back tests (`BoardGamesPlatform.VeryBack.Tests`): settings validation, reading of the Ping result, the host setup, the exit code, and the listener on loopback sockets with fake procedures and a fake listener.
 - `tools/changelog/tests/Test-MergeChangelogFragments.ps1`: plain PowerShell tests of the merge script, run on throwaway copies (one case per defect above, `-WhatIf`, and the real `CHANGELOG.md`).
 - Website tests: every key exists in both languages, no text is empty, every key asked in the source exists, no .razor file holds a visible literal text (a heuristic, not a Razor parser), and the not found page, the error banner, the error page and the reconnection dialog rendered by bUnit in English and in French.
+- Very Back: its SQL sessions are named `BoardGamesPlatform.VeryBack` (`program_name` on SQL Server) when the connection string sets no `Application Name`; a value set by the administrator is kept.
+- Very Back: documentation of the connections to SQL Server (pool, `Max Pool Size`, `Load Balance Timeout` / `Connection Lifetime`, `Pooling=False`).
 
 ### Changed
 
@@ -82,6 +84,8 @@ Walking skeleton: a button on a Blazor page shows the time of SQL Server, obtain
 - Website: the texts of the Blazor template (error page with its "Request ID" label, not found page, error banner of the layout, reconnection dialog, title of the home page) now come from the resources (`WebTexts.resx` and `WebTexts.fr.resx`) instead of being written in the pages; the `lang` attribute of the document follows the language of the request. The script of the reconnection dialog writes no text: the texts are in the markup, rendered from the resources.
 - Website: the error page no longer shows the template advice about the Development environment.
 - Website: the not found page has a title and a level 1 heading (was a level 3 heading), so the router focuses it.
+- Very Back: no SQL session stays open on SQL Server after a stop or a redeployment: the pool of its connection string is cleared once the listener has stopped.
+- Gateway tests: the checks that an invalid setting stops the startup build the host directly instead of going through `WebApplicationFactory`, which could report a disposed service provider instead of the validation failure on the CI runner.
 
 ## [0.2.0] - 2026-10-29
 
