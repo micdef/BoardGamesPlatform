@@ -7,6 +7,7 @@ One folder per test project. In Visual Studio, they are grouped in the `9 - Test
 | `BoardGamesPlatform.Architecture.Tests` | Tests | Architecture rules: allowed project references, game isolation, dependencies between layers |
 
 | `BoardGamesPlatform.Database.Tests` | Tests | SQL project: conventions of its files (run everywhere); the Ping procedure and the permissions of the application role on a `TEST_` or `DEV_` database (skipped without one, see `tools/database/README.md`) |
+| `BoardGamesPlatform.Platform.Infrastructure.Tests` | Tests | Platform adapters: the Very Back client of the Back against a fake Very Back on a loopback socket (shared connection, reconnection on the next call, no automatic retry, connect timeout, disposal) and the validation of its settings |
 | `BoardGamesPlatform.Protocol.Tests` | Tests | Socket protocol: framing (partial and grouped reads, end of stream, maximum length, wire format); plain TCP transport on loopback sockets (port 0, round trip, clean end, cancellation); request/response correlation (pairing in any order, closes, cancellation, protocol violations, limit per connection); JSON message envelopes (wire format, strict reading, operation routing, dates with offset) and the Ping contracts |
 | `BoardGamesPlatform.TestKit` | Library | Helpers shared by the test projects: repository paths; references the `FakeTimeProvider` package for fake time |
 

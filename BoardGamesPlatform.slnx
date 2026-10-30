@@ -73,6 +73,7 @@
     <File Path="test/Directory.Build.props" />
     <Project Path="test/BoardGamesPlatform.Architecture.Tests/BoardGamesPlatform.Architecture.Tests.csproj" />
     <Project Path="test/BoardGamesPlatform.Database.Tests/BoardGamesPlatform.Database.Tests.csproj" />
+    <Project Path="test/BoardGamesPlatform.Platform.Infrastructure.Tests/BoardGamesPlatform.Platform.Infrastructure.Tests.csproj" />
     <Project Path="test/BoardGamesPlatform.Protocol.Tests/BoardGamesPlatform.Protocol.Tests.csproj" />
     <Project Path="test/BoardGamesPlatform.TestKit/BoardGamesPlatform.TestKit.csproj" />
   </Folder>
