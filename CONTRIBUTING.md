@@ -87,7 +87,7 @@ New scopes are added to this table when a new area of the solution is created.
 - Every change reaches `main`, `dev` and `release/*` through a pull request opened against the parent branch.
 - The title follows the commit convention: `feat: add fleet placement`.
 - The description states the purpose, the main changes and how they were tested.
-- The changes are described in a **changelog fragment**, `changelog/unreleased/<branch>.md` (see [its README](changelog/unreleased/README.md)), never in `CHANGELOG.md` itself: the CI refuses a pull request that edits it, except `docs/release-X.Y.Z`.
+- The changes are described in a **changelog fragment**, `changelog/unreleased/<branch>.md` (see [its README](changelog/unreleased/README.md)), never in `CHANGELOG.md` itself: the CI refuses a pull request that edits it, except `docs/release-X.Y.Z` and the promotions `release/*` → `dev` and `dev` → `main`.
 - **Two pull requests open at the same time never touch the same file**, so that none of them ever has a merge conflict; a pull request that needs a file of another open one is opened once that one is merged.
 - The build must pass and every review thread must be resolved before merging.
 - **Only the repository owner merges a pull request.** Nobody else, including AI assistants, merges.

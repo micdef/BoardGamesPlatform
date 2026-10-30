@@ -86,6 +86,7 @@ Walking skeleton: a button on a Blazor page shows the time of SQL Server, obtain
 - Website: the not found page has a title and a level 1 heading (was a level 3 heading), so the router focuses it.
 - Very Back: no SQL session stays open on SQL Server after a stop or a redeployment: the pool of its connection string is cleared once the listener has stopped.
 - Gateway tests: the checks that an invalid setting stops the startup build the host directly instead of going through `WebApplicationFactory`, which could report a disposed service provider instead of the validation failure on the CI runner.
+- CI, changelog check: the promotions `release/*` → `dev` and `dev` → `main` may carry `CHANGELOG.md`, finalized on the release branch; they were refused like any other pull request.
 
 ## [0.2.0] - 2026-10-29
 

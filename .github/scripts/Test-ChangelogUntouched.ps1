@@ -3,11 +3,13 @@
 # │ Purpose      │ Fails a pull request that edits CHANGELOG.md directly:       │
 # │              │ every pull request adds its own fragment instead, so that    │
 # │              │ two open pull requests never conflict on the changelog.      │
-# │ Rules        │ 1. Only a docs/release-* branch may change CHANGELOG.md      │
+# │ Rules        │ 1. A docs/release-* branch may change CHANGELOG.md           │
 # │              │    (it merges the fragments, then finalizes the version).    │
-# │              │ 2. The other branches add changelog/unreleased/<branch>.md.  │
+# │              │ 2. The promotions release/* → dev and dev → main carry the   │
+# │              │    finalized changelog: they may change it too.              │
+# │              │ 3. The other branches add changelog/unreleased/<branch>.md.  │
 # │ Usage        │ pwsh .github/scripts/Test-ChangelogUntouched.ps1 `           │
-# │              │     -BaseRef origin/release/0.3.0 -HeadBranch feature/x     │
+# │              │     -BaseRef origin/release/0.3.0 -HeadBranch feature/x      │
 # │ Exit code    │ 0 when the rule holds, 1 otherwise.                          │
 # └──────────────┴──────────────────────────────────────────────────────────────┘
 
@@ -24,10 +26,18 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Rule 1: the release documentation branch is the only one allowed to change the changelog
+# Rule 1: the release documentation branch merges the fragments and finalizes the changelog
 if ($HeadBranch -like 'docs/release-*')
 {
     Write-Host "$HeadBranch is a release documentation branch: it may change CHANGELOG.md."
+    exit 0
+}
+
+# Rule 2: a promotion carries the changelog already finalized on the release branch
+$baseBranch = $BaseRef -replace '^origin/', ''
+if (($HeadBranch -like 'release/*' -and $baseBranch -eq 'dev') -or ($HeadBranch -eq 'dev' -and $baseBranch -eq 'main'))
+{
+    Write-Host "$HeadBranch into $baseBranch is a promotion: it may change CHANGELOG.md."
     exit 0
 }
 
@@ -39,7 +49,7 @@ if ($LASTEXITCODE -ne 0)
     exit 1
 }
 
-# Rule 2: any other branch leaves CHANGELOG.md alone
+# Rule 3: any other branch leaves CHANGELOG.md alone
 if ($changed -contains 'CHANGELOG.md')
 {
     $fragment = 'changelog/unreleased/' + ($HeadBranch -replace '[/\\]', '-') + '.md'
