@@ -32,7 +32,7 @@ namespace BoardGamesPlatform.Protocol.Tests.Links;
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> the client speaks to any tier under the name it is given: the tests call "the Back", through a real link server on
-/// port 0 of the loopback address. The reconnection and the connect timeout are proven by the tests of the Very Back client of the Back.</para>
+/// a fixed test port of the loopback address. The reconnection and the connect timeout are proven by the tests of the Very Back client of the Back.</para>
 /// <para><b>Behavior:</b> each test is limited in time and waits for responses, never for a fixed delay.</para>
 /// </remarks>
 public sealed class LinkClientTests
@@ -125,17 +125,17 @@ public sealed class LinkClientTests
     #region Privates
 
     /// <summary>
-    /// Method used to start a link server that answers the Ping operation of the Back on port 0 of the loopback address
+    /// Method used to start a link server that answers the Ping operation of the Back on a test port of the loopback address
     /// </summary>
     /// <param name="stoppingToken">Token that stops the server</param>
-    /// <param name="port">Port given by the system</param>
+    /// <param name="port">Test port the server listens on</param>
     /// <returns>
     /// The task of the running server
     /// </returns>
     private static Task StartPeerAsync(CancellationToken stoppingToken, out int port)
     {
         // Starting the listener and the server
-        TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, 0));
+        TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next()));
         port = listener.LocalEndPoint.Port;
         OperationDispatcher dispatcher = new OperationDispatcher().Register<PingRequest, PingResponse>(BackOperations.Ping,
             (_, _) => Task.FromResult(new PingResponse(_pingTime)));

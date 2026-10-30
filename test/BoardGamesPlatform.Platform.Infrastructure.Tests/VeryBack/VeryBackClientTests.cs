@@ -24,7 +24,7 @@ namespace BoardGamesPlatform.Platform.Infrastructure.Tests.VeryBack;
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> the Back relies on one shared connection that opens on demand, comes back after a loss and never retries by itself.</para>
-/// <para><b>Behavior:</b> the tests run on a real loopback socket (port 0 only). They wait for events (a connection lost, a connection attempt
+/// <para><b>Behavior:</b> the tests run on a real loopback socket, on fixed test ports of the block of this project. They wait for events (a connection lost, a connection attempt
 /// begun), never for a fixed delay; every test has a timeout, so that a hang fails instead of blocking the run.</para>
 /// </remarks>
 public sealed class VeryBackClientTests
@@ -247,18 +247,14 @@ public sealed class VeryBackClientTests
     /// When nothing listens, the call fails with a socket error instead of hanging
     /// </summary>
     /// <remarks>
-    /// <para><b>Behavior:</b> the port comes from a listener on port 0 that is stopped just before the call, so that it is a port that was
-    /// free a moment ago and has no listener; nothing is reserved in advance.</para>
+    /// <para><b>Behavior:</b> the port is a test port of the block of this project, where nothing listens.</para>
     /// </remarks>
     [Fact(Timeout = TestTimeout)]
     public async Task APingWhenNothingListensFailsWithASocketErrorAsync()
     {
-        // Taking the port of a Very Back that stops at once
+        // Pointing the client to a test port of the block where nothing listens
         CancellationToken token = TestContext.Current.CancellationToken;
-        FakeVeryBack fake = FakeVeryBack.Start();
-        int port = fake.Port;
-        await fake.DisposeAsync();
-        await using VeryBackClient client = CreateClient(port, new SignalingLogger<VeryBackClient>());
+        await using VeryBackClient client = CreateClient(TestPorts.Block.Next(), new SignalingLogger<VeryBackClient>());
 
         // Check
         await Should.ThrowAsync<SocketException>(() => client.PingAsync(token));

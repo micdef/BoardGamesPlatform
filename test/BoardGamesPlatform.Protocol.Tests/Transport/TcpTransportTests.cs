@@ -25,8 +25,8 @@ namespace BoardGamesPlatform.Protocol.Tests.Transport;
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> first loopback integration tests of the platform: frames travel through a real TCP connection, as between two tiers.</para>
-/// <para><b>Behavior:</b> every listener binds port 0 on the loopback address and the client connects to the port given by the system, so
-/// that no port is ever reserved in advance. Each test is limited in time, so that a missing frame fails the test instead of blocking the run.</para>
+/// <para><b>Behavior:</b> every listener binds a fixed test port of the block of this project on the loopback address (see
+/// <see cref="TestPorts"/>), never a port handed out by the system. Each test is limited in time, so that a missing frame fails the test instead of blocking the run.</para>
 /// </remarks>
 public sealed class TcpTransportTests
 {
@@ -113,7 +113,20 @@ public sealed class TcpTransportTests
     private static TcpTransportListener StartLoopbackListener()
     {
         // Function's return
-        return TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, 0));
+        return StartLoopbackListener(TestPorts.Block.Next());
+    }
+
+    /// <summary>
+    /// Method used to start a listener on the loopback address and a given port
+    /// </summary>
+    /// <param name="port">Test port to listen on</param>
+    /// <returns>
+    /// The started listener
+    /// </returns>
+    private static TcpTransportListener StartLoopbackListener(int port)
+    {
+        // Function's return
+        return TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, port));
     }
 
     #endregion
@@ -123,16 +136,17 @@ public sealed class TcpTransportTests
     #region Listener
 
     /// <summary>
-    /// A listener started on port 0 listens on a port given by the system, on the requested address
+    /// A listener listens on the requested address and port
     /// </summary>
     [Fact]
-    public async Task AListenerOnPortZeroGetsAPortFromTheSystemAsync()
+    public async Task AListenerListensOnTheRequestedAddressAndPortAsync()
     {
-        // Starting the listener
-        await using TcpTransportListener listener = StartLoopbackListener();
+        // Starting the listener on a test port
+        int port = TestPorts.Block.Next();
+        await using TcpTransportListener listener = StartLoopbackListener(port);
 
         // Checks
-        listener.LocalEndPoint.Port.ShouldBeGreaterThan(0);
+        listener.LocalEndPoint.Port.ShouldBe(port);
         listener.LocalEndPoint.Address.ShouldBe(IPAddress.Loopback);
     }
 
@@ -341,10 +355,8 @@ public sealed class TcpTransportTests
     [Fact(Timeout = TestTimeout)]
     public async Task ConnectingWhereNothingListensFailsAsync()
     {
-        // Getting a port where nothing listens any more
-        TcpTransportListener listener = StartLoopbackListener();
-        int closedPort = listener.LocalEndPoint.Port;
-        await listener.DisposeAsync();
+        // Taking a test port of the block where nothing listens
+        int closedPort = TestPorts.Block.Next();
 
         // Check
         await Should.ThrowAsync<SocketException>(() => new TcpTransportConnector().ConnectAsync(LoopbackHost, closedPort, TestContext.Current.CancellationToken));

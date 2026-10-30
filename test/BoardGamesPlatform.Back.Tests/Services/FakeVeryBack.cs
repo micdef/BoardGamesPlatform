@@ -30,7 +30,7 @@ namespace BoardGamesPlatform.Back.Tests.Services;
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> lets the tests of the Back prove the path Gateway → Back → Very Back without a database.</para>
-/// <para><b>Behavior:</b> a real link server on port 0 of the loopback address, so that the Back speaks to it exactly as to the real Very
+/// <para><b>Behavior:</b> a real link server on a fixed test port of the loopback address, so that the Back speaks to it exactly as to the real Very
 /// Back. A fake that does not answer waits until it is disposed, like a Very Back stuck on its database. Disposing the fake stops it and closes
 /// its connections.</para>
 /// </remarks>
@@ -93,7 +93,7 @@ internal sealed class FakeVeryBack : IAsyncDisposable
     #region Members & Properties
 
     /// <summary>
-    /// Port given by the system
+    /// Test port the fake listens on
     /// </summary>
     public int Port { get; }
 
@@ -121,7 +121,7 @@ internal sealed class FakeVeryBack : IAsyncDisposable
     public FakeVeryBack(bool answers = true)
     {
         // Starting the listener and the link server
-        TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, 0));
+        TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next()));
         Port = listener.LocalEndPoint.Port;
         OperationDispatcher dispatcher = new OperationDispatcher().Register<PingRequest, PingResponse>(VeryBackOperations.Ping,
             async (_, cancellationToken) =>
