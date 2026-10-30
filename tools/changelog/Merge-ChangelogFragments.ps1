@@ -8,8 +8,14 @@
 # │              │ 2. Sections: Added, Changed, Deprecated, Removed, Fixed,     │
 # │              │    Security (Keep a Changelog); any other text is refused.   │
 # │              │ 3. Entries keep the order of the fragment files (by name).   │
+# │              │ 4. No line of CHANGELOG.md is ever dropped: the summary of   │
+# │              │    [Unreleased] and the continuation lines are kept; any     │
+# │              │    other text there stops the script before it writes.       │
 # │ Usage        │ pwsh tools/changelog/Merge-ChangelogFragments.ps1 [-WhatIf]  │
-# │ Exit code    │ 0 on success, 1 when a fragment is invalid (nothing written).│
+# │ Tests        │ pwsh tools/changelog/tests/Test-MergeChangelogFragments.ps1  │
+# │ Exit code    │ 0 on success; 1 when a fragment or the [Unreleased] section  │
+# │              │ is not in the expected shape (nothing written), or when a    │
+# │              │ merged fragment could not be deleted (do not run it again).  │
 # └──────────────┴──────────────────────────────────────────────────────────────┘
 
 [CmdletBinding(SupportsShouldProcess)]
@@ -74,25 +80,60 @@ if ($errors.Count -gt 0)
     exit 1
 }
 
-# Step 2: read the [Unreleased] section of the changelog and its current entries
+# Step 2: read the [Unreleased] section of the changelog: its summary (the text before the first heading) and its entries, each one with its
+# continuation lines; anything else (an unknown heading, a paragraph inside a section) is refused, so that no line is ever dropped
 $lines = [IO.File]::ReadAllLines($changelogPath)
 $start = [Array]::IndexOf($lines, '## [Unreleased]')
 if ($start -lt 0) { Write-Host '::error::CHANGELOG.md has no "## [Unreleased]" heading'; exit 1 }
 $end = $start + 1
 while ($end -lt $lines.Length -and -not $lines[$end].StartsWith('## [')) { $end++ }
 
+$summary = [Collections.Generic.List[string]]::new()
 $existingEntries = [ordered]@{}
 foreach ($section in $sections) { $existingEntries[$section] = [Collections.Generic.List[string]]::new() }
 $current = $null
 for ($i = $start + 1; $i -lt $end; $i++)
 {
-    if ($lines[$i] -match '^### (?<name>\w+)\s*$') { $current = $Matches['name'] }
-    elseif ($lines[$i] -match '^- \S' -and $null -ne $current -and $existingEntries.Contains($current)) { $existingEntries[$current].Add($lines[$i]) }
+    $line = $lines[$i]
+    if ($line -match '^### (?<name>\w+)\s*$')
+    {
+        $current = $Matches['name']
+        if ($current -notin $sections) { $errors.Add("CHANGELOG.md:$($i + 1) unknown section '$current' in [Unreleased]") }
+    }
+    elseif ($null -eq $current)
+    {
+        # The summary of the coming version, kept as it is
+        $summary.Add($line)
+    }
+    elseif ($line -match '^- \S' -and $current -in $sections) { $existingEntries[$current].Add($line) }
+    elseif ($line -match '^  \S' -and $current -in $sections -and $existingEntries[$current].Count -gt 0)
+    {
+        # Continuation line of the previous entry (indented by two spaces)
+        $last = $existingEntries[$current].Count - 1
+        $existingEntries[$current][$last] = $existingEntries[$current][$last] + "`n" + $line
+    }
+    elseif ($line.Trim().Length -gt 0)
+    {
+        $errors.Add("CHANGELOG.md:$($i + 1) unexpected text in [Unreleased] (only a summary before the first heading, '### <Section>' headings and '- ' entries are kept)")
+    }
 }
 
-# Step 3: rebuild the [Unreleased] section: existing entries first, then the fragments, section by section
+if ($errors.Count -gt 0)
+{
+    $errors | ForEach-Object { Write-Host "::error::$_" }
+    Write-Host '::error::Nothing was written: fix CHANGELOG.md by hand, then run the script again.'
+    exit 1
+}
+
+# Step 3: rebuild the [Unreleased] section: the summary, then the existing entries first and the fragments after, section by section
 $section = [Collections.Generic.List[string]]::new()
 $section.Add('## [Unreleased]')
+$summaryText = ($summary -join "`n").Trim("`n")
+if ($summaryText.Trim().Length -gt 0)
+{
+    $section.Add('')
+    $section.Add($summaryText)
+}
 foreach ($name in $sections)
 {
     $entries = @($existingEntries[$name]) + @($newEntries[$name])
@@ -102,15 +143,30 @@ foreach ($name in $sections)
     $section.Add('')
     foreach ($entry in $entries) { $section.Add($entry) }
 }
-$section.Add('')
 
-$result = @($lines[0..($start - 1)]) + @($section) + @($lines[$end..($lines.Length - 1)])
+# The lines before and after the section; a PowerShell range a..b counts down when b < a, so an empty part is taken explicitly
+$before = if ($start -gt 0) { @($lines[0..($start - 1)]) } else { @() }
+$after = if ($end -lt $lines.Length) { @('') + @($lines[$end..($lines.Length - 1)]) } else { @() }
+$result = @($before) + @($section) + @($after)
 
-# Step 4: write the changelog, then delete the merged fragments
+# Step 4: write the changelog, then delete the merged fragments; a fragment that cannot be deleted (open in an editor, for example) would be
+# merged a second time by the next run, so the script stops with an error and names it
 if ($PSCmdlet.ShouldProcess($changelogPath, "Merge $($fragments.Count) fragment(s) into [Unreleased] and delete them"))
 {
-    [IO.File]::WriteAllText($changelogPath, (($result -join "`n") -replace "`r?`n", "`r`n") + "`r`n", [Text.UTF8Encoding]::new($false))
-    $fragments | ForEach-Object { Remove-Item -LiteralPath $_.FullName }
+    [IO.File]::WriteAllText($changelogPath, ((($result -join "`n").TrimEnd("`n")) -replace "`r?`n", "`r`n") + "`r`n", [Text.UTF8Encoding]::new($false))
+    $left = [Collections.Generic.List[string]]::new()
+    foreach ($fragment in $fragments)
+    {
+        try { Remove-Item -LiteralPath $fragment.FullName -ErrorAction Stop }
+        catch { $left.Add("$($fragment.Name): $($_.Exception.Message)") }
+    }
+    if ($left.Count -gt 0)
+    {
+        Write-Host "::error::CHANGELOG.md now holds the entries of every fragment, but $($left.Count) fragment(s) could not be deleted:"
+        $left | ForEach-Object { Write-Host "::error::  $_" }
+        Write-Host '::error::Delete them by hand and do not run the script again: it would merge them a second time.'
+        exit 1
+    }
     Write-Host "Merged $($fragments.Count) fragment(s) into the [Unreleased] section of CHANGELOG.md."
 }
 
