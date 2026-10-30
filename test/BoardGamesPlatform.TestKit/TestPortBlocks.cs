@@ -56,6 +56,11 @@ public static class TestPortBlocks
     /// </summary>
     public const int Gateway = 4;
 
+    /// <summary>
+    /// End-to-end tests (the five tiers in one process): 17500-17599
+    /// </summary>
+    public const int EndToEnd = 5;
+
     #endregion
 
     #region Variables

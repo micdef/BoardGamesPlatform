@@ -1,0 +1,3 @@
+### Added
+
+- End-to-end tests (`BoardGamesPlatform.EndToEnd.Tests`, test ports 17500-17599): a headless SignalR front calls the real Gateway, which calls the real Back, which calls the real Very Back, started in one process (settings in memory, start in dependency order, stop in the reverse order). With a fake Ping procedure (CI): the front receives exactly the fake time with its non-local offset; a failing procedure and a stopped Very Back give the generic SignalR error only, and the Gateway stays usable. With the real `SqlPingProcedure`: the same Ping on the database named by `BOARDGAMESPLATFORM_TEST_DATABASE` (`TEST_` or `DEV_` only), skipped without it.
