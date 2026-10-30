@@ -160,27 +160,6 @@ public sealed class PlatformHubTests
     }
 
     /// <summary>
-    /// Without the real link to the Back, the default client makes Ping fail cleanly
-    /// </summary>
-    [Fact(Timeout = TestTimeout)]
-    public async Task TheDefaultBackClientMakesPingFailCleanlyAsync()
-    {
-        // Starting the Gateway as it is, and connecting a front
-        CancellationToken token = TestContext.Current.CancellationToken;
-        await using GatewayFactory factory = new GatewayFactory();
-        await using HubConnection connection = factory.CreateHubConnection(PlatformHubContract.DefaultPath);
-        await connection.StartAsync(token);
-
-        // Calling Ping
-        HubException error = await Should.ThrowAsync<HubException>(
-            async () => await connection.InvokeAsync<PingResponse>(PlatformHubContract.Ping, token));
-
-        // Checks (the generic message only, and the connection still works after the failure)
-        error.Message.ShouldBe(GenericPingError);
-        connection.State.ShouldBe(HubConnectionState.Connected);
-    }
-
-    /// <summary>
     /// The path of the hub is set by the configuration, and the default path is then no longer served
     /// </summary>
     [Fact(Timeout = TestTimeout)]

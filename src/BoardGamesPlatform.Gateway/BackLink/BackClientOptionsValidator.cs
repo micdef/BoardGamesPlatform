@@ -1,12 +1,12 @@
 /*
- *	@file	src/BoardGamesPlatform.Gateway/BackLink/UnavailableBackClient.cs
+ *	@file	src/BoardGamesPlatform.Gateway/BackLink/BackClientOptionsValidator.cs
  *	@author	Defraene Michaël (AKA Sonic) (co-written by Claude)
  *
- *	@brief	Temporary Back client that always fails, until the link to the Back is wired
+ *	@brief	Startup check of the settings of the "Back" configuration section
  */
 
 // Using
-using BoardGamesPlatform.Back.Contracts.Ping;
+using Microsoft.Extensions.Options;
 
 // Static using
 // #N/A
@@ -18,14 +18,13 @@ using BoardGamesPlatform.Back.Contracts.Ping;
 namespace BoardGamesPlatform.Gateway.BackLink;
 
 /// <summary>
-/// Back client that always fails because the link to the Back is not wired yet
+/// Validator of the settings used by the Gateway to reach the Back
 /// </summary>
 /// <remarks>
-/// <para><b>Purpose:</b> lets the Gateway start and serve its hub before the socket link to the Back exists.</para>
-/// <para><b>Behavior:</b> every call throws an <see cref="InvalidOperationException"/>. TEMPORARY: the task feature/back-gateway-link
-/// replaces it by the real client (a request client on port 7821) and removes this class.</para>
+/// <para><b>Purpose:</b> stops the startup of the Gateway on a wrong setting, rather than failing at the first Ping of a front.</para>
+/// <para><b>Behavior:</b> applies <see cref="BackClientOptions.FindProblem"/>; the failure names the setting, never its value.</para>
 /// </remarks>
-public sealed class UnavailableBackClient : IBackClient
+public sealed class BackClientOptionsValidator : IValidateOptions<BackClientOptions>
 {
     #region Members
 
@@ -100,11 +99,15 @@ public sealed class UnavailableBackClient : IBackClient
     #region Publics
 
     /// <inheritdoc/>
-    /// <exception cref="InvalidOperationException">Always: the Back link is not wired yet</exception>
-    public Task<PingResponse> PingAsync(CancellationToken cancellationToken)
+    public ValidateOptionsResult Validate(string? name, BackClientOptions options)
     {
-        // Failing, the link to the Back does not exist yet
-        throw new InvalidOperationException("The link to the Back is not wired yet");
+        // Check
+        if (options is null)
+            throw new ArgumentNullException(nameof(options), $"The value of the parameter: {nameof(options)} cannot be null");
+
+        // Function's return
+        string? problem = options.FindProblem();
+        return problem is null ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(problem);
     }
 
     #endregion
