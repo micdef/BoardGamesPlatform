@@ -75,6 +75,7 @@
     <File Path="test/CodeCoverage.config" />
     <File Path="test/Directory.Build.props" />
     <Project Path="test/BoardGamesPlatform.Architecture.Tests/BoardGamesPlatform.Architecture.Tests.csproj" />
+    <Project Path="test/BoardGamesPlatform.Back.Tests/BoardGamesPlatform.Back.Tests.csproj" />
     <Project Path="test/BoardGamesPlatform.Database.Tests/BoardGamesPlatform.Database.Tests.csproj" />
     <Project Path="test/BoardGamesPlatform.Gateway.Tests/BoardGamesPlatform.Gateway.Tests.csproj" />
     <Project Path="test/BoardGamesPlatform.Platform.Infrastructure.Tests/BoardGamesPlatform.Platform.Infrastructure.Tests.csproj" />

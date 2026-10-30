@@ -8,6 +8,7 @@
 // Using
 using System.Net;
 using System.Net.Sockets;
+using BoardGamesPlatform.Observability;
 using BoardGamesPlatform.Protocol.Correlation;
 using BoardGamesPlatform.Protocol.Framing;
 using BoardGamesPlatform.Protocol.Messages;
@@ -417,7 +418,7 @@ public sealed class VeryBackListenerServiceTests
         exception.InnerException.ShouldBeOfType<ObjectDisposedException>();
         logger.Entries.ShouldContain(entry => entry.Level == LogLevel.Critical && entry.Message.Contains("without a stop request"));
         listener.Disposals.ShouldBeGreaterThan(0);
-        VeryBackExtensions.GetExitCode(new IHostedService[] { service }).ShouldBe(VeryBackExtensions.FailureExitCode);
+        HostExitCode.FromHostedServices(new IHostedService[] { service }).ShouldBe(HostExitCode.Failure);
     }
 
     /// <summary>
@@ -446,7 +447,7 @@ public sealed class VeryBackListenerServiceTests
         service.ExecuteTask.ShouldNotBeNull().IsCompleted.ShouldBeFalse();
         await service.StopAsync(cancellationToken);
         service.ExecuteTask.ShouldNotBeNull().IsCompletedSuccessfully.ShouldBeTrue();
-        VeryBackExtensions.GetExitCode(new IHostedService[] { service }).ShouldBe(VeryBackExtensions.SuccessExitCode);
+        HostExitCode.FromHostedServices(new IHostedService[] { service }).ShouldBe(HostExitCode.Success);
     }
 
     /// <summary>

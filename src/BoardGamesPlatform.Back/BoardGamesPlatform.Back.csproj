@@ -1,6 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk.Worker">
   <!-- Back host (a console process in 0.2.0, installed as a Windows service or a systemd daemon from 0.25.0): composition root and socket server for the Gateway -->
 
+  <!-- The tests reach the internal constructor of the listener service, to make its accept loop fail -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="BoardGamesPlatform.Back.Tests" />
+  </ItemGroup>
+
   <!-- Projects -->
   <ItemGroup>
     <ProjectReference Include="..\BoardGamesPlatform.Observability\BoardGamesPlatform.Observability.csproj" />

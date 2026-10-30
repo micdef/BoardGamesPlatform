@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Tests of the Back: its settings, the setup of its host, and its listener of the Gateway on loopback sockets with a fake Very Back -->
+
+  <!-- Projects: the Back under test, the protocol its clients speak, the contracts of the Back and of the Very Back (for the fake Very Back), and the shared test helpers -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Back\BoardGamesPlatform.Back.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Protocol\BoardGamesPlatform.Protocol.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Back.Contracts\BoardGamesPlatform.Back.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.VeryBack.Contracts\BoardGamesPlatform.VeryBack.Contracts.csproj" />
+    <ProjectReference Include="..\BoardGamesPlatform.TestKit\BoardGamesPlatform.TestKit.csproj" />
+  </ItemGroup>
+
+</Project>
