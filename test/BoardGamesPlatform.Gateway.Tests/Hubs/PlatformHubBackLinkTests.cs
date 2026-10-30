@@ -47,6 +47,12 @@ public sealed class PlatformHubBackLinkTests
     /// </summary>
     private const int TestTimeout = 10000;
 
+    /// <summary>
+    /// Longest duration of a test that waits for a refused connection, in milliseconds: on Windows a refusal on the loopback address takes about
+    /// 2 seconds
+    /// </summary>
+    private const int RefusalTestTimeout = 30000;
+
     #endregion
 
     #region Variables
@@ -137,12 +143,12 @@ public sealed class PlatformHubBackLinkTests
     /// <summary>
     /// When the Back does not answer, the front receives the generic SignalR error only, and its connection still works
     /// </summary>
-    [Fact(Timeout = TestTimeout)]
+    [Fact(Timeout = RefusalTestTimeout)]
     public async Task WhenTheBackDoesNotAnswerTheFrontReceivesTheGenericErrorAsync()
     {
         // Starting the Gateway pointed at a port where nothing listens, and a front
         CancellationToken token = TestContext.Current.CancellationToken;
-        int closedPort = await FakeBack.GetClosedPortAsync();
+        int closedPort = TestPorts.Block.Next();
         await using GatewayFactory factory = new GatewayFactory(backPort: closedPort.ToString(CultureInfo.InvariantCulture));
         await using HubConnection connection = factory.CreateHubConnection(PlatformHubContract.DefaultPath);
         await connection.StartAsync(token);

@@ -29,10 +29,9 @@ namespace BoardGamesPlatform.Gateway.Tests.Support;
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> gives the Gateway a real peer on a real socket, whose answer the test controls.</para>
-/// <para><b>Behavior:</b> <see cref="Start"/> listens on the loopback address with port 0 (the system picks the port, so that two fake Backs
-/// started by tests never collide), serves every accepted connection with the real <see cref="LinkServer"/> and answers Ping with
+/// <para><b>Behavior:</b> <see cref="Start"/> listens on the loopback address on the next fixed port of the block of this project
+/// (<see cref="TestPorts"/>; never a port handed out by the system), serves every accepted connection with the real <see cref="LinkServer"/> and answers Ping with
 /// <see cref="PingTime"/>. <see cref="ConnectionClosed"/> completes when a connection to it ends, so that a test waits for the event.
-/// <see cref="GetClosedPortAsync"/> is different: it gives a port that was free a moment ago, with no guarantee that it stays free.
 /// Disposing the fake Back stops the listener and waits for everything it started.</para>
 /// </remarks>
 internal sealed class FakeBack : IAsyncDisposable
@@ -126,7 +125,7 @@ internal sealed class FakeBack : IAsyncDisposable
     private FakeBack()
     {
         // Listening, then serving with the real link server
-        TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, 0));
+        TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next()));
         Port = listener.LocalEndPoint.Port;
         OperationDispatcher dispatcher = new OperationDispatcher()
             .Register<PingRequest, PingResponse>(BackOperations.Ping, (_, _) => Task.FromResult(new PingResponse(PingTime)));
@@ -156,7 +155,7 @@ internal sealed class FakeBack : IAsyncDisposable
     #region Publics
 
     /// <summary>
-    /// Method used to start a fake Back on a loopback port chosen by the system
+    /// Method used to start a fake Back on the next fixed loopback port of the test block
     /// </summary>
     /// <returns>
     /// The fake Back, already listening
@@ -165,28 +164,6 @@ internal sealed class FakeBack : IAsyncDisposable
     {
         // Function's return
         return new FakeBack();
-    }
-
-    /// <summary>
-    /// Method used to get a loopback port where nothing listens
-    /// </summary>
-    /// <remarks>
-    /// <para><b>Purpose:</b> lets a test reach "a Back that is down" without guessing a free port in advance.</para>
-    /// <para><b>Behavior:</b> starts a listener on port 0, keeps its port, then disposes it: the port was just freed by a real listener. A port
-    /// could in theory be taken again by another process before the test uses it; the risk is accepted for loopback test ports.</para>
-    /// </remarks>
-    /// <returns>
-    /// A task whose result is the port of a listener that no longer exists
-    /// </returns>
-    public static async Task<int> GetClosedPortAsync()
-    {
-        // Listening on a port chosen by the system, then closing the listener
-        TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, 0));
-        int port = listener.LocalEndPoint.Port;
-        await listener.DisposeAsync().ConfigureAwait(false);
-
-        // Function's return
-        return port;
     }
 
     /// <summary>

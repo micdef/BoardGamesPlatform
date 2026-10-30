@@ -28,7 +28,7 @@ namespace BoardGamesPlatform.Gateway.Tests.BackLink;
 /// <remarks>
 /// <para><b>Purpose:</b> the client is the only door from the Gateway to the Back: its answer, its failure when the Back is down and its
 /// disposal must not change by accident.</para>
-/// <para><b>Behavior:</b> each test starts a fake Back on a real loopback socket (port chosen by the system) and uses the real client and the
+/// <para><b>Behavior:</b> each test starts a fake Back on a real loopback socket (fixed port of the test block) and uses the real client and the
 /// real TCP connector.</para>
 /// </remarks>
 public sealed class BackClientTests
@@ -41,6 +41,12 @@ public sealed class BackClientTests
     /// Longest duration of a test, in milliseconds
     /// </summary>
     private const int TestTimeout = 10000;
+
+    /// <summary>
+    /// Longest duration of a test that waits for a refused connection, in milliseconds: on Windows a refusal on the loopback address takes about
+    /// 2 seconds
+    /// </summary>
+    private const int RefusalTestTimeout = 30000;
 
     #endregion
 
@@ -143,12 +149,12 @@ public sealed class BackClientTests
     /// <summary>
     /// Ping fails with a SocketException when nothing listens
     /// </summary>
-    [Fact(Timeout = TestTimeout)]
+    [Fact(Timeout = RefusalTestTimeout)]
     public async Task PingFailsWithASocketExceptionWhenNothingListensAsync()
     {
-        // Taking the port of a listener that no longer exists
+        // Taking a port of the test block that nothing binds
         CancellationToken token = TestContext.Current.CancellationToken;
-        int closedPort = await FakeBack.GetClosedPortAsync();
+        int closedPort = TestPorts.Block.Next();
         await using BackClient client = CreateClient(closedPort);
 
         // Checks
