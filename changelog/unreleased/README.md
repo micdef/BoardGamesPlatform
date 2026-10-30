@@ -21,4 +21,5 @@ Two pull requests open at the same time therefore never touch the same lines, an
 ## Releasing
 
 The `docs/release-X.Y.Z` pull request runs `pwsh tools/changelog/Merge-ChangelogFragments.ps1`, which moves every fragment into the `[Unreleased]` section of `CHANGELOG.md` and deletes it, then finalizes the version as described in [CONTRIBUTING.md](../../CONTRIBUTING.md).
-The CI refuses any other pull request that edits `CHANGELOG.md` (`.github/scripts/Test-ChangelogUntouched.ps1`).
+The promotions `release/*` → `dev` and `dev` → `main` then carry the finalized `CHANGELOG.md`.
+The CI refuses any other pull request that edits it (`.github/scripts/Test-ChangelogUntouched.ps1`).
