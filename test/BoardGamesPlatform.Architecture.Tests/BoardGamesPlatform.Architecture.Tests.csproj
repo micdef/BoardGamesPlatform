@@ -18,7 +18,6 @@
     <ProjectReference Include="..\..\src\BoardGamesPlatform.VeryBack\BoardGamesPlatform.VeryBack.csproj" />
     <ProjectReference Include="..\..\src\BoardGamesPlatform.VeryBack.Contracts\BoardGamesPlatform.VeryBack.Contracts.csproj" />
     <ProjectReference Include="..\..\src\BoardGamesPlatform.Web\BoardGamesPlatform.Web.csproj" />
-    <ProjectReference Include="..\..\src\BoardGamesPlatform.Web.Client\BoardGamesPlatform.Web.Client.csproj" />
   </ItemGroup>
 
   <!-- Packages (versions in Directory.Packages.props) -->

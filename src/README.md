@@ -7,8 +7,7 @@ One folder per project. In Visual Studio, solution folders group the projects by
 | 0 - Shared | `BoardGamesPlatform.Codes` | Library | Language-neutral codes (errors, statuses, events) that the fronts translate |
 | 0 - Shared | `BoardGamesPlatform.Protocol` | Library | Socket protocol of the Gateway ↔ Back and Back ↔ Very Back links |
 | 0 - Shared | `BoardGamesPlatform.Observability` | Library | Sends the logs, traces and metrics of every executable to an OpenTelemetry collector, when one is configured |
-| 1 - Front-End | `BoardGamesPlatform.Web` | Blazor (server) | Website, Blazor in the Interactive Server render mode only; runs on Kestrel as a service, behind a reverse proxy; the only SignalR client of the Gateway |
-| 1 - Front-End | `BoardGamesPlatform.Web.Client` | Blazor (WebAssembly) | Created by the template of 0.2.0 and unused: the website runs in the Interactive Server render mode only; removed by `feature/blazor-ping-page` |
+| 1 - Front-End | `BoardGamesPlatform.Web` | Blazor (server) | Website, Blazor in the Interactive Server render mode only; runs on Kestrel as a service, behind a reverse proxy; the only SignalR client of the Gateway; its texts come from `.resx` resources (English, French) |
 | 2 - Gateway | `BoardGamesPlatform.Gateway` | ASP.NET Core | Single entry point of the fronts: SignalR hub, authentication, validation, rate limiting |
 | 2 - Gateway | `BoardGamesPlatform.Gateway.Contracts` | Library | Contract exposed by the Gateway to the fronts |
 | 3 - Back-End / Platform | `BoardGamesPlatform.Platform.Domain` | Library | Platform entities and rules |

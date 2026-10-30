@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <!-- Texts of the website, English (default language). Every key exists in every WebTexts.<culture>.resx file. -->
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Ping_Title" xml:space="preserve">
+    <value>Platform ping</value>
+  </data>
+  <data name="Ping_Button" xml:space="preserve">
+    <value>Ping the platform</value>
+  </data>
+  <data name="Ping_InProgress" xml:space="preserve">
+    <value>Waiting for the answer of SQL Server...</value>
+  </data>
+  <data name="Ping_Result" xml:space="preserve">
+    <value>SQL Server answered: {0} (UTC{1})</value>
+  </data>
+  <data name="Ping_Error" xml:space="preserve">
+    <value>The platform did not answer. Please try again later.</value>
+  </data>
+</root>

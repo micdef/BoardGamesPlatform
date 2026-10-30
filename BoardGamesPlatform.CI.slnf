@@ -16,7 +16,6 @@
       "src\\BoardGamesPlatform.VeryBack\\BoardGamesPlatform.VeryBack.csproj",
       "src\\BoardGamesPlatform.VeryBack.Contracts\\BoardGamesPlatform.VeryBack.Contracts.csproj",
       "src\\BoardGamesPlatform.Web\\BoardGamesPlatform.Web.csproj",
-      "src\\BoardGamesPlatform.Web.Client\\BoardGamesPlatform.Web.Client.csproj",
       "test\\BoardGamesPlatform.Architecture.Tests\\BoardGamesPlatform.Architecture.Tests.csproj",
       "test\\BoardGamesPlatform.Back.Tests\\BoardGamesPlatform.Back.Tests.csproj",
       "test\\BoardGamesPlatform.Database.Tests\\BoardGamesPlatform.Database.Tests.csproj",
@@ -25,7 +24,8 @@
       "test\\BoardGamesPlatform.Platform.Infrastructure.Tests\\BoardGamesPlatform.Platform.Infrastructure.Tests.csproj",
       "test\\BoardGamesPlatform.Protocol.Tests\\BoardGamesPlatform.Protocol.Tests.csproj",
       "test\\BoardGamesPlatform.TestKit\\BoardGamesPlatform.TestKit.csproj",
-      "test\\BoardGamesPlatform.VeryBack.Tests\\BoardGamesPlatform.VeryBack.Tests.csproj"
+      "test\\BoardGamesPlatform.VeryBack.Tests\\BoardGamesPlatform.VeryBack.Tests.csproj",
+      "test\\BoardGamesPlatform.Web.Tests\\BoardGamesPlatform.Web.Tests.csproj"
     ]
   }
 }

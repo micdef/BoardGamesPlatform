@@ -72,8 +72,7 @@ public sealed class ProjectReferenceTests
         { "Gateway", new string[] { "Observability", "Gateway.Contracts", "Back.Contracts", "Protocol" } },
 
         // Fronts: only the Gateway's contract
-        { "Web", new string[] { "Observability", "Web.Client" } },
-        { "Web.Client", new string[] { "Gateway.Contracts" } }
+        { "Web", new string[] { "Observability", "Gateway.Contracts" } }
     };
 
     #endregion
