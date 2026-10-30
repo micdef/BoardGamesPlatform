@@ -6,6 +6,8 @@
     <ProjectReference Include="..\..\src\BoardGamesPlatform.Gateway\BoardGamesPlatform.Gateway.csproj" />
     <ProjectReference Include="..\..\src\BoardGamesPlatform.Gateway.Contracts\BoardGamesPlatform.Gateway.Contracts.csproj" />
     <ProjectReference Include="..\..\src\BoardGamesPlatform.Back.Contracts\BoardGamesPlatform.Back.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Protocol\BoardGamesPlatform.Protocol.csproj" />
+    <ProjectReference Include="..\BoardGamesPlatform.TestKit\BoardGamesPlatform.TestKit.csproj" />
   </ItemGroup>
 
   <!-- Packages (versions in Directory.Packages.props) -->

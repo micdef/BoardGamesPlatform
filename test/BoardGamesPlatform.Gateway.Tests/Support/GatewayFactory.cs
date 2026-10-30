@@ -31,7 +31,7 @@ namespace BoardGamesPlatform.Gateway.Tests.Support;
 /// <remarks>
 /// <para><b>Purpose:</b> one place that knows how to start the real Gateway (its Program) in a test and how to reach its hub.</para>
 /// <para><b>Behavior:</b> without a Back client, the Gateway keeps the one it registers itself. With one, the test client replaces it.
-/// The hub path is set by configuration when given. The hub is reached through the test server, by long polling, the transport that works
+/// The hub path and the port of the Back are set by configuration when given. The hub is reached through the test server, by long polling, the transport that works
 /// in memory.</para>
 /// </remarks>
 public sealed class GatewayFactory : WebApplicationFactory<Program>
@@ -55,6 +55,11 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
     /// Value of the Gateway:HubPath setting; null to leave the setting out
     /// </summary>
     private readonly string? _hubPath;
+
+    /// <summary>
+    /// Value of the Back:Port setting, as text so that a test can give an invalid one; null to leave the setting out
+    /// </summary>
+    private readonly string? _backPort;
 
     #endregion
 
@@ -101,11 +106,13 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
     /// </summary>
     /// <param name="backClient">[Can be null] Back client that replaces the one of the Gateway</param>
     /// <param name="hubPath">[Can be null] Value of the Gateway:HubPath setting</param>
-    public GatewayFactory(IBackClient? backClient = null, string? hubPath = null)
+    /// <param name="backPort">[Can be null] Value of the Back:Port setting</param>
+    public GatewayFactory(IBackClient? backClient = null, string? hubPath = null, string? backPort = null)
     {
         // Setting
         _backClient = backClient;
         _hubPath = hubPath;
+        _backPort = backPort;
     }
 
     #endregion
@@ -161,12 +168,14 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
     /// <inheritdoc/>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        // Setting the hub path
+        // Setting the hub path and the port of the Back
+        Dictionary<string, string?> settings = new Dictionary<string, string?>();
         if (_hubPath is not null)
-        {
-            builder.ConfigureAppConfiguration((_, configuration) =>
-                configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["Gateway:HubPath"] = _hubPath }));
-        }
+            settings["Gateway:HubPath"] = _hubPath;
+        if (_backPort is not null)
+            settings["Back:Port"] = _backPort;
+        if (settings.Count > 0)
+            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(settings));
 
         // Replacing the Back client
         if (_backClient is not null)

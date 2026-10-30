@@ -8,6 +8,7 @@
 // Using
 using BoardGamesPlatform.Gateway.BackLink;
 using BoardGamesPlatform.Gateway.Hubs;
+using BoardGamesPlatform.Protocol.Transport;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
@@ -108,9 +109,9 @@ public static class GatewayExtensions
     /// <remarks>
     /// <para><b>Purpose:</b> everything the hub needs, declared once.</para>
     /// <para><b>Behavior:</b> binds "Gateway" to <see cref="GatewayOptions"/>, validated at startup: when <see cref="MapPlatformHub"/> reads the hub path, and again by ValidateOnStart as a safety net (the hub path must start with
-    /// a slash); adds SignalR with detailed errors off, so that no internal message reaches a front; registers
-    /// <see cref="UnavailableBackClient"/> as the client of the Back when none is registered yet (TEMPORARY, replaced by the real client
-    /// in feature/back-gateway-link).</para>
+    /// a slash); binds "Back" to <see cref="BackClientOptions"/>, validated by ValidateOnStart (fail closed: an invalid setting stops the
+    /// startup); adds SignalR with detailed errors off, so that no internal message reaches a front; registers a <see cref="BackClient"/>
+    /// on plain TCP as the client of the Back when none is registered yet (the tests register their own).</para>
     /// </remarks>
     /// <param name="builder">[Cannot be null] Builder of the web host</param>
     /// <returns>
@@ -131,11 +132,20 @@ public static class GatewayExtensions
                 $"The setting {GatewayOptions.SectionName}:HubPath must start with a slash, for example /hubs/platform")
             .ValidateOnStart();
 
+        // Reading the settings of the link to the Back, refused at startup when invalid
+        builder.Services.AddSingleton<IValidateOptions<BackClientOptions>, BackClientOptionsValidator>();
+        builder.Services.AddOptions<BackClientOptions>()
+            .Bind(builder.Configuration.GetSection(BackClientOptions.SectionName))
+            .ValidateOnStart();
+
         // SignalR, with no internal message sent to a front
         builder.Services.AddSignalR(options => options.EnableDetailedErrors = false);
 
-        // The client of the Back (temporary)
-        builder.Services.TryAddSingleton<IBackClient, UnavailableBackClient>();
+        // The client of the Back, one connection shared by all the fronts (disposed with the host)
+        builder.Services.TryAddSingleton<IBackClient>(services => new BackClient(
+            services.GetRequiredService<IOptions<BackClientOptions>>().Value,
+            new TcpTransportConnector(),
+            services.GetRequiredService<ILogger<BackClient>>()));
 
         // Function's return
         return builder;
