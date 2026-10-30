@@ -16,7 +16,7 @@ It records the scope, the order of the work, what each version must demonstrate,
 - AI players for Battleships, each level being a named player: easy, medium and hard.
 - An administration section in the website and a separate administration tool.
 - A user interface available in several languages (at least English and French), in the arcade neon style of the design mock-up.
-- A native installation (IIS, Windows services, Linux systemd daemons) and a Docker variant.
+- A native installation (Windows services or Linux systemd daemons; the website behind a reverse proxy, Nginx or IIS) and a Docker variant.
 - User, administrator and developer documentation.
 
 ### Out of v1.0.0
@@ -47,7 +47,7 @@ Other UIs   ┘
 
 | Tier | Role | Talks to |
 |------|------|----------|
-| Fronts | User interfaces. Blazor Auto; forms forced to InteractiveServer. | Gateway only (SignalR) |
+| Fronts | User interfaces. Blazor in the Interactive Server render mode only (no WebAssembly, no static rendering): the server process of the website is the only SignalR client of the gateway, the browser never reaches it. | Gateway only (SignalR) |
 | Gateway | Single entry point: SignalR hub, authentication, shape validation, rate limiting. No game logic. | Back only (TLS socket) |
 | Back | Modular monolith: a Platform module and one module per game. All the logic, maximum server authority. | Very Back only (TLS socket + authenticated ECDH) |
 | Very Back | Autonomous service, the only access to the database. | SQL Server only |
@@ -117,8 +117,12 @@ Other UIs   ┘
 
 #### 0.10.0 — Gateway and Platform module [SEC]
 
-- **Content**: the Platform module and the registration of game modules; token verification by the Back through the Very Back; rate limiting, shape validation and error model in the gateway.
-- **Done**: anonymous calls are rejected; flooding the gateway is throttled.
+- **Content**: the Platform module and the registration of game modules; token verification by the Back through the Very Back; rate limiting, shape validation and error model in the gateway. Since the server process of the website is the only SignalR client of the gateway (one connection per player circuit):
+  - the gateway **authenticates the website itself** (a machine credential or mutual TLS on the website → gateway link), so that no other host of the server zone can pass for it;
+  - **rate limiting counts per player**, keyed on the session token, in a hub filter: counting per IP address would only see the website (whether the HTTP rate-limiting middleware applies to each hub method call is to be tested);
+  - the website forwards the IP address of the player, trusted only from the website, for the logs and the handling of abuse;
+  - where the website keeps the session token of a player is decided (a circuit has no HTTP context after it starts, and the site has no static rendering; candidates: protected browser storage, an HTTP login endpoint that sets the cookie).
+- **Done**: anonymous calls are rejected; a host other than the website cannot open a connection to the gateway; one player flooding the gateway is throttled without slowing the others.
 - **Tests**: architecture rule "the gateway contains no game logic", rate-limit tests.
 - **Branches**: `feature/platform-module`, `feature/gateway-authentication`, `feature/gateway-rate-limit`.
 
@@ -128,7 +132,7 @@ Other UIs   ┘
   - the **design system** of the arcade neon mock-up: colors, typography (Orbitron for titles and buttons, Rajdhani for text), buttons, badges, form fields, glow rules, as one shared stylesheet of variables and Blazor components;
   - the **visual identity of a game** (icon and background watermark), provided by each game module, so that a player knows at a glance which game is on screen;
   - **internationalization**: English and French, in .NET `.resx` resource files (adding a language means adding one resource file per component); a language picker with flags from [flagcdn.com](https://flagcdn.com) (Flagpedia), copied into the site so that no player's browser calls a third party; the language changes **on the fly**, without reloading the page nor interrupting a match in progress; the player's preferred language; culture-aware dates and numbers; translation of the codes received from the other tiers;
-  - the Blazor Auto layout, the registration and login forms forced to InteractiveServer with full validation, a minimal administration section (open or close registrations, user list).
+  - the Interactive Server layout, the registration and login forms with full validation, a minimal administration section (open or close registrations, user list).
 - **Done**: a user registers and logs in from a browser, in English or in French, and the whole site switches language; the administrator closes the registrations and the registration form refuses new accounts.
 - **Tests**: every resource key exists in every supported language (a missing translation fails the build); component tests of the design system.
 - **Branches**: `feature/design-system`, `feature/game-visual-identity`, `feature/localization`, `feature/site-layout`, `feature/login-registration-forms`, `feature/admin-registration-switch`.
@@ -228,14 +232,14 @@ An AI player goes through the same contract as a human: it receives the same per
 
 #### 0.25.0 — Native installation
 
-- **Content**: installation package or PowerShell scripts, **run as administrator** (IIS site, Windows services, systemd units declared with `Type=notify`, one Windows Event Log source per executable), certificate and key provisioning, final network flow matrix, acceptance environment.
+- **Content**: installation package or PowerShell scripts, **run as administrator** (Windows services, systemd units declared with `Type=notify`, one Windows Event Log source per executable, the reverse proxy of the website: Nginx, or IIS as an option), certificate and key provisioning, final network flow matrix, acceptance environment.
 - **Done**: a clean machine is installed from the package alone.
 - **Tests**: installation smoke test on a clean machine; the Back and the Very Back run on Linux at least once in acceptance.
-- **Branches**: `feature/installation-package`, `chore/systemd-units`, `chore/iis-deployment`, `docs/administrator-installation-guide`.
+- **Branches**: `feature/installation-package`, `chore/systemd-units`, `chore/reverse-proxy-deployment`, `docs/administrator-installation-guide`.
 
 #### 0.26.0 — Docker variant
 
-- **Content**: Dockerfiles and a `docker-compose` file. Without IIS, the website and the gateway run on Kestrel.
+- **Content**: Dockerfiles and a `docker-compose` file. The website and the gateway run on Kestrel, as in the native installation.
 - **Done**: the whole platform starts with `docker compose up` on a clean machine.
 - **Branches**: `feature/docker-images`, `docs/docker-deployment`.
 
@@ -274,8 +278,11 @@ Every tier communicates through the network. All ports are configurable; the def
 
 | Flow | Port | Protocol | Firewall zones |
 |------|------|----------|----------------|
-| Internet → website and gateway (IIS) | 443 | HTTPS, WebSocket | WAN → DMZ (the only port open to the outside) |
-| Gateway → Back | 7821 | TCP + TLS 1.3 (plain TCP in 0.3.0 and 0.4.0, development only) | DMZ → servers |
+| Internet → reverse proxy of the website (Nginx) | 443 | HTTPS, WebSocket | WAN → DMZ (the only port open to the outside) |
+| Reverse proxy → website | HTTP port of the website (configurable) | HTTP, WebSocket | DMZ (same machine or DMZ → DMZ) |
+| Internal network → website (optional, without the reverse proxy) | HTTP port of the website (configurable) | HTTP(S), WebSocket | LAN → DMZ |
+| Website → gateway | HTTP port of the gateway (configurable) | HTTP, WebSocket (SignalR) | DMZ → servers, from the website machine only: the gateway is never reachable from the Internet |
+| Gateway → Back | 7821 | TCP + TLS 1.3 (plain TCP in 0.3.0 and 0.4.0, development only) | servers → servers |
 | Back → Very Back | 7822 | TCP + TLS 1.3 + authenticated ECDH (plain TCP in 0.3.0 and 0.4.0, development only) | servers → servers |
 | Very Back → SQL Server | 1433 | TDS | servers → servers |
 | Back → SMTP server | 587 | SMTP + STARTTLS | servers → mail server |
@@ -300,7 +307,7 @@ Every tier communicates through the network. All ports are configurable; the def
 | Topic | Decision |
 |-------|----------|
 | Solution architecture | Modular monolith; plugins or services considered when games multiply (no Docker in the author's own hosting) |
-| Hosting | Website on IIS (Windows Server); services as Windows services or Linux systemd daemons; Docker variant offered for other deployments |
+| Hosting | Every executable, the website and the gateway included, runs on Kestrel as a Windows service or a Linux systemd daemon; no IIS required. The website is exposed to the Internet behind a reverse proxy (Nginx; IIS possible); the gateway stays in the server zone, reached only by the website. Every tier can run on its own machine or container. Docker variant offered for other deployments |
 | Back ↔ Very Back | Raw TCP sockets, TLS 1.3 with mutual authentication, plus an authenticated ECDH handshake |
 | Gateway ↔ Back | Raw TCP sockets, TLS 1.3 with mutual authentication |
 | Socket protocol | The transport hands over a byte stream, so that TLS wraps it; frames carry a length prefix, a correlation identifier and a UTF-8 JSON payload (System.Text.Json), with a maximum frame size; several requests in flight on one connection. No version field before 0.4.0 |
@@ -308,7 +315,8 @@ Every tier communicates through the network. All ports are configurable; the def
 | Default ports | Gateway → Back 7821, Back → Very Back 7822 (unassigned in the IANA registry, range 7811-7844); configurable; listeners on the loopback address unless configured otherwise |
 | Real time | SignalR, through the gateway, for every front including a future WPF client |
 | Identity | Opaque session token verified by the Back; no JWT |
-| Forms | InteractiveServer render mode, full validation, revalidated by the gateway and the Back |
+| Website render mode | Interactive Server only (decided in 0.3.0, with a second reading by the architect agent): with WebAssembly, browser code would have to reach the gateway, either through a proxy (the gateway exposed to the Internet) or through a relay hub in the website (a second entry point, a duplicated contract), and every service would need a browser and a server implementation. The memory of one circuit per player is accepted at the expected scale; several website instances need sticky sessions |
+| Forms | Full validation in the website, revalidated by the gateway and the Back |
 | Database | SQL Server only until 1.0.0; the SQL project keeps its original format (DACPAC, opened by Visual Studio 2026) and is never converted to the SDK style; built by a separate CI job with the MSBuild of Visual Studio |
 | Development databases | `DEV_` and `ACC_` rebuilt freely until the first beta; no migration scripts before then |
 | Match history | Every move recorded; training logs pseudonymized |
