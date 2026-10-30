@@ -318,6 +318,7 @@ Every tier communicates through the network. All ports are configurable; the def
 | Website render mode | Interactive Server only (decided in 0.3.0, with a second reading by the architect agent): with WebAssembly, browser code would have to reach the gateway, either through a proxy (the gateway exposed to the Internet) or through a relay hub in the website (a second entry point, a duplicated contract), and every service would need a browser and a server implementation. The memory of one circuit per player is accepted at the expected scale; several website instances need sticky sessions |
 | Forms | Full validation in the website, revalidated by the gateway and the Back |
 | Database | SQL Server only until 1.0.0; the SQL project keeps its original format (DACPAC, opened by Visual Studio 2026) and is never converted to the SDK style; built by a separate CI job with the MSBuild of Visual Studio |
+| SQL access | Plain ADO.NET (`Microsoft.Data.SqlClient`) calling the stored procedures, never Entity Framework (decided in 0.3.0): the database stays the master of its schema and its rules, and the code keeps control of the connections. Each tier that holds a connection string clears its pool when it stops, so that no session stays open on SQL Server after a stop or a redeployment |
 | Development databases | `DEV_` and `ACC_` rebuilt freely until the first beta; no migration scripts before then |
 | Match history | Every move recorded; training logs pseudonymized |
 | Spectators | Public view: the match is visible, the fleets never are |
