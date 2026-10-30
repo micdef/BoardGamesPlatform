@@ -36,3 +36,16 @@ Nothing is installed by the script. It uses what Visual Studio already provides,
 - a SQL Server reachable with the Windows account of the caller (right to create and drop databases).
 
 On the local machine the script trusts the server certificate (`/TargetTrustServerCertificate:True`), because a local SQL Server uses a self-signed one. Any other server keeps the strict default.
+
+## Running the SQL tests
+
+The SQL tests of `test/BoardGamesPlatform.Database.Tests` run against a throwaway database deployed by the script above. Without one, they are reported as **skipped**, never as passed (this is the case in the CI); the convention tests of the same project run everywhere.
+
+```powershell
+pwsh tools/database/Deploy-TestDatabase.ps1 -DatabaseName TEST_BoardGamesPlatform
+$env:BOARDGAMESPLATFORM_TEST_DATABASE = 'Server=localhost;Database=TEST_BoardGamesPlatform;Integrated Security=True;TrustServerCertificate=True'
+dotnet test --project test/BoardGamesPlatform.Database.Tests
+```
+
+- The tests refuse any database whose name does not start with `TEST_` or `DEV_`: they create and drop objects (a temporary user without login, dropped at the end of its test).
+- Running them locally is **mandatory before every `release/X.Y.Z` → `dev` merge** (roadmap, test strategy).

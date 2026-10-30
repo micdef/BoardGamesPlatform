@@ -166,7 +166,11 @@ The sections that follow `@brief` depend on the kind of object:
 | Stored procedure | Parameters, Errors, Response Structure, Response Examples, Behavior |
 | Function | Parameters, Return |
 | View | Columns, Indexes |
-| Trigger, index, schema, filegroup | Brief only, plus the target object |
+| Schema | Information (family, exposure, owner, object types, object naming, filegroup), Purpose, Access |
+| Database role | Information (family, exposure, owner, members), Purpose, Access |
+| Trigger, index, filegroup | Brief only, plus the target object |
+
+Accepted warnings of the SSDT static code analysis are listed in `StaticCodeAnalysis.SuppressMessages.xml`, one rule for one file, each with its justification and the condition under which it stays valid.
 
 Each section is a title underlined with dashes, followed by a table framed with asterisks:
 
