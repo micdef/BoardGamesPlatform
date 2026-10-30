@@ -1,0 +1,29 @@
+@*
+ *	@file	src/BoardGamesPlatform.Web/Components/Pages/PingPage.razor
+ *	@author	Defraene Michaël (AKA Sonic) (co-written by Claude)
+ *
+ *	@brief	Page that pings the platform and shows the time of SQL Server (markup; the logic is in PingPage.razor.cs)
+ *@
+
+@page "/ping"
+
+<PageTitle>@Text("Ping_Title")</PageTitle>
+
+<h1>@Text("Ping_Title")</h1>
+
+<button id="ping-button" type="button" disabled="@(_state == PingState.InProgress)" @onclick="OnPingClickedAsync">
+    @Text("Ping_Button")
+</button>
+
+@switch (_state)
+{
+    case PingState.InProgress:
+        <p id="ping-status" role="status">@Text("Ping_InProgress")</p>
+        break;
+    case PingState.Succeeded:
+        <p id="ping-status" role="status">@_resultText</p>
+        break;
+    case PingState.Failed:
+        <p id="ping-status" role="alert">@Text("Ping_Error")</p>
+        break;
+}

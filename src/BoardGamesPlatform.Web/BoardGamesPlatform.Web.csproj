@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
-  <!-- Website, server part of the Blazor Auto application (hosted on IIS) -->
+  <!-- Website, server part of the Blazor application in the Interactive Server render mode (Kestrel, behind a reverse proxy) -->
 
   <!-- Navigation from a static page completes without the exception used by older Blazor versions -->
   <PropertyGroup>
@@ -9,13 +9,13 @@
   <!-- Projects -->
   <ItemGroup>
     <ProjectReference Include="..\BoardGamesPlatform.Observability\BoardGamesPlatform.Observability.csproj" />
-    <ProjectReference Include="..\BoardGamesPlatform.Web.Client\BoardGamesPlatform.Web.Client.csproj" />
+    <ProjectReference Include="..\BoardGamesPlatform.Gateway.Contracts\BoardGamesPlatform.Gateway.Contracts.csproj" />
   </ItemGroup>
 
   <!-- Packages (versions in Directory.Packages.props) -->
   <ItemGroup>
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
-    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
   </ItemGroup>
 
 </Project>

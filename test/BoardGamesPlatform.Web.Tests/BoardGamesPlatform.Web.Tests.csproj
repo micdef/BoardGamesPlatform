@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Tests of the website: its pages rendered by bUnit with a fake Gateway client, its SignalR client against the real Gateway started in process, and its settings -->
+
+  <!-- Projects: the website under test, the Gateway it calls (started in process, under the extern alias GatewayApp because the Gateway and the website both have a Program class), the contracts of the hub and of the Back, and the shared test helpers -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Web\BoardGamesPlatform.Web.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Gateway\BoardGamesPlatform.Gateway.csproj" Aliases="GatewayApp" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Gateway.Contracts\BoardGamesPlatform.Gateway.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Back.Contracts\BoardGamesPlatform.Back.Contracts.csproj" />
+    <ProjectReference Include="..\BoardGamesPlatform.TestKit\BoardGamesPlatform.TestKit.csproj" />
+  </ItemGroup>
+
+  <!-- Packages (versions in Directory.Packages.props) -->
+  <ItemGroup>
+    <PackageReference Include="bunit" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
+  </ItemGroup>
+
+</Project>

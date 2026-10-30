@@ -66,15 +66,15 @@
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.0" />
   </ItemGroup>
 
-  <!-- Gateway tests: the Gateway started in process, and the SignalR client that calls its hub -->
+  <!-- SignalR client: used by the website to call the Gateway, and by the Gateway tests to call its hub; Mvc.Testing starts the Gateway in process -->
   <ItemGroup>
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.14" />
     <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.14" />
   </ItemGroup>
 
-  <!-- Blazor: website (server and WebAssembly parts) -->
+  <!-- Website tests: bUnit renders the Razor components in memory, without a browser -->
   <ItemGroup>
-    <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.14" />
-    <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="10.0.14" />
+    <PackageVersion Include="bunit" Version="2.13.3" />
   </ItemGroup>
+
 </Project>
