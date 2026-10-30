@@ -1,8 +1,8 @@
 /*
- *	@file	test/BoardGamesPlatform.VeryBack.Tests/Services/FailingTransportListener.cs
+ *	@file	test/BoardGamesPlatform.TestKit/FailingTransportListener.cs
  *	@author	Defraene Michaël (AKA Sonic) (co-written by Claude)
  *
- *	@brief	Fake listener whose accepts fail as a test decides, used to test the accept loop of the Very Back
+ *	@brief	Fake listener whose accepts fail as a test decides, used to test the accept loop of a link
  */
 
 // Using
@@ -16,7 +16,7 @@ using BoardGamesPlatform.Protocol.Transport;
 // #N/A
 
 // Namespace
-namespace BoardGamesPlatform.VeryBack.Tests.Services;
+namespace BoardGamesPlatform.TestKit;
 
 /// <summary>
 /// Fake of <see cref="ITransportListener"/> that never accepts a connection
@@ -28,7 +28,7 @@ namespace BoardGamesPlatform.VeryBack.Tests.Services;
 /// function throws the failure to simulate, or returns false to make the accept wait until its token is canceled, like an idle
 /// listener.</para>
 /// </remarks>
-internal sealed class FailingTransportListener : ITransportListener
+public sealed class FailingTransportListener : ITransportListener
 {
     #region Members
 

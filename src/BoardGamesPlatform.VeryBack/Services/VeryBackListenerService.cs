@@ -272,7 +272,7 @@ public sealed partial class VeryBackListenerService : BackgroundService
     /// </returns>
     /// <exception cref="InvalidOperationException">If the listener is lost without a stop request, or the accept failures repeat; the host
     /// then stops</exception>
-    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Routing the operations of the Very Back, then serving the connections
         ITransportListener listener = _listener ?? throw new InvalidOperationException("The listener is not started");
@@ -280,8 +280,7 @@ public sealed partial class VeryBackListenerService : BackgroundService
         RequestServer server = new RequestServer(new FrameCodec(), dispatcher.HandleAsync);
         LinkServer linkServer = new LinkServer(listener, server, TierName, _logger, _acceptFailurePause);
 
-        // Function's return
-        return linkServer.RunAsync(stoppingToken);
+        await linkServer.RunAsync(stoppingToken).ConfigureAwait(false);
     }
 
     /// <summary>

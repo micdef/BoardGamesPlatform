@@ -1,8 +1,8 @@
 /*
- *	@file	test/BoardGamesPlatform.VeryBack.Tests/Services/CapturingLogger.cs
+ *	@file	test/BoardGamesPlatform.TestKit/CapturingLogger.cs
  *	@author	Defraene Michaël (AKA Sonic) (co-written by Claude)
  *
- *	@brief	Logger that keeps the messages, used to check what the Very Back logs
+ *	@brief	Logger that keeps the messages, used to check what a tier logs
  */
 
 // Using
@@ -16,7 +16,7 @@ using Microsoft.Extensions.Logging;
 // #N/A
 
 // Namespace
-namespace BoardGamesPlatform.VeryBack.Tests.Services;
+namespace BoardGamesPlatform.TestKit;
 
 /// <summary>
 /// Logger that keeps every message with its level
@@ -26,7 +26,7 @@ namespace BoardGamesPlatform.VeryBack.Tests.Services;
 /// <para><b>Behavior:</b> every level is enabled; scopes are ignored.</para>
 /// </remarks>
 /// <typeparam name="T">Category of the logger</typeparam>
-internal sealed class CapturingLogger<T> : ILogger<T>
+public sealed class CapturingLogger<T> : ILogger<T>
 {
     #region Members
 

@@ -35,7 +35,8 @@ namespace BoardGamesPlatform.Protocol.Links;
 /// </list>
 /// <para>A connection is disposed when its service ends, whatever the reason; a failure of one connection never reaches the others. Any end
 /// once the stop is requested is a close, not a failure. When the loop ends, the listener is disposed and the service of every connection is
-/// awaited: the stopping token ends them. The logs hold the remote end point and the exception.</para>
+/// awaited: the stopping token ends them. The logs hold the remote end point and the exception; they go through the logger of the tier, with
+/// the event ids 9011 to 9018, reserved for this class (see the coding conventions).</para>
 /// </remarks>
 public sealed partial class LinkServer
 {
@@ -184,14 +185,14 @@ public sealed partial class LinkServer
     /// Method used to log an accepted connection
     /// </summary>
     /// <param name="remoteEndPoint">Address and port of the peer</param>
-    [LoggerMessage(EventId = 11, Level = LogLevel.Information, Message = "Connection accepted from {RemoteEndPoint}")]
+    [LoggerMessage(EventId = 9011, Level = LogLevel.Information, Message = "Connection accepted from {RemoteEndPoint}")]
     private partial void LogAccepted(string remoteEndPoint);
 
     /// <summary>
     /// Method used to log the normal end of the service of a connection
     /// </summary>
     /// <param name="remoteEndPoint">Address and port of the peer</param>
-    [LoggerMessage(EventId = 12, Level = LogLevel.Information, Message = "Connection from {RemoteEndPoint} closed")]
+    [LoggerMessage(EventId = 9012, Level = LogLevel.Information, Message = "Connection from {RemoteEndPoint} closed")]
     private partial void LogClosed(string remoteEndPoint);
 
     /// <summary>
@@ -199,21 +200,21 @@ public sealed partial class LinkServer
     /// </summary>
     /// <param name="exception">Why the service ended</param>
     /// <param name="remoteEndPoint">Address and port of the peer</param>
-    [LoggerMessage(EventId = 13, Level = LogLevel.Warning, Message = "The service of the connection from {RemoteEndPoint} failed and the connection is closed")]
+    [LoggerMessage(EventId = 9013, Level = LogLevel.Warning, Message = "The service of the connection from {RemoteEndPoint} failed and the connection is closed")]
     private partial void LogConnectionFailed(Exception exception, string remoteEndPoint);
 
     /// <summary>
     /// Method used to log the failure to accept one incoming connection
     /// </summary>
     /// <param name="exception">Why the connection was not accepted</param>
-    [LoggerMessage(EventId = 14, Level = LogLevel.Warning, Message = "An incoming connection could not be accepted; the listener keeps accepting")]
+    [LoggerMessage(EventId = 9014, Level = LogLevel.Warning, Message = "An incoming connection could not be accepted; the listener keeps accepting")]
     private partial void LogAcceptFailed(Exception exception);
 
     /// <summary>
     /// Method used to log the stop of the listener
     /// </summary>
     /// <param name="name">Name of the tier</param>
-    [LoggerMessage(EventId = 15, Level = LogLevel.Information, Message = "{Name} stopped listening")]
+    [LoggerMessage(EventId = 9015, Level = LogLevel.Information, Message = "Listener of {Name} stopped")]
     private partial void LogStoppedListening(string name);
 
     /// <summary>
@@ -221,7 +222,7 @@ public sealed partial class LinkServer
     /// </summary>
     /// <param name="exception">How the loss showed</param>
     /// <param name="name">Name of the tier</param>
-    [LoggerMessage(EventId = 17, Level = LogLevel.Critical, Message = "The listener of {Name} was closed without a stop request; {Name} stops")]
+    [LoggerMessage(EventId = 9017, Level = LogLevel.Critical, Message = "The listener of {Name} was closed without a stop request; {Name} stops")]
     private partial void LogListenerLost(Exception exception, string name);
 
     /// <summary>
@@ -230,7 +231,7 @@ public sealed partial class LinkServer
     /// <param name="exception">Last failure</param>
     /// <param name="failures">Number of failures in a row</param>
     /// <param name="name">Name of the tier</param>
-    [LoggerMessage(EventId = 18, Level = LogLevel.Critical, Message = "{Failures} accept failures in a row: the listener of {Name} is broken; {Name} stops")]
+    [LoggerMessage(EventId = 9018, Level = LogLevel.Critical, Message = "{Failures} accept failures in a row: the listener of {Name} is broken; {Name} stops")]
     private partial void LogAcceptFailuresRepeated(Exception exception, int failures, string name);
 
     /// <summary>

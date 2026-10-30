@@ -37,8 +37,8 @@ namespace BoardGamesPlatform.Protocol.Links;
 /// with an <see cref="IOException"/>, like any request on a lost connection, and the next call opens a new connection.</description></item>
 /// <item><description>A call that waits for a response is stopped only by the token of its caller.</description></item>
 /// <item><description>After <see cref="DisposeAsync"/>, every call throws an <see cref="ObjectDisposedException"/>.</description></item>
-/// <item><description>The logs tell when a connection opens, is lost or is closed by the disposal, with the address of the peer
-/// only.</description></item>
+/// <item><description>The logs tell when a connection opens, is lost or is closed by the disposal, with the address of the peer only; they
+/// go through the logger of the tier, with the event ids 9001 to 9005, reserved for this class (see the coding conventions).</description></item>
 /// </list>
 /// </remarks>
 public sealed partial class LinkClient : IAsyncDisposable
@@ -47,17 +47,15 @@ public sealed partial class LinkClient : IAsyncDisposable
 
     #region Constants
 
-    // #N/A
-
-    #endregion
-
-    #region Variables
-
     /// <summary>
     /// Longest connect timeout accepted: waiting longer for a tier means it is down, and a far longer value could not be set as a cancellation
     /// deadline (about 49.7 days at most)
     /// </summary>
     public static readonly TimeSpan MaxConnectTimeout = TimeSpan.FromMinutes(5);
+
+    #endregion
+
+    #region Variables
 
     /// <summary>
     /// Host of the peer
@@ -211,7 +209,7 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// <param name="peer">Name of the peer</param>
     /// <param name="host">Host of the peer</param>
     /// <param name="port">Port of the peer</param>
-    [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "Connection to {Peer} opened ({Host}:{Port})")]
+    [LoggerMessage(EventId = 9001, Level = LogLevel.Information, Message = "Connection to {Peer} opened ({Host}:{Port})")]
     private partial void LogConnectionOpened(string peer, string host, int port);
 
     /// <summary>
@@ -220,7 +218,7 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// <param name="peer">Name of the peer</param>
     /// <param name="host">Host of the peer</param>
     /// <param name="port">Port of the peer</param>
-    [LoggerMessage(EventId = 2, Level = LogLevel.Warning, Message = "Connection to {Peer} lost ({Host}:{Port}); the next call opens a new one")]
+    [LoggerMessage(EventId = 9002, Level = LogLevel.Warning, Message = "Connection to {Peer} lost ({Host}:{Port}); the next call opens a new one")]
     private partial void LogConnectionLost(string peer, string host, int port);
 
     /// <summary>
@@ -230,7 +228,7 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// <param name="peer">Name of the peer</param>
     /// <param name="host">Host of the peer</param>
     /// <param name="port">Port of the peer</param>
-    [LoggerMessage(EventId = 3, Level = LogLevel.Warning, Message = "Connection to {Peer} failed ({Host}:{Port})")]
+    [LoggerMessage(EventId = 9003, Level = LogLevel.Warning, Message = "Connection to {Peer} failed ({Host}:{Port})")]
     private partial void LogConnectionFailed(Exception exception, string peer, string host, int port);
 
     /// <summary>
@@ -238,7 +236,7 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// </summary>
     /// <param name="exception">Why the closing failed</param>
     /// <param name="peer">Name of the peer</param>
-    [LoggerMessage(EventId = 4, Level = LogLevel.Warning, Message = "Closing the lost connection to {Peer} failed")]
+    [LoggerMessage(EventId = 9004, Level = LogLevel.Warning, Message = "Closing the lost connection to {Peer} failed")]
     private partial void LogCloseFailed(Exception exception, string peer);
 
     /// <summary>
@@ -247,7 +245,7 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// <param name="peer">Name of the peer</param>
     /// <param name="host">Host of the peer</param>
     /// <param name="port">Port of the peer</param>
-    [LoggerMessage(EventId = 5, Level = LogLevel.Information, Message = "Connection to {Peer} closed by the disposal of the client ({Host}:{Port})")]
+    [LoggerMessage(EventId = 9005, Level = LogLevel.Information, Message = "Connection to {Peer} closed by the disposal of the client ({Host}:{Port})")]
     private partial void LogConnectionClosed(string peer, string host, int port);
 
     /// <summary>
