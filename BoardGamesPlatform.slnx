@@ -75,5 +75,6 @@
     <Project Path="test/BoardGamesPlatform.Database.Tests/BoardGamesPlatform.Database.Tests.csproj" />
     <Project Path="test/BoardGamesPlatform.Protocol.Tests/BoardGamesPlatform.Protocol.Tests.csproj" />
     <Project Path="test/BoardGamesPlatform.TestKit/BoardGamesPlatform.TestKit.csproj" />
+    <Project Path="test/BoardGamesPlatform.VeryBack.Tests/BoardGamesPlatform.VeryBack.Tests.csproj" />
   </Folder>
 </Solution>
