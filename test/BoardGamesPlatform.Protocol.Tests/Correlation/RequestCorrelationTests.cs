@@ -111,7 +111,7 @@ public sealed class RequestCorrelationTests
     private static async Task<(ITransportConnection Client, ITransportConnection Server)> ConnectAsync(CancellationToken cancellationToken)
     {
         // Connecting a client to a listener on a port chosen by the system
-        await using TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, 0));
+        await using TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next()));
         Task<ITransportConnection> accepting = listener.AcceptAsync(cancellationToken);
         ITransportConnection client = await new TcpTransportConnector().ConnectAsync("127.0.0.1", listener.LocalEndPoint.Port, cancellationToken);
         ITransportConnection server = await accepting;
