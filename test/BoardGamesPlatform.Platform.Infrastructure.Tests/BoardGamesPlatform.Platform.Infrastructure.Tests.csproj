@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Tests of the platform adapters: the Very Back client of the Back, against a fake Very Back on a loopback socket -->
+
+  <!-- Projects: the adapters under test, the protocol of the fake Very Back, and the contracts it answers -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Platform.Infrastructure\BoardGamesPlatform.Platform.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Protocol\BoardGamesPlatform.Protocol.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.VeryBack.Contracts\BoardGamesPlatform.VeryBack.Contracts.csproj" />
+    <ProjectReference Include="..\BoardGamesPlatform.TestKit\BoardGamesPlatform.TestKit.csproj" />
+  </ItemGroup>
+
+</Project>

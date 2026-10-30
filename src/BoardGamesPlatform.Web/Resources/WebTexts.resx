@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <!-- Texts of the website, English (default language). Every key exists in every WebTexts.<culture>.resx file. -->
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Ping_Title" xml:space="preserve">
+    <value>Platform ping</value>
+  </data>
+  <data name="Ping_Button" xml:space="preserve">
+    <value>Ping the platform</value>
+  </data>
+  <data name="Ping_InProgress" xml:space="preserve">
+    <value>Waiting for the answer of SQL Server...</value>
+  </data>
+  <data name="Ping_Result" xml:space="preserve">
+    <value>SQL Server answered: {0} (UTC{1})</value>
+  </data>
+  <data name="Ping_Error" xml:space="preserve">
+    <value>The platform did not answer. Please try again later.</value>
+  </data>
+  <data name="Home_Title" xml:space="preserve">
+    <value>BoardGamesPlatform</value>
+  </data>
+  <data name="NotFound_Title" xml:space="preserve">
+    <value>Not found</value>
+  </data>
+  <data name="NotFound_Message" xml:space="preserve">
+    <value>Sorry, the content you are looking for does not exist.</value>
+  </data>
+  <data name="Error_Title" xml:space="preserve">
+    <value>Error</value>
+  </data>
+  <data name="Error_Heading" xml:space="preserve">
+    <value>Error.</value>
+  </data>
+  <data name="Error_Message" xml:space="preserve">
+    <value>An error occurred while processing your request.</value>
+  </data>
+  <data name="Error_RequestId" xml:space="preserve">
+    <value>Request ID:</value>
+  </data>
+  <data name="Layout_ErrorBanner" xml:space="preserve">
+    <value>An unhandled error has occurred.</value>
+  </data>
+  <data name="Layout_ErrorReload" xml:space="preserve">
+    <value>Reload</value>
+  </data>
+  <data name="Reconnect_FirstAttempt" xml:space="preserve">
+    <value>Rejoining the server...</value>
+  </data>
+  <data name="Reconnect_RepeatedAttemptBefore" xml:space="preserve">
+    <value>Rejoin failed... trying again in </value>
+  </data>
+  <data name="Reconnect_RepeatedAttemptAfter" xml:space="preserve">
+    <value> seconds.</value>
+  </data>
+  <data name="Reconnect_Failed" xml:space="preserve">
+    <value>Failed to rejoin.</value>
+  </data>
+  <data name="Reconnect_FailedAdvice" xml:space="preserve">
+    <value>Please retry or reload the page.</value>
+  </data>
+  <data name="Reconnect_Retry" xml:space="preserve">
+    <value>Retry</value>
+  </data>
+  <data name="Reconnect_Paused" xml:space="preserve">
+    <value>The session has been paused by the server.</value>
+  </data>
+  <data name="Reconnect_ResumeFailed" xml:space="preserve">
+    <value>Failed to resume the session.</value>
+  </data>
+  <data name="Reconnect_ResumeFailedAdvice" xml:space="preserve">
+    <value>Please retry or reload the page.</value>
+  </data>
+  <data name="Reconnect_Resume" xml:space="preserve">
+    <value>Resume</value>
+  </data>
+</root>

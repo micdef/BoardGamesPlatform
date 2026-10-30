@@ -5,6 +5,8 @@
  *	@brief	Dialog shown while the browser reconnects to the server
  *@
 
+@inject IStringLocalizer<WebTexts> Texts
+
 <script type="module" src="@Assets["Components/Layout/ReconnectModal.razor.js"]"></script>
 
 <dialog id="components-reconnect-modal" data-nosnippet>
@@ -14,25 +16,25 @@
             <div></div>
         </div>
         <p class="components-reconnect-first-attempt-visible">
-            Rejoining the server...
+            @Texts["Reconnect_FirstAttempt"]
         </p>
         <p class="components-reconnect-repeated-attempt-visible">
-            Rejoin failed... trying again in <span id="components-seconds-to-next-attempt"></span> seconds.
+            @Texts["Reconnect_RepeatedAttemptBefore"]<span id="components-seconds-to-next-attempt"></span>@Texts["Reconnect_RepeatedAttemptAfter"]
         </p>
         <p class="components-reconnect-failed-visible">
-            Failed to rejoin.<br />Please retry or reload the page.
+            @Texts["Reconnect_Failed"]<br />@Texts["Reconnect_FailedAdvice"]
         </p>
         <button id="components-reconnect-button" class="components-reconnect-failed-visible">
-            Retry
+            @Texts["Reconnect_Retry"]
         </button>
         <p class="components-pause-visible">
-            The session has been paused by the server.
+            @Texts["Reconnect_Paused"]
         </p>
         <p class="components-resume-failed-visible">
-            Failed to resume the session.<br />Please retry or reload the page.
+            @Texts["Reconnect_ResumeFailed"]<br />@Texts["Reconnect_ResumeFailedAdvice"]
         </p>
         <button id="components-resume-button" class="components-pause-visible components-resume-failed-visible">
-            Resume
+            @Texts["Reconnect_Resume"]
         </button>
     </div>
 </dialog>

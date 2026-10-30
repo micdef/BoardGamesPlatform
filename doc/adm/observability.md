@@ -19,7 +19,6 @@ On Linux, running as a systemd unit also integrates the executable with systemd:
   [System.Diagnostics.EventLog]::CreateEventSource('BoardGamesPlatform.Back', 'Application')
   ```
 
-- **Website under IIS**: the source is named after the executable (`ServiceName`, else `BoardGamesPlatform.Web`), not after the IIS site. The application pool identity cannot create it either: the installer creates it.
 - **Levels**: `Logging:EventLog:LogLevel:Default` sets what goes to the Event Log (`Information` in the delivered settings; .NET writes only `Warning` and above when it is not set). The journal receives what the console receives, set by `Logging:Console:LogLevel`, else `Logging:LogLevel`.
 - **Source name**: `ServiceName` is also the Event Log source; keep it to letters, digits, dots and hyphens.
 
@@ -30,9 +29,7 @@ On Linux, running as a systemd unit also integrates the executable with systemd:
 | `BoardGamesPlatform.Back` | ✅ | ✅ (platform sources, outgoing HTTP) | ✅ (.NET runtime, outgoing HTTP, platform meters) |
 | `BoardGamesPlatform.VeryBack` | ✅ | ✅ (platform sources, outgoing HTTP) | ✅ (.NET runtime, outgoing HTTP, platform meters) |
 | `BoardGamesPlatform.Gateway` | ✅ | ✅ (+ incoming HTTP requests, including the SignalR connection requests) | ✅ (+ ASP.NET Core) |
-| `BoardGamesPlatform.Web` (server part) | ✅ | ✅ (+ incoming HTTP requests) | ✅ (+ ASP.NET Core) |
-
-The WebAssembly part of the website runs in the players' browsers: it does not send telemetry directly, since that would expose the collector to the Internet.
+| `BoardGamesPlatform.Web` | ✅ | ✅ (+ incoming HTTP requests) | ✅ (+ ASP.NET Core) |
 
 ## Settings
 

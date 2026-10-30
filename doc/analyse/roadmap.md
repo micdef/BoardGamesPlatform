@@ -16,7 +16,7 @@ It records the scope, the order of the work, what each version must demonstrate,
 - AI players for Battleships, each level being a named player: easy, medium and hard.
 - An administration section in the website and a separate administration tool.
 - A user interface available in several languages (at least English and French), in the arcade neon style of the design mock-up.
-- A native installation (IIS, Windows services, Linux systemd daemons) and a Docker variant.
+- A native installation (Windows services or Linux systemd daemons; the website behind a reverse proxy, Nginx or IIS) and a Docker variant.
 - User, administrator and developer documentation.
 
 ### Out of v1.0.0
@@ -47,7 +47,7 @@ Other UIs   ┘
 
 | Tier | Role | Talks to |
 |------|------|----------|
-| Fronts | User interfaces. Blazor Auto; forms forced to InteractiveServer. | Gateway only (SignalR) |
+| Fronts | User interfaces. Blazor in the Interactive Server render mode only (no WebAssembly, no static rendering): the server process of the website is the only SignalR client of the gateway, the browser never reaches it. | Gateway only (SignalR) |
 | Gateway | Single entry point: SignalR hub, authentication, shape validation, rate limiting. No game logic. | Back only (TLS socket) |
 | Back | Modular monolith: a Platform module and one module per game. All the logic, maximum server authority. | Very Back only (TLS socket + authenticated ECDH) |
 | Very Back | Autonomous service, the only access to the database. | SQL Server only |
@@ -65,16 +65,16 @@ Other UIs   ┘
 
 #### 0.3.0 — Walking skeleton
 
-- **Content**: a minimal socket protocol (framing, request/response correlation) on plain TCP, behind a transport interface; a `Ping` stored procedure; the SignalR hub of the gateway; a Blazor page. The ports of each link are chosen and become configurable. Development-only version: never deployed without TLS.
-- **Done**: a button on a Blazor page displays the SQL Server time, obtained through the five tiers; an end-to-end test proves it.
-- **Tests**: framing unit tests, a first loopback integration test, a first end-to-end test, a first SQL test (`Ping` and permissions) with the DACPAC test-deployment script. Network tests never pick a "free" port in advance, because another process can take it between the check and the use: an in-process listener binds port 0 and exposes the port given by the system; a free-port helper in the TestKit is only added if the end-to-end tests start the tiers as separate processes. Check whether the CI can build the SQL project; otherwise the local SQL gate applies (see the test strategy).
-- **Branches**: `feature/minimal-frame-protocol`, `feature/very-back-ping`, `feature/back-gateway-link`, `feature/signalr-hub-ping`, `feature/blazor-ping-page`, `feature/e2e-test-host`, `chore/sql-test-deploy-script`.
+- **Content**: a minimal socket protocol on plain TCP: a transport interface that hands over a byte stream (TLS wraps it in 0.5.0), frames with a length prefix, a correlation identifier, a JSON payload and a maximum size, several requests in flight on one connection [SEC]; the Back's client of the Very Back; a `Ping` stored procedure and a minimal application SQL user allowed to execute it only [SEC]; the SignalR hub of the gateway; a Blazor page. The ports of each link become configurable (defaults in the network flows below); every listener binds the loopback address unless configured otherwise. Development-only version: never deployed without TLS.
+- **Done**: a button on a Blazor page displays the SQL Server time, obtained through the five tiers; an end-to-end test proves it. In the CI, the end-to-end test runs against a fake procedure executor; its variant against the real SQL Server runs locally, under the SQL gate.
+- **Tests**: framing unit tests, a first loopback integration test, a first end-to-end test, a first SQL test (`Ping` and permissions) with the DACPAC test-deployment script. Network tests never depend on a port handed out by the system (decided by the project lead in 0.3.0): no port 0, no port freed then reused. They use **fixed ports of the block 17000-17999, reserved for the tests**: below 32768, so outside the dynamic ranges of Windows (49152-65535, where Hyper-V also reserves moving blocks) and of Linux (32768-60999); Windows can still exclude ranges below 32768, which a port-bind error then reports. Each test project owns a block of 100 ports (`TestKit/TestPortBlocks`), so that the projects still run in parallel; each listener takes the next port of its block, never the same one twice in a run; a port that cannot be bound fails the test at once with a clear message, and the environment variable `BOARDGAMESPLATFORM_TEST_PORT_BASE` moves the range (a multiple of 100) on a machine that already uses it. The ports actually delivered (7821, 7822, read from the `appsettings.json` of the tiers) are proven by tests that start the tiers with their delivered configuration. The CI builds the SQL project as it is, in a separate job (original format, MSBuild of the Visual Studio of the runner image; checked in 0.3.0).
+- **Branches**, in order: `docs/ports-and-wire-format`, `chore/sql-ci-check`, `feature/minimal-frame-protocol`, `feature/transport-interface-tcp`, `chore/sql-test-deploy-script`, `feature/sql-ping-procedure`, `feature/protocol-request-response`, `feature/very-back-ping`, `feature/back-very-back-link`, `feature/back-gateway-link`, `feature/signalr-hub-ping`, `feature/blazor-ping-page`, `feature/e2e-test-host`. The deployment script of this version already refuses any database without the `DEV_` or `TEST_` prefix; 0.7.0 extends it.
 
 #### 0.4.0 — Robust socket protocol [SEC]
 
-- **Content**: protocol versioning and negotiation, serialization format, heartbeat, reconnection with back-off, request timeouts, message size limits, rejection of malformed frames; errors carried as codes, never as display texts.
+- **Content**: protocol versioning and negotiation, serialization format, heartbeat, reconnection with back-off, request timeouts, message size limits, rejection of malformed frames; errors carried as codes, never as display texts; **request cancellation propagated across the tiers** (decided in 0.3.0): a cancel message carrying the correlation identifier, so that a request abandoned by its caller (a player who closes the tab) stops the work of the Back and of the Very Back instead of running to its end. Until then, canceling a request stops the wait only.
 - **Done**: the Very Back is stopped in the middle of a session; the Back reconnects, and pending requests either resume or fail cleanly.
-- **Tests**: property-based and fuzz tests of the framing, reconnection tests against a test server that can be killed.
+- **Tests**: property-based and fuzz tests of the framing, reconnection tests against a test server that can be killed; a request canceled by the front stops the call in progress in the Very Back.
 - **Branches**: `feature/protocol-versioning`, `feature/heartbeat`, `feature/reconnection`, `feature/protocol-limits`, `docs/protocol-specification`.
 
 #### 0.5.0 — Mutual TLS 1.3 [SEC]
@@ -117,8 +117,12 @@ Other UIs   ┘
 
 #### 0.10.0 — Gateway and Platform module [SEC]
 
-- **Content**: the Platform module and the registration of game modules; token verification by the Back through the Very Back; rate limiting, shape validation and error model in the gateway.
-- **Done**: anonymous calls are rejected; flooding the gateway is throttled.
+- **Content**: the Platform module and the registration of game modules; token verification by the Back through the Very Back; rate limiting, shape validation and error model in the gateway. Since the server process of the website is the only SignalR client of the gateway (one connection per player circuit):
+  - the gateway **authenticates the website itself** (a machine credential or mutual TLS on the website → gateway link), so that no other host of the server zone can pass for it;
+  - **rate limiting counts per player**, keyed on the session token, in a hub filter: counting per IP address would only see the website (whether the HTTP rate-limiting middleware applies to each hub method call is to be tested);
+  - the website forwards the IP address of the player, trusted only from the website, for the logs and the handling of abuse;
+  - where the website keeps the session token of a player is decided (a circuit has no HTTP context after it starts, and the site has no static rendering; candidates: protected browser storage, an HTTP login endpoint that sets the cookie).
+- **Done**: anonymous calls are rejected; a host other than the website cannot open a connection to the gateway; one player flooding the gateway is throttled without slowing the others.
 - **Tests**: architecture rule "the gateway contains no game logic", rate-limit tests.
 - **Branches**: `feature/platform-module`, `feature/gateway-authentication`, `feature/gateway-rate-limit`.
 
@@ -128,7 +132,7 @@ Other UIs   ┘
   - the **design system** of the arcade neon mock-up: colors, typography (Orbitron for titles and buttons, Rajdhani for text), buttons, badges, form fields, glow rules, as one shared stylesheet of variables and Blazor components;
   - the **visual identity of a game** (icon and background watermark), provided by each game module, so that a player knows at a glance which game is on screen;
   - **internationalization**: English and French, in .NET `.resx` resource files (adding a language means adding one resource file per component); a language picker with flags from [flagcdn.com](https://flagcdn.com) (Flagpedia), copied into the site so that no player's browser calls a third party; the language changes **on the fly**, without reloading the page nor interrupting a match in progress; the player's preferred language; culture-aware dates and numbers; translation of the codes received from the other tiers;
-  - the Blazor Auto layout, the registration and login forms forced to InteractiveServer with full validation, a minimal administration section (open or close registrations, user list).
+  - the Interactive Server layout, the registration and login forms with full validation, a minimal administration section (open or close registrations, user list).
 - **Done**: a user registers and logs in from a browser, in English or in French, and the whole site switches language; the administrator closes the registrations and the registration form refuses new accounts.
 - **Tests**: every resource key exists in every supported language (a missing translation fails the build); component tests of the design system.
 - **Branches**: `feature/design-system`, `feature/game-visual-identity`, `feature/localization`, `feature/site-layout`, `feature/login-registration-forms`, `feature/admin-registration-switch`.
@@ -228,14 +232,14 @@ An AI player goes through the same contract as a human: it receives the same per
 
 #### 0.25.0 — Native installation
 
-- **Content**: installation package or PowerShell scripts, **run as administrator** (IIS site, Windows services, systemd units declared with `Type=notify`, one Windows Event Log source per executable), certificate and key provisioning, final network flow matrix, acceptance environment.
+- **Content**: installation package or PowerShell scripts, **run as administrator** (Windows services, systemd units declared with `Type=notify`, one Windows Event Log source per executable, the reverse proxy of the website: Nginx, or IIS as an option), certificate and key provisioning, final network flow matrix, acceptance environment.
 - **Done**: a clean machine is installed from the package alone.
 - **Tests**: installation smoke test on a clean machine; the Back and the Very Back run on Linux at least once in acceptance.
-- **Branches**: `feature/installation-package`, `chore/systemd-units`, `chore/iis-deployment`, `docs/administrator-installation-guide`.
+- **Branches**: `feature/installation-package`, `chore/systemd-units`, `chore/reverse-proxy-deployment`, `docs/administrator-installation-guide`.
 
 #### 0.26.0 — Docker variant
 
-- **Content**: Dockerfiles and a `docker-compose` file. Without IIS, the website and the gateway run on Kestrel.
+- **Content**: Dockerfiles and a `docker-compose` file. The website and the gateway run on Kestrel, as in the native installation.
 - **Done**: the whole platform starts with `docker compose up` on a clean machine.
 - **Branches**: `feature/docker-images`, `docs/docker-deployment`.
 
@@ -265,18 +269,21 @@ If time runs short, these versions can move to 1.1 without affecting the core: *
 | UI | Blazor component tests | 0.15.0 |
 
 - Test projects live in `test/` and all run in the CI; a CI guard fails when one is missing.
-- **SQL project outside the CI**: a PowerShell script builds the `.sqlproj` into a DACPAC and deploys it to a throwaway `TEST_` database. The SQL tests are a normal .NET test project. Without a SQL Server they are reported as *skipped*, never as passed. Running them locally is **mandatory before every `release/X.Y.Z` → `dev` merge**. A SQL Server container may be used **in the CI only**, if the CI can build the DACPAC (checked in 0.3.0).
+- **SQL project in the CI, in its original format**: a separate CI job builds the `.sqlproj` into a DACPAC with the MSBuild of Visual Studio (checked in 0.3.0); `dotnet build` cannot. Locally, `tools/database/Deploy-TestDatabase.ps1` builds it and deploys it to a throwaway `DEV_` or `TEST_` database. The SQL tests are a normal .NET test project. Without a SQL Server they are reported as *skipped*, never as passed. Running them locally is **mandatory before every `release/X.Y.Z` → `dev` merge**. A SQL Server container may be used **in the CI only**, to run the SQL tests there too: decided with the first SQL tests.
 - Slow simulations are tagged and run in a separate CI job; end-to-end tests wait for events, never for fixed delays.
 
 ## Network flows
 
-Every tier communicates through the network. All ports are configurable; their default values are chosen in 0.3.0. This matrix is completed at each version that adds a flow and is copied into the administrator documentation.
+Every tier communicates through the network. All ports are configurable; the defaults below were chosen in 0.3.0. This matrix is completed at each version that adds a flow and is copied into the administrator documentation.
 
 | Flow | Port | Protocol | Firewall zones |
 |------|------|----------|----------------|
-| Internet → website and gateway (IIS) | 443 | HTTPS, WebSocket | WAN → DMZ (the only port open to the outside) |
-| Gateway → Back | to be chosen in 0.3.0 | TCP + TLS 1.3 | DMZ → servers |
-| Back → Very Back | to be chosen in 0.3.0 | TCP + TLS 1.3 + authenticated ECDH | servers → servers |
+| Internet → reverse proxy of the website (Nginx) | 443 | HTTPS, WebSocket | WAN → DMZ (the only port open to the outside) |
+| Reverse proxy → website | HTTP port of the website (configurable) | HTTP, WebSocket | DMZ (same machine or DMZ → DMZ) |
+| Internal network → website (optional, without the reverse proxy) | HTTP port of the website (configurable) | HTTP(S), WebSocket | LAN → DMZ |
+| Website → gateway | HTTP port of the gateway (configurable) | HTTP, WebSocket (SignalR) | DMZ → servers, from the website machine only: the gateway is never reachable from the Internet |
+| Gateway → Back | 7821 | TCP + TLS 1.3 (plain TCP in 0.3.0 and 0.4.0, development only) | servers → servers |
+| Back → Very Back | 7822 | TCP + TLS 1.3 + authenticated ECDH (plain TCP in 0.3.0 and 0.4.0, development only) | servers → servers |
 | Very Back → SQL Server | 1433 | TDS | servers → servers |
 | Back → SMTP server | 587 | SMTP + STARTTLS | servers → mail server |
 | Every executable → OpenTelemetry collector (optional) | 4317 or 4318 | OTLP over gRPC or HTTP | DMZ and servers → servers |
@@ -288,7 +295,7 @@ Every tier communicates through the network. All ports are configurable; their d
 | A fragile custom protocol (framing, correlation, partial reads) | 0.3.0 (minimal), 0.4.0 (fuzzing, limits, reconnection) |
 | A design error in the handshake | 0.6.0: written threat model, test vectors, standard primitives only |
 | Security added late breaks the architecture | Transport interface in 0.3.0, security layers plugged in 0.5.0 and 0.6.0 |
-| SQL tests not run because the SQL project is outside the CI | Test-deployment script, explicit *skipped* status, mandatory local gate before each release merge |
+| SQL tests not run because no SQL Server is available in the CI | Test-deployment script, explicit *skipped* status, mandatory local gate before each release merge |
 | Drift from cross-platform code | Back and Very Back run on Linux in acceptance (0.25.0) |
 | Hidden information leaks to a client or a spectator | View tests in 0.13.0; server-only models never sent to the browser |
 | Scope creep | Done criteria per version; slack versions movable to 1.1 |
@@ -300,13 +307,18 @@ Every tier communicates through the network. All ports are configurable; their d
 | Topic | Decision |
 |-------|----------|
 | Solution architecture | Modular monolith; plugins or services considered when games multiply (no Docker in the author's own hosting) |
-| Hosting | Website on IIS (Windows Server); services as Windows services or Linux systemd daemons; Docker variant offered for other deployments |
+| Hosting | Every executable, the website and the gateway included, runs on Kestrel as a Windows service or a Linux systemd daemon; no IIS required. The website is exposed to the Internet behind a reverse proxy (Nginx; IIS possible); the gateway stays in the server zone, reached only by the website. Every tier can run on its own machine or container. Docker variant offered for other deployments |
 | Back ↔ Very Back | Raw TCP sockets, TLS 1.3 with mutual authentication, plus an authenticated ECDH handshake |
 | Gateway ↔ Back | Raw TCP sockets, TLS 1.3 with mutual authentication |
+| Socket protocol | The transport hands over a byte stream, so that TLS wraps it; frames carry a length prefix, a correlation identifier and a UTF-8 JSON payload (System.Text.Json), with a maximum frame size; several requests in flight on one connection. No version field before 0.4.0 |
+| Message envelope | From 0.3.0, every request is `{"operation":"<name>","body":{…}}` and every response `{"body":{…}}` (UTF-8 JSON, camelCase); each tier routes the requests by operation name. Reading is strict: any other shape is a protocol violation. 0.4.0 adds the version and the error code next to the body |
+| Default ports | Gateway → Back 7821, Back → Very Back 7822 (unassigned in the IANA registry, range 7811-7844); configurable; listeners on the loopback address unless configured otherwise |
 | Real time | SignalR, through the gateway, for every front including a future WPF client |
 | Identity | Opaque session token verified by the Back; no JWT |
-| Forms | InteractiveServer render mode, full validation, revalidated by the gateway and the Back |
-| Database | SQL Server only until 1.0.0; original-format SQL project, outside the CI |
+| Website render mode | Interactive Server only (decided in 0.3.0, with a second reading by the architect agent): with WebAssembly, browser code would have to reach the gateway, either through a proxy (the gateway exposed to the Internet) or through a relay hub in the website (a second entry point, a duplicated contract), and every service would need a browser and a server implementation. The memory of one circuit per player is accepted at the expected scale; several website instances need sticky sessions |
+| Forms | Full validation in the website, revalidated by the gateway and the Back |
+| Database | SQL Server only until 1.0.0; the SQL project keeps its original format (DACPAC, opened by Visual Studio 2026) and is never converted to the SDK style; built by a separate CI job with the MSBuild of Visual Studio |
+| SQL access | Plain ADO.NET (`Microsoft.Data.SqlClient`) calling the stored procedures, never Entity Framework (decided in 0.3.0): the database stays the master of its schema and its rules, and the code keeps control of the connections. Each tier that holds a connection string clears its pool when it stops, so that no session stays open on SQL Server after a stop or a redeployment |
 | Development databases | `DEV_` and `ACC_` rebuilt freely until the first beta; no migration scripts before then |
 | Match history | Every move recorded; training logs pseudonymized |
 | Spectators | Public view: the match is visible, the fleets never are |
@@ -319,8 +331,6 @@ Every tier communicates through the network. All ports are configurable; their d
 
 | Choice | Decided in |
 |--------|------------|
-| Serialization format of the socket protocol | 0.3.0 / 0.4.0 |
-| Default ports | 0.3.0 |
 | Certificate authority (private CA or self-signed with pinning), key storage and rotation | 0.5.0 |
 | Vault product | 0.7.0 |
 | How clients present the session token to the SignalR hub | 0.10.0 |

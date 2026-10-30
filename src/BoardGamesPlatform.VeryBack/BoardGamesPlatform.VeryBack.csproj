@@ -1,6 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk.Worker">
   <!-- Very Back host (a console process in 0.2.0, installed as a Windows service or a systemd daemon from 0.25.0): the only access to the database -->
 
+  <!-- Secrets of a developer machine, stored outside the repository by "dotnet user-secrets" (see doc/adm/configuration.md) -->
+  <PropertyGroup>
+    <UserSecretsId>598113eb-a7f2-44f1-b7a2-b7cbd549135a</UserSecretsId>
+  </PropertyGroup>
+
+  <!-- The tests reach the internal constructor of the listener service, to make its accept loop fail -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="BoardGamesPlatform.VeryBack.Tests" />
+  </ItemGroup>
+
   <!-- Projects -->
   <ItemGroup>
     <ProjectReference Include="..\BoardGamesPlatform.Observability\BoardGamesPlatform.Observability.csproj" />
@@ -10,6 +20,7 @@
 
   <!-- Packages (versions in Directory.Packages.props) -->
   <ItemGroup>
+    <PackageReference Include="Microsoft.Data.SqlClient" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
   </ItemGroup>
 

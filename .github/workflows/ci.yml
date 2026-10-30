@@ -28,6 +28,25 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
 jobs:
+  # Pull requests only: a pull request adds its changelog fragment and never edits CHANGELOG.md, so that two open pull requests
+  # never conflict on it; only docs/release-* merges the fragments (see changelog/unreleased/README.md)
+  changelog:
+    name: Check the changelog
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      # The whole history, so that the pull request can be compared with its base
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check that CHANGELOG.md is not edited directly
+        shell: pwsh
+        run: ./.github/scripts/Test-ChangelogUntouched.ps1 -BaseRef "origin/${{ github.base_ref }}" -HeadBranch "${{ github.head_ref }}"
+
   build:
     name: Build and test
     # Windows: the target platform of the solution
@@ -76,3 +95,48 @@ jobs:
           name: test-results
           path: TestResults/
           if-no-files-found: error
+
+  # The SQL project keeps its original MSBuild format, which `dotnet build` cannot build (MSB4278):
+  # the Visual Studio MSBuild installed on the runner image is used, with the SSDT targets that ship with it.
+  # Separate job: the "Build and test" job stays independent of the Visual Studio installation of the image.
+  database:
+    name: Build the SQL project
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Build the SQL project into a DACPAC
+        shell: pwsh
+        run: |
+          $msbuild = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe'
+          if (-not $msbuild) { throw 'MSBuild of Visual Studio not found.' }
+          & $msbuild src/BoardGamesPlatform.Database/BoardGamesPlatform.Database.sqlproj -p:Configuration=Release -v:minimal
+          if ($LASTEXITCODE -ne 0) { throw "MSBuild failed (exit code $LASTEXITCODE)." }
+
+      - name: Publish the DACPAC
+        uses: actions/upload-artifact@v7
+        with:
+          name: database-dacpac
+          path: src/BoardGamesPlatform.Database/bin/Release/BoardGamesPlatform.Database.dacpac
+          if-no-files-found: error
+
+  # Plain PowerShell tests of the script that merges the changelog fragments at release time: a change that breaks it
+  # is caught here, before the docs/release-X.Y.Z pull request runs it. Windows: one case of the tests needs it.
+  changelog-tools:
+    name: Test the changelog tools
+    runs-on: windows-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      # The script exits with 1 when a case fails, which fails the step
+      - name: Test the changelog merge script
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File tools/changelog/tests/Test-MergeChangelogFragments.ps1
+          if ($LASTEXITCODE -ne 0) { throw "The changelog tests failed (exit code $LASTEXITCODE)." }
