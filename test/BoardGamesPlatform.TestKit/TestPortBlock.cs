@@ -25,8 +25,9 @@ namespace BoardGamesPlatform.TestKit;
 /// <remarks>
 /// <para><b>Purpose:</b> the network tests never depend on the ports the system hands out (decided by the project lead): they use the fixed
 /// range 17000-17999, below 32768, so outside the dynamic range of Windows (49152-65535, where Hyper-V also reserves moving blocks) and of
-/// Linux (32768-60999). Each test project owns its own block of <see cref="BlockSize"/> ports (see <see cref="TestPortBlocks"/>), so that the
-/// test projects can still run at the same time without ever sharing a port.</para>
+/// Linux (32768-60999). Windows can still exclude ranges below 32768 (<c>netsh interface ipv4 show excludedportrange protocol=tcp</c>):
+/// a port in such a range fails with an explicit message. Each test project owns its own block of <see cref="BlockSize"/> ports (see
+/// <see cref="TestPortBlocks"/>), so that the test projects can still run at the same time without ever sharing a port.</para>
 /// <para><b>Behavior:</b></para>
 /// <list type="bullet">
 /// <item><description>The block is locked for the whole test run of the project, through a lock file held open in the temporary folder:
@@ -36,12 +37,14 @@ namespace BoardGamesPlatform.TestKit;
 /// that it can be bound on the loopback address and on all the addresses; a port that cannot be bound fails the test at once, with a message
 /// naming the port and the variable that moves the range.</description></item>
 /// <item><description>The start of the range is <see cref="DefaultBase"/>, or the value of the environment variable
-/// <see cref="BaseVariable"/> on a machine where something already uses that range.</description></item>
+/// <see cref="BaseVariable"/> on a machine where something already uses that range; it must be a multiple of <see cref="BlockSize"/>, so
+/// that the blocks of two runs with different starts are either the same or disjoint, and the lock file of a block always tells that the
+/// block is taken.</description></item>
 /// <item><description>Not detected: a program listening on the IPv6 wildcard in dual mode; the connection of a test then reaches that
 /// program, and the test fails loudly.</description></item>
 /// </list>
 /// </remarks>
-public sealed class TestPortBlock
+public sealed class TestPortBlock : IDisposable
 {
     #region Members
 
@@ -77,6 +80,11 @@ public sealed class TestPortBlock
     /// </summary>
     private const int MinBase = 1024;
 
+    /// <summary>
+    /// Win32 error ERROR_SHARING_VIOLATION, carried by the HResult of the IOException when another process holds the file
+    /// </summary>
+    private const int SharingViolationCode = 32;
+
     #endregion
 
     #region Variables
@@ -87,7 +95,8 @@ public sealed class TestPortBlock
     private int _lastOffset = -1;
 
     /// <summary>
-    /// Lock file of the block, held open until the test process ends (the system releases it then, even after a crash)
+    /// Lock file of the block, held open until the test process ends (the system releases it then, even after a crash) or until
+    /// <see cref="Dispose"/>
     /// </summary>
     private readonly FileStream _lock;
 
@@ -140,14 +149,27 @@ public sealed class TestPortBlock
     /// <param name="blockIndex">Index of the block of the test project, from <see cref="TestPortBlocks"/></param>
     /// <exception cref="ArgumentOutOfRangeException">If the index is outside the range</exception>
     /// <exception cref="InvalidOperationException">If the environment variable holds an unusable start, or another run holds the block</exception>
-    public TestPortBlock(int blockIndex)
+    public TestPortBlock(int blockIndex) : this(blockIndex, Environment.GetEnvironmentVariable(BaseVariable))
+    {
+        // #N/A
+    }
+
+    /// <summary>
+    /// Constructor; locks the block for the test run of the project, with the start of the range given as a text instead of read from the
+    /// environment (used by the tests of this class, so that they never set an environment variable for the whole process)
+    /// </summary>
+    /// <param name="blockIndex">Index of the block of the test project, from <see cref="TestPortBlocks"/></param>
+    /// <param name="baseText">[Can be null] Start of the range as the environment variable would hold it; null or blank for <see cref="DefaultBase"/></param>
+    /// <exception cref="ArgumentOutOfRangeException">If the index is outside the range</exception>
+    /// <exception cref="InvalidOperationException">If the start is unusable, or another run holds the block</exception>
+    internal TestPortBlock(int blockIndex, string? baseText)
     {
         // Checks
         if (blockIndex < 0 || blockIndex >= BlockCount)
             throw new ArgumentOutOfRangeException(nameof(blockIndex), $"The value of the parameter: {nameof(blockIndex)} must be between 0 and {BlockCount - 1}");
 
         // Setting, then locking the block
-        First = ReadBase() + (blockIndex * BlockSize);
+        First = ReadBase(baseText) + (blockIndex * BlockSize);
         _lock = LockBlock(First);
     }
 
@@ -166,23 +188,39 @@ public sealed class TestPortBlock
     /// <summary>
     /// Method used to read the start of the range
     /// </summary>
+    /// <param name="text">[Can be null] Value of the environment variable</param>
     /// <returns>
     /// The start of the range
     /// </returns>
-    /// <exception cref="InvalidOperationException">If the environment variable holds an unusable start</exception>
-    private static int ReadBase()
+    /// <exception cref="InvalidOperationException">If the value is unusable</exception>
+    private static int ReadBase(string? text)
     {
-        // Reading the variable, the default when it is not set
-        string? text = Environment.GetEnvironmentVariable(BaseVariable);
+        // The default when the variable is not set
         if (string.IsNullOrWhiteSpace(text))
             return DefaultBase;
 
-        // Checking it keeps the whole range below the dynamic ports
-        if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int value) || value < MinBase || value > MaxBase)
-            throw new InvalidOperationException($"{BaseVariable} must be a port from {MinBase} to {MaxBase}, so that the {BlockSize * BlockCount} test ports stay below 32768, not '{text}'");
+        // Checking it keeps the whole range below the dynamic ports, and on a block boundary (two ranges are then the same or disjoint)
+        if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int value) || value < MinBase || value > MaxBase || value % BlockSize != 0)
+        {
+            throw new InvalidOperationException($"{BaseVariable} must be a multiple of {BlockSize} from {MinBase} to {MaxBase}, so that the {BlockSize * BlockCount} test ports " +
+                $"stay below 32768 and the blocks of two runs never overlap partly, not '{text}'");
+        }
 
         // Function's return
         return value;
+    }
+
+    /// <summary>
+    /// Method used to recognize the sharing violation, the error of a file that another process holds open without sharing
+    /// </summary>
+    /// <param name="exception">[Cannot be null] Exception thrown when opening the file</param>
+    /// <returns>
+    /// True when the error is ERROR_SHARING_VIOLATION (32), found in the low 16 bits of the HResult
+    /// </returns>
+    private static bool IsSharingViolation(IOException exception)
+    {
+        // Function's return
+        return (exception.HResult & 0xFFFF) == SharingViolationCode;
     }
 
     /// <summary>
@@ -192,7 +230,7 @@ public sealed class TestPortBlock
     /// <returns>
     /// The lock file, held open
     /// </returns>
-    /// <exception cref="InvalidOperationException">If another test run holds the block</exception>
+    /// <exception cref="InvalidOperationException">If another test run holds the block, or if the lock file cannot be created or locked</exception>
     private static FileStream LockBlock(int first)
     {
         // Opening the lock file of the block, shared with nobody
@@ -202,11 +240,34 @@ public sealed class TestPortBlock
             // Function's return
             return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         }
-        catch (IOException exception)
+        catch (IOException exception) when (IsSharingViolation(exception))
         {
+            // Another process holds the file: another run of the same test project
             throw new InvalidOperationException($"Another test run uses the test ports {first}-{first + BlockSize - 1} (another worktree or a coding agent running the same " +
                 $"test project): let it end, or give this run other ports with the environment variable {BaseVariable}", exception);
         }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Any other error (missing temporary folder, full disk, path too long, no right): not a second run
+            throw new InvalidOperationException($"The lock file '{path}' of the test ports {first}-{first + BlockSize - 1} cannot be created or locked: {exception.Message}", exception);
+        }
+    }
+
+    /// <summary>
+    /// Method used to build the message of a port that cannot be bound
+    /// </summary>
+    /// <param name="holder">[Cannot be null] Socket error of the bind</param>
+    /// <returns>
+    /// The reason to append to the message: another program, and for an access denied error a hint about the ranges excluded by Windows
+    /// </returns>
+    private static string DescribeHolder(SocketException holder)
+    {
+        // Access denied: Windows refuses the bind in a range it excludes
+        if (holder.SocketErrorCode == SocketError.AccessDenied)
+            return "another program may use it, or it is in a range excluded by Windows (see 'netsh interface ipv4 show excludedportrange protocol=tcp')";
+
+        // Function's return
+        return "another program uses it";
     }
 
     /// <summary>
@@ -275,7 +336,7 @@ public sealed class TestPortBlock
         SocketException? holder = FindHolder(port);
         if (holder is not null)
         {
-            throw new InvalidOperationException($"The test port {port} cannot be bound ({holder.SocketErrorCode}): another program uses it. " +
+            throw new InvalidOperationException($"The test port {port} cannot be bound ({holder.SocketErrorCode}): {DescribeHolder(holder)}. " +
                 $"Stop that program, or move the test ports with the environment variable {BaseVariable}", holder);
         }
 
@@ -295,9 +356,21 @@ public sealed class TestPortBlock
         SocketException? holder = FindHolder(port);
         if (holder is not null)
         {
+            string hint = holder.SocketErrorCode == SocketError.AccessDenied
+                ? $"a {tierName} may run on this machine, or the port is in a range excluded by Windows (see 'netsh interface ipv4 show excludedportrange protocol=tcp')"
+                : $"a {tierName} probably runs on this machine";
             throw new InvalidOperationException($"The port {port} of the delivered configuration of the {tierName} cannot be bound ({holder.SocketErrorCode}): " +
-                $"a {tierName} probably runs on this machine. Stop it, then run the tests again", holder);
+                $"{hint}. Stop it, then run the tests again", holder);
         }
+    }
+
+    /// <summary>
+    /// Method used to release the lock of the block before the end of the process (the tests of this class need it; the test projects never call it)
+    /// </summary>
+    public void Dispose()
+    {
+        // Releasing the lock file
+        _lock.Dispose();
     }
 
     #endregion

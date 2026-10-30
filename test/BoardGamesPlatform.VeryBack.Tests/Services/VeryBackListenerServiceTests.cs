@@ -39,9 +39,9 @@ namespace BoardGamesPlatform.VeryBack.Tests.Services;
 /// <remarks>
 /// <para><b>Purpose:</b> proves the Ping operation end to end up to the procedure (a fake here), and the rules of the accept loop: a failing
 /// connection never stops the others, and stopping the service closes the listener.</para>
-/// <para><b>Behavior:</b> every service binds a fixed test port of the block of this project (see <see cref="TestPorts"/>) on the loopback address. Each test
-/// is limited in time, so that a missing response fails the test instead of blocking the run; nothing waits for a fixed delay: the tests wait
-/// for the response, or for the close of the connection.</para>
+/// <para><b>Behavior:</b> every service binds a fixed test port of the block of this project (see <see cref="TestPorts"/>) on the loopback
+/// address. Each test is limited in time, so that a missing response fails the test instead of blocking the run; nothing waits for a fixed
+/// delay: the tests wait for the response, or for the close of the connection.</para>
 /// </remarks>
 public sealed class VeryBackListenerServiceTests
 {

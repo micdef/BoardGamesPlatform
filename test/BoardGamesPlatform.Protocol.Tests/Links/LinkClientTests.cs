@@ -32,7 +32,8 @@ namespace BoardGamesPlatform.Protocol.Tests.Links;
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> the client speaks to any tier under the name it is given: the tests call "the Back", through a real link server on
-/// a fixed test port of the loopback address. The reconnection and the connect timeout are proven by the tests of the Very Back client of the Back.</para>
+/// a fixed test port of the loopback address. The reconnection and the connect timeout are proven by the tests of the Very Back client of
+/// the Back.</para>
 /// <para><b>Behavior:</b> each test is limited in time and waits for responses, never for a fixed delay.</para>
 /// </remarks>
 public sealed class LinkClientTests

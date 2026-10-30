@@ -27,7 +27,7 @@ With MTP, `--solution` and `--project` are the documented syntax of `dotnet test
 
 ## Network test ports
 
-The network tests never use a port handed out by the system (no port 0, no port freed then reused): they use fixed ports of the block **17000-17999**, below 32768, so outside the dynamic ranges of Windows (49152-65535) and of Linux (32768-60999).
+The network tests never use a port handed out by the system (no port 0, no port freed then reused): they use fixed ports of the block **17000-17999**, below 32768, so outside the dynamic ranges of Windows (49152-65535) and of Linux (32768-60999). Windows can still exclude ranges below 32768 (list them with `netsh interface ipv4 show excludedportrange protocol=tcp`): a port in such a range fails with an explicit message.
 
 | Block | Test project |
 |-------|--------------|
@@ -38,7 +38,7 @@ The network tests never use a port handed out by the system (no port 0, no port 
 | 17400-17499 | `BoardGamesPlatform.Gateway.Tests` |
 
 - Each project takes its ports from its own block (`TestKit/TestPortBlocks`), so that the projects run in parallel without sharing a port; each listener takes the next port of the block, never the same one twice in a run.
-- A port that cannot be bound fails the test at once, with a message naming the port. On a machine that already uses the range, set `BOARDGAMESPLATFORM_TEST_PORT_BASE` (from 1024 to 31768) to move it.
+- A port that cannot be bound fails the test at once, with a message naming the port. On a machine that already uses the range, set `BOARDGAMESPLATFORM_TEST_PORT_BASE` (a multiple of 100, from 1100 to 31700) to move it; the multiple of 100 keeps the blocks of two runs either the same or disjoint, never partly overlapping.
 - Each block is locked for the whole run of its test project (a lock file in the temporary folder, released when the run ends, even after a crash): a second run of the same test project at the same time, from another worktree or a coding agent, fails at once with a clear message. Give that run other ports with `BOARDGAMESPLATFORM_TEST_PORT_BASE` (for example 18000, 19000...).
 - A new test project that opens sockets takes the next free block in `TestKit/TestPortBlocks`.
 - The ports actually delivered (`Back:Port` 7821, `VeryBack:Port` 7822, read from the `appsettings.json` of the tiers) are proven by tests that start the tier with its delivered configuration: they need those ports free, so stop a local Back or Very Back before running the tests.

@@ -24,8 +24,9 @@ namespace BoardGamesPlatform.Platform.Infrastructure.Tests.VeryBack;
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> the Back relies on one shared connection that opens on demand, comes back after a loss and never retries by itself.</para>
-/// <para><b>Behavior:</b> the tests run on a real loopback socket, on fixed test ports of the block of this project. They wait for events (a connection lost, a connection attempt
-/// begun), never for a fixed delay; every test has a timeout, so that a hang fails instead of blocking the run.</para>
+/// <para><b>Behavior:</b> the tests run on a real loopback socket, on fixed test ports of the block of this project. They wait for events (a
+/// connection lost, a connection attempt begun), never for a fixed delay; every test has a timeout, so that a hang fails instead of blocking
+/// the run.</para>
 /// </remarks>
 public sealed class VeryBackClientTests
 {
