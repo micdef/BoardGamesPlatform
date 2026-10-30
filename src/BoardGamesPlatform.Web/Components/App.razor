@@ -5,8 +5,10 @@
  *	@brief	Root document of the website: head, routes and Blazor script
  *@
 
+@using System.Globalization
+
 <!DOCTYPE html>
-<html lang="en">
+<html lang="@CultureInfo.CurrentUICulture.TwoLetterISOLanguageName">
 
 <head>
     <meta charset="utf-8" />
