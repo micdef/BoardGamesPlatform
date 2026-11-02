@@ -105,6 +105,35 @@ public sealed class BackClientOptionsTests
     #region Publics
 
     /// <summary>
+    /// The request timeout must be greater than zero and at most its maximum; the message names the setting
+    /// </summary>
+    /// <param name="milliseconds">Invalid request timeout, in milliseconds</param>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(300001)]
+    public void AnInvalidRequestTimeoutIsRefused(int milliseconds)
+    {
+        // Validating
+        ValidateOptionsResult result = new BackClientOptionsValidator().Validate(null, new BackClientOptions { RequestTimeout = TimeSpan.FromMilliseconds(milliseconds) });
+
+        // Checks
+        result.Failed.ShouldBeTrue();
+        result.FailureMessage.ShouldContain("Back:RequestTimeout");
+    }
+
+    /// <summary>
+    /// The default request timeout is 8 seconds, and the maximum itself is accepted
+    /// </summary>
+    [Fact]
+    public void TheRequestTimeoutLimitsAreAccepted()
+    {
+        // Checks
+        new BackClientOptions().RequestTimeout.ShouldBe(TimeSpan.FromSeconds(8));
+        new BackClientOptions { RequestTimeout = BackClientOptions.MaxRequestTimeout }.FindProblem().ShouldBeNull();
+    }
+
+    /// <summary>
     /// The defaults are the local development ones, and are valid
     /// </summary>
     [Fact(Timeout = TestTimeout)]

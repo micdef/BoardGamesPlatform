@@ -53,6 +53,11 @@ public sealed class VeryBackClientOptions
     /// </summary>
     public static readonly TimeSpan MaxConnectTimeout = LinkClient.MaxConnectTimeout;
 
+    /// <summary>
+    /// Longest request timeout accepted, for the same reasons as <see cref="MaxConnectTimeout"/>
+    /// </summary>
+    public static readonly TimeSpan MaxRequestTimeout = LinkClient.MaxRequestTimeout;
+
     #endregion
 
     #region Delegates
@@ -94,6 +99,11 @@ public sealed class VeryBackClientOptions
     /// </summary>
     public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// Longest time a request waits for the answer of the Very Back; greater than zero, and at most <see cref="MaxRequestTimeout"/>. It must stay shorter than the request timeout of the Gateway towards the Back, so that the Back can still answer a code in time.
+    /// </summary>
+    public TimeSpan RequestTimeout { get; set; } = TimeSpan.FromSeconds(5);
+
     #endregion
 
     #region Delegates
@@ -133,7 +143,7 @@ public sealed class VeryBackClientOptions
     /// <para><b>Purpose:</b> one place that knows the rules, for the startup check of the Back (no exception used for control flow) and for
     /// <see cref="Validate"/>.</para>
     /// <para><b>Behavior:</b> the host must not be empty, the port must be from 1 to 65535 and the connection timeout greater than zero and at
-    /// most <see cref="MaxConnectTimeout"/>. The message names the setting, never its value. Only the first problem found is returned.</para>
+    /// most <see cref="MaxConnectTimeout"/>, the request timeout greater than zero and at most <see cref="MaxRequestTimeout"/>. The message names the setting, never its value. Only the first problem found is returned.</para>
     /// </remarks>
     /// <returns>
     /// The message that describes the first invalid setting; null when every setting is valid
@@ -147,6 +157,8 @@ public sealed class VeryBackClientOptions
             return $"The setting {SectionName}:{nameof(Port)} must be between 1 and {IPEndPoint.MaxPort}";
         if (ConnectTimeout <= TimeSpan.Zero || ConnectTimeout > MaxConnectTimeout)
             return $"The setting {SectionName}:{nameof(ConnectTimeout)} must be greater than zero and at most {MaxConnectTimeout}";
+        if (RequestTimeout <= TimeSpan.Zero || RequestTimeout > MaxRequestTimeout)
+            return $"The setting {SectionName}:{nameof(RequestTimeout)} must be greater than zero and at most {MaxRequestTimeout}";
 
         // Function's return
         return null;

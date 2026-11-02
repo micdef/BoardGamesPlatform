@@ -59,6 +59,11 @@ public static partial class ErrorCodes
     public const string LinkUnavailable = "link.unavailable";
 
     /// <summary>
+    /// A tier the peer needs to answer did not answer within the request timeout; the request was canceled there
+    /// </summary>
+    public const string LinkTimeout = "link.timeout";
+
+    /// <summary>
     /// The server speaks none of the protocol versions of the client: one of the two tiers must be updated
     /// </summary>
     public const string ProtocolVersionUnsupported = "protocol.versionUnsupported";

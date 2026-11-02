@@ -58,6 +58,16 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// </summary>
     public static readonly TimeSpan MaxConnectTimeout = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// Longest request timeout accepted, for the same reasons as <see cref="MaxConnectTimeout"/>
+    /// </summary>
+    public static readonly TimeSpan MaxRequestTimeout = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Request timeout used when none is given
+    /// </summary>
+    public static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(30);
+
     #endregion
 
     #region Variables
@@ -76,6 +86,11 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// Longest time allowed to open a connection
     /// </summary>
     private readonly TimeSpan _connectTimeout;
+
+    /// <summary>
+    /// Longest time a request waits for its response once sent
+    /// </summary>
+    private readonly TimeSpan _requestTimeout;
 
     /// <summary>
     /// Name of the peer in the logs and the messages, for example "the Very Back"
@@ -166,6 +181,24 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// <exception cref="ArgumentException">If the host or the name is blank</exception>
     /// <exception cref="ArgumentOutOfRangeException">If the port or the timeout is out of its range</exception>
     public LinkClient(string host, int port, TimeSpan connectTimeout, string peerName, ITransportConnector connector, ILogger logger)
+        : this(host, port, connectTimeout, DefaultRequestTimeout, peerName, connector, logger)
+    {
+    }
+
+    /// <summary>
+    /// Constructor with the request timeout; opens nothing, the connection opens on the first call
+    /// </summary>
+    /// <param name="host">[Cannot be null or blank] Host name or address of the peer</param>
+    /// <param name="port">Port of the peer, from 1 to 65535</param>
+    /// <param name="connectTimeout">Longest time allowed to open a connection; greater than zero, and at most <see cref="MaxConnectTimeout"/></param>
+    /// <param name="requestTimeout">Longest time a request waits for its response; greater than zero, and at most <see cref="MaxRequestTimeout"/></param>
+    /// <param name="peerName">[Cannot be null or blank] Name of the peer in the logs and the messages, for example "the Very Back"</param>
+    /// <param name="connector">[Cannot be null] Connector used to open the connection</param>
+    /// <param name="logger">[Cannot be null] Logger of the tier that calls</param>
+    /// <exception cref="ArgumentNullException">If a parameter is null</exception>
+    /// <exception cref="ArgumentException">If the host or the name is blank</exception>
+    /// <exception cref="ArgumentOutOfRangeException">If the port or a timeout is out of its range</exception>
+    public LinkClient(string host, int port, TimeSpan connectTimeout, TimeSpan requestTimeout, string peerName, ITransportConnector connector, ILogger logger)
     {
         // Checks
         if (host is null)
@@ -174,6 +207,8 @@ public sealed partial class LinkClient : IAsyncDisposable
             throw new ArgumentException($"The value of the parameter: {nameof(host)} cannot be blank", nameof(host));
         if (port < 1 || port > System.Net.IPEndPoint.MaxPort)
             throw new ArgumentOutOfRangeException(nameof(port), $"The value of the parameter: {nameof(port)} must be between 1 and {System.Net.IPEndPoint.MaxPort}");
+        if (requestTimeout <= TimeSpan.Zero || requestTimeout > MaxRequestTimeout)
+            throw new ArgumentOutOfRangeException(nameof(requestTimeout), $"The value of the parameter: {nameof(requestTimeout)} must be greater than zero and at most {MaxRequestTimeout}");
         if (connectTimeout <= TimeSpan.Zero || connectTimeout > MaxConnectTimeout)
             throw new ArgumentOutOfRangeException(nameof(connectTimeout), $"The value of the parameter: {nameof(connectTimeout)} must be greater than zero and at most {MaxConnectTimeout}");
         if (peerName is null)
@@ -189,6 +224,7 @@ public sealed partial class LinkClient : IAsyncDisposable
         _host = host;
         _port = port;
         _connectTimeout = connectTimeout;
+        _requestTimeout = requestTimeout;
         _peerName = peerName;
         _connector = connector;
         _logger = logger;
@@ -411,7 +447,9 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// Method used to send a request of an operation and read its response, on the shared connection (Asynchronous)
     /// </summary>
     /// <remarks>
-    /// <para><b>Behavior:</b> opens the connection first when needed; the request is not retried when it fails.</para>
+    /// <para><b>Behavior:</b> opens the connection first when needed; the request is not retried when it fails. A request that gets no
+    /// response within the request timeout fails with a <see cref="LinkFailureException"/> whose code is <see cref="ErrorCodes.LinkTimeout"/>;
+    /// it is canceled on the peer like any canceled request.</para>
     /// </remarks>
     /// <typeparam name="TRequest">Type of the body of the request</typeparam>
     /// <typeparam name="TResponse">Type of the body of the response</typeparam>
@@ -449,11 +487,18 @@ public sealed partial class LinkClient : IAsyncDisposable
             throw new LinkFailureException(ErrorCodes.LinkUnavailable, $"{_peerName} cannot be reached", exception);
         }
 
-        // Sending the request; a connection lost before the response is a failure of the link (the disposal of this client is not)
+        // Sending the request within the request timeout: a deadline that expires cancels the request, so that the peer stops its work too;
+        // a connection lost before the response is a failure of the link (the disposal of this client is not)
+        using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(_requestTimeout);
         try
         {
             // Function's return
-            return await client.SendAsync<TRequest, TResponse>(operation, request, cancellationToken).ConfigureAwait(false);
+            return await client.SendAsync<TRequest, TResponse>(operation, request, deadline.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            throw new LinkFailureException(ErrorCodes.LinkTimeout, $"{_peerName} did not answer within {_requestTimeout}", exception);
         }
         catch (IOException exception) when (Volatile.Read(ref _isDisposed) == 0)
         {

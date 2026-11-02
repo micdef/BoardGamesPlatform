@@ -28,6 +28,8 @@ Each connection opens with a handshake, before any request: the client offers th
 
 The Back, client of each connection pings every 10 seconds, and the server answers. A connection on which the server receives nothing at all for 45 seconds is closed, so that a client that died, or a network path that broke, does not hold its requests in progress.
 
+At most 8 connections are served at the same time; a new one beyond that is closed at once and logged as a warning. The tier in front uses one shared connection, so this only bounds a peer that opens connections without end.
+
 Each connection handles at most 64 requests at the same time; the client never sends more (it learns the limit in the handshake), and a request beyond it is answered `server.busy` at once, without being started. A request canceled by the client (its caller gave up, for example a player who closed the tab) stops at once, including its call to the database.
 
 Each connection of the Back is served on its own. A request that fails (for example when the database is unreachable or answers something unexpected) is answered with the error code `internal`, its cause is logged as an error, and the connection stays open: the other requests in progress on it go on. A connection that breaks the protocol (a malformed frame or envelope) is closed and logged as a warning, and the other connections are not affected.
