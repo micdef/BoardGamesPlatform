@@ -40,10 +40,16 @@ namespace BoardGamesPlatform.Protocol.Links;
 /// open.</description></item>
 /// <item><description>A connection may close between the moment a call finds it open and the moment its request is sent: that call fails
 /// like any request on a lost connection, and the next call opens a new connection.</description></item>
+/// <item><description>Reconnection with back-off: a lost connection is opened again by the next call, at once. When opening fails (the peer
+/// is down, refuses, or breaks the handshake), the next attempt waits a back-off delay: <see cref="FirstBackOff"/>, doubled after each failure
+/// up to <see cref="MaxBackOff"/>, with a random spread of 20 % either way so that several clients do not retry in step. A call made during
+/// the delay fails at once with <see cref="ErrorCodes.LinkUnavailable"/>, without touching the network; the first connection that opens
+/// resets the delay. Nothing waits in a queue: a request is either sent or failed, and never retried automatically, since the peer may already
+/// have handled it.</description></item>
 /// <item><description>A call that waits for a response is stopped only by the token of its caller.</description></item>
 /// <item><description>After <see cref="DisposeAsync"/>, every call throws an <see cref="ObjectDisposedException"/>.</description></item>
 /// <item><description>The logs tell when a connection opens, is lost or is closed by the disposal, with the address of the peer only; they
-/// go through the logger of the tier, with the event ids 9001 to 9005, reserved for this class (see the coding conventions).</description></item>
+/// go through the logger of the tier, with the event ids 9001 to 9006, reserved for this class (see the coding conventions).</description></item>
 /// </list>
 /// </remarks>
 public sealed partial class LinkClient : IAsyncDisposable
@@ -67,6 +73,16 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// Request timeout used when none is given
     /// </summary>
     public static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Back-off delay after a first failure to open a connection
+    /// </summary>
+    public static readonly TimeSpan FirstBackOff = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>
+    /// Longest back-off delay between two attempts to open a connection
+    /// </summary>
+    public static readonly TimeSpan MaxBackOff = TimeSpan.FromSeconds(30);
 
     #endregion
 
@@ -127,6 +143,21 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// Whether <see cref="DisposeAsync"/> has been called (0: no, 1: yes)
     /// </summary>
     private int _isDisposed;
+
+    /// <summary>
+    /// Clock of the back-off (the system clock outside the tests)
+    /// </summary>
+    private readonly TimeProvider _timeProvider;
+
+    /// <summary>
+    /// Number of failures in a row to open a connection; read and written under the opening lock only
+    /// </summary>
+    private int _openingFailures;
+
+    /// <summary>
+    /// Moment before which no new attempt to open a connection is made; read and written under the opening lock only
+    /// </summary>
+    private DateTimeOffset _nextAttemptAt;
 
     #endregion
 
@@ -195,10 +226,12 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// <param name="peerName">[Cannot be null or blank] Name of the peer in the logs and the messages, for example "the Very Back"</param>
     /// <param name="connector">[Cannot be null] Connector used to open the connection</param>
     /// <param name="logger">[Cannot be null] Logger of the tier that calls</param>
+    /// <param name="timeProvider">[Can be null] Clock of the back-off; null for the system clock</param>
     /// <exception cref="ArgumentNullException">If a parameter is null</exception>
     /// <exception cref="ArgumentException">If the host or the name is blank</exception>
     /// <exception cref="ArgumentOutOfRangeException">If the port or a timeout is out of its range</exception>
-    public LinkClient(string host, int port, TimeSpan connectTimeout, TimeSpan requestTimeout, string peerName, ITransportConnector connector, ILogger logger)
+    public LinkClient(string host, int port, TimeSpan connectTimeout, TimeSpan requestTimeout, string peerName, ITransportConnector connector, ILogger logger,
+        TimeProvider? timeProvider = null)
     {
         // Checks
         if (host is null)
@@ -230,6 +263,8 @@ public sealed partial class LinkClient : IAsyncDisposable
         _logger = logger;
         _codec = new FrameCodec();
         _openingLock = new SemaphoreSlim(1, 1);
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        _nextAttemptAt = DateTimeOffset.MinValue;
     }
 
     #endregion
@@ -288,6 +323,36 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// <param name="port">Port of the peer</param>
     [LoggerMessage(EventId = 9005, Level = LogLevel.Information, Message = "Connection to {Peer} closed by the disposal of the client ({Host}:{Port})")]
     private partial void LogConnectionClosed(string peer, string host, int port);
+
+    /// <summary>
+    /// Method used to log the back-off after a failure to open a connection
+    /// </summary>
+    /// <param name="peer">Name of the peer</param>
+    /// <param name="failures">Number of failures in a row</param>
+    /// <param name="delay">Time before the next attempt</param>
+    [LoggerMessage(EventId = 9006, Level = LogLevel.Information, Message = "Next connection attempt to {Peer} in {Delay} ({Failures} failures in a row); calls fail at once until then")]
+    private partial void LogBackOff(string peer, int failures, TimeSpan delay);
+
+    /// <summary>
+    /// Method used to compute the back-off delay after a number of failures in a row
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> <see cref="FirstBackOff"/> doubled for each failure after the first one, at most <see cref="MaxBackOff"/>, then
+    /// spread at random by 20 % either way (the spread can go slightly above the maximum).</para>
+    /// </remarks>
+    /// <param name="failures">Number of failures in a row; 1 or more</param>
+    /// <returns>
+    /// The delay before the next attempt
+    /// </returns>
+    private static TimeSpan ComputeBackOff(int failures)
+    {
+        // Doubling the first delay for each failure, without overflowing, up to the maximum
+        double doublings = Math.Min(failures - 1, 16);
+        TimeSpan delay = TimeSpan.FromMilliseconds(Math.Min(FirstBackOff.TotalMilliseconds * Math.Pow(2, doublings), MaxBackOff.TotalMilliseconds));
+
+        // Function's return: spread from 80 % to 120 %
+        return delay * (0.8 + (0.4 * Random.Shared.NextDouble()));
+    }
 
     /// <summary>
     /// Method used to tell when a connection ends
@@ -376,7 +441,7 @@ public sealed partial class LinkClient : IAsyncDisposable
     {
         // Using the open connection, without any lock
         RequestClient? client = _current;
-        if (client is not null && !client.Completion.IsCompleted)
+        if (client is not null && client.IsOpen)
             return client;
 
         // Letting one call at a time open the connection
@@ -386,7 +451,7 @@ public sealed partial class LinkClient : IAsyncDisposable
             // Checking again: the client may have been disposed, or another call may have opened the connection while this one waited
             ThrowIfDisposed();
             client = _current;
-            if (client is not null && !client.Completion.IsCompleted)
+            if (client is not null && client.IsOpen)
                 return client;
 
             // Releasing the lost connection
@@ -402,7 +467,11 @@ public sealed partial class LinkClient : IAsyncDisposable
                 }
             }
 
-            // Opening the new connection
+            // Failing at once during the back-off, without touching the network
+            if (_timeProvider.GetUtcNow() < _nextAttemptAt)
+                throw new LinkFailureException(ErrorCodes.LinkUnavailable, $"{_peerName} cannot be reached; the next attempt is not due yet", null);
+
+            // Opening the new connection; a failure delays the next attempt (a cancellation of the caller is not a failure of the peer)
             ITransportConnection connection;
             HandshakeResult handshake;
             try
@@ -412,8 +481,14 @@ public sealed partial class LinkClient : IAsyncDisposable
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 LogConnectionFailed(exception, _peerName, _host, _port);
+                _openingFailures++;
+                TimeSpan delay = ComputeBackOff(_openingFailures);
+                _nextAttemptAt = _timeProvider.GetUtcNow() + delay;
+                LogBackOff(_peerName, _openingFailures, delay);
                 throw;
             }
+            _openingFailures = 0;
+            _nextAttemptAt = DateTimeOffset.MinValue;
             client = new RequestClient(connection, _codec, handshake.MaxConcurrentRequests);
             _current = client;
             LogConnectionOpened(_peerName, _host, _port);
@@ -482,7 +557,8 @@ public sealed partial class LinkClient : IAsyncDisposable
         {
             throw new LinkFailureException(exception.Code, $"{_peerName} refused the handshake", exception);
         }
-        catch (Exception exception) when (exception is System.Net.Sockets.SocketException or TimeoutException or IOException or InvalidDataException)
+        catch (Exception exception) when (exception is (System.Net.Sockets.SocketException or TimeoutException or IOException or InvalidDataException)
+            and not LinkFailureException)
         {
             throw new LinkFailureException(ErrorCodes.LinkUnavailable, $"{_peerName} cannot be reached", exception);
         }
