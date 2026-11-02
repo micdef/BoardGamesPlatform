@@ -2,7 +2,7 @@
  *	@file	src/BoardGamesPlatform.Protocol/Messages/ResponseEnvelope.cs
  *	@author	Defraene Michaël (AKA Sonic) (co-written by Claude)
  *
- *	@brief	JSON envelope of a response: its body
+ *	@brief	JSON envelope of a response: its body, or the error code that replaces it
  */
 
 // Using
@@ -21,9 +21,10 @@ namespace BoardGamesPlatform.Protocol.Messages;
 /// Envelope of a response sent on a link
 /// </summary>
 /// <remarks>
-/// <para><b>Purpose:</b> keeps responses in an envelope from the start, so that the error code and the version of 0.4.0 can be added next
-/// to the body without changing the body itself.</para>
-/// <para><b>Behavior:</b> written as <c>{"body":{…}}</c> by <see cref="MessageSerializer"/>; the body is required when it is read.</para>
+/// <para><b>Purpose:</b> lets a response carry either the answer of the operation or the reason why there is none, without changing the
+/// body types.</para>
+/// <para><b>Behavior:</b> written by <see cref="MessageSerializer"/> as <c>{"body":{…}}</c> or <c>{"error":{"code":"…"}}</c>, the absent part
+/// being left out. Both parts are optional for the JSON reader; the serializer then requires exactly one of them.</para>
 /// </remarks>
 /// <typeparam name="TBody">Type of the body</typeparam>
 internal sealed class ResponseEnvelope<TBody>
@@ -67,9 +68,16 @@ internal sealed class ResponseEnvelope<TBody>
     #region Members & Properties
 
     /// <summary>
-    /// Body of the response
+    /// Body of the response; null when the response is an error
     /// </summary>
-    public TBody Body { get; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public TBody? Body { get; }
+
+    /// <summary>
+    /// Error that replaces the body; null when the response has a body
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ResponseError? Error { get; }
 
     #endregion
 
@@ -84,14 +92,16 @@ internal sealed class ResponseEnvelope<TBody>
     #region Constructors
 
     /// <summary>
-    /// Constructor, also used by the JSON reader, which then requires the body
+    /// Constructor, also used by the JSON reader, for which both parts are optional
     /// </summary>
-    /// <param name="body">Body of the response</param>
+    /// <param name="body">[Can be null] Body of the response</param>
+    /// <param name="error">[Can be null] Error that replaces the body</param>
     [JsonConstructor]
-    public ResponseEnvelope(TBody body)
+    public ResponseEnvelope(TBody? body = default, ResponseError? error = null)
     {
         // Setting
         Body = body;
+        Error = error;
     }
 
     #endregion

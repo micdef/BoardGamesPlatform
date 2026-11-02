@@ -14,6 +14,7 @@ using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
 using BoardGamesPlatform.VeryBack.Contracts;
 using BoardGamesPlatform.VeryBack.Contracts.Ping;
+using Microsoft.Extensions.Logging.Abstractions;
 
 // Static using
 // #N/A
@@ -165,7 +166,7 @@ internal sealed class FakeVeryBack : IAsyncDisposable
         // Setting
         _listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next()));
         _stopping = new CancellationTokenSource();
-        _dispatcher = new OperationDispatcher()
+        _dispatcher = new OperationDispatcher(NullLogger.Instance)
             .Register<PingRequest, PingResponse>(VeryBackOperations.Ping, (request, cancellationToken) => Task.FromResult(new PingResponse(PingTime)));
         _connections = new ConcurrentDictionary<ITransportConnection, byte>();
         _serving = new ConcurrentBag<Task>();

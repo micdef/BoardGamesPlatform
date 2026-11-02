@@ -276,7 +276,7 @@ public sealed partial class VeryBackListenerService : BackgroundService
     {
         // Routing the operations of the Very Back, then serving the connections
         ITransportListener listener = _listener ?? throw new InvalidOperationException("The listener is not started");
-        OperationDispatcher dispatcher = new OperationDispatcher().Register<PingRequest, PingResponse>(VeryBackOperations.Ping, PingAsync);
+        OperationDispatcher dispatcher = new OperationDispatcher(_logger).Register<PingRequest, PingResponse>(VeryBackOperations.Ping, PingAsync);
         RequestServer server = new RequestServer(new FrameCodec(), dispatcher.HandleAsync);
         LinkServer linkServer = new LinkServer(listener, server, TierName, _logger, _acceptFailurePause);
 

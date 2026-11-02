@@ -24,7 +24,7 @@ As environment variables: `VeryBack__ListenAddress`, `VeryBack__Port`, `Connecti
 
 In 0.3.0 and 0.4.0 the link is plain TCP, for development only. TLS 1.3 with an authenticated key exchange comes with 0.5.0, before any real use.
 
-Each connection of the Back is served on its own: a connection that breaks the protocol, or whose request fails (for example when the database is unreachable or answers something unexpected), is closed and logged as a warning, and the other connections are not affected. Until the error codes of 0.4.0, a failing request also ends the other requests in progress **on the same connection**: the Back sees the connection close and opens a new one on its next call.
+Each connection of the Back is served on its own. A request that fails (for example when the database is unreachable or answers something unexpected) is answered with the error code `internal`, its cause is logged as an error, and the connection stays open: the other requests in progress on it go on. A connection that breaks the protocol (a malformed frame or envelope) is closed and logged as a warning, and the other connections are not affected.
 
 The logs name the remote end point and the error, never the connection string. An error of SQL Server itself may name the server, the database or the login, as SQL Server writes them in its messages.
 

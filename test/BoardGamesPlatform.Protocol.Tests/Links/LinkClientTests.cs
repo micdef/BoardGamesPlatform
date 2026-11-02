@@ -138,7 +138,7 @@ public sealed class LinkClientTests
         // Starting the listener and the server
         TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next()));
         port = listener.LocalEndPoint.Port;
-        OperationDispatcher dispatcher = new OperationDispatcher().Register<PingRequest, PingResponse>(BackOperations.Ping,
+        OperationDispatcher dispatcher = new OperationDispatcher(NullLogger.Instance).Register<PingRequest, PingResponse>(BackOperations.Ping,
             (_, _) => Task.FromResult(new PingResponse(_pingTime)));
         LinkServer server = new LinkServer(listener, new RequestServer(new FrameCodec(), dispatcher.HandleAsync), PeerName, NullLogger.Instance,
             LinkServer.DefaultAcceptFailurePause);

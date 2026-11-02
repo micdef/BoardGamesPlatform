@@ -10,6 +10,7 @@ using System.Net.Sockets;
 using BoardGamesPlatform.Back.Contracts.Ping;
 using BoardGamesPlatform.Gateway.BackLink;
 using BoardGamesPlatform.Gateway.Tests.Support;
+using BoardGamesPlatform.Protocol.Errors;
 using BoardGamesPlatform.Protocol.Transport;
 using BoardGamesPlatform.TestKit;
 
@@ -147,10 +148,10 @@ public sealed class BackClientTests
     }
 
     /// <summary>
-    /// Ping fails with a SocketException when nothing listens
+    /// Ping fails with a link failure ("link.unavailable", the socket error inside) when nothing listens
     /// </summary>
     [Fact(Timeout = RefusalTestTimeout)]
-    public async Task PingFailsWithASocketExceptionWhenNothingListensAsync()
+    public async Task PingFailsWithALinkFailureWhenNothingListensAsync()
     {
         // Taking a port of the test block that nothing binds
         CancellationToken token = TestContext.Current.CancellationToken;
@@ -158,7 +159,9 @@ public sealed class BackClientTests
         await using BackClient client = CreateClient(closedPort);
 
         // Checks
-        await Should.ThrowAsync<SocketException>(async () => await client.PingAsync(token));
+        LinkFailureException failure = await Should.ThrowAsync<LinkFailureException>(async () => await client.PingAsync(token));
+        failure.Code.ShouldBe(ErrorCodes.LinkUnavailable);
+        failure.InnerException.ShouldBeOfType<SocketException>();
     }
 
     /// <summary>

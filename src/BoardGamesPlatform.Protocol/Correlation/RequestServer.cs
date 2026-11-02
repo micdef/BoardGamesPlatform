@@ -29,8 +29,9 @@ namespace BoardGamesPlatform.Protocol.Correlation;
 /// peer cannot make it start an unbounded amount of work. The responses are written one at a time.</para>
 /// <list type="bullet">
 /// <item><description>A frame with the reserved identifier <see cref="Frame.NoCorrelation"/> is a protocol violation.</description></item>
-/// <item><description>A handler that throws ends the service of the connection: until the error codes of 0.4.0, a request has no other way to
-/// report a failure, and a client must not wait for a response that will never come.</description></item>
+/// <item><description>A handler that throws ends the service of the connection, since a client must not wait for a response that will never
+/// come. The handler of the tiers, <see cref="Messages.OperationDispatcher"/>, turns the failures of a request into an error code instead, so
+/// that it only throws for a malformed envelope.</description></item>
 /// </list>
 /// </remarks>
 public sealed class RequestServer
