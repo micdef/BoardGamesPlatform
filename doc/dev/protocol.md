@@ -3,7 +3,7 @@
 This document specifies the protocol of the two links between the tiers: Gateway → Back (port 7821) and Back → Very Back (port 7822).
 It describes version 1 of the protocol, delivered in 0.4.0. The code is in `src/BoardGamesPlatform.Protocol`; its XML comments give the details of each class.
 
-Until 0.5.0 the links are plain TCP, for development only: nothing is encrypted nor authenticated. TLS 1.3 with mutual authentication comes in 0.5.0, and an authenticated ECDH handshake on the Back → Very Back link in 0.6.0. Both wrap the byte stream described here; they change nothing above it.
+Until 0.5.0 the links are plain TCP, for development only: nothing is encrypted nor authenticated. Until then, any process that can reach the port can call every operation, and hold the connections of the server for as long as it pings: keep the listeners on the loopback address or on a trusted network (see `doc/adm/back.md` and `doc/adm/very-back.md`). TLS will authenticate the tiers, not the players: the requests carry no session before 0.10.0. TLS 1.3 with mutual authentication comes in 0.5.0, and an authenticated ECDH handshake on the Back → Very Back link in 0.6.0. Both wrap the byte stream described here; they change nothing above it.
 
 ## Layers
 
@@ -42,7 +42,7 @@ The client speaks first. Both messages are control messages, on identifier 0. No
    - `protocol.limitsMismatch`: both ends are not configured with the same largest payload.
 
 The client checks the answer again: a version outside its range, another largest payload or a limit below one is a protocol violation.
-The server gives a client 5 seconds for the whole handshake. The client bounds it with its connect timeout (5 seconds by default).
+The server gives a client 5 seconds for the whole handshake. The client bounds it with its connect timeout (`Back:ConnectTimeout` in the Gateway and `VeryBack:ConnectTimeout` in the Back, 5 seconds by default).
 The version is agreed once per connection: no message carries a version field.
 
 ## Control messages
@@ -90,7 +90,7 @@ A code is a short dotted name, never a display text and never an internal detail
 
 A tier passes on the code of a failed link: when the Very Back cannot be reached, the Back answers the Gateway `link.unavailable`. A code answered by a tier behind is not passed on, except `server.busy`: any other one becomes `internal`, since it could tell how the tiers are built.
 
-**What closes the connection instead of a code**: a malformed frame, a malformed request envelope, a malformed or unexpected control message, a request before the hello, a request whose identifier is still in progress, a response to an identifier that was never sent, and a failed write. In each of these cases, the stream can no longer be trusted.
+**What closes the connection instead of a code**: a malformed frame, a malformed request envelope, a malformed or unexpected control message, a request before the hello, a request whose identifier is still in progress, a response to an identifier that was never sent, and a failed write on the stream. In each of these cases, the stream can no longer be trusted.
 
 ## Cancellation
 
@@ -101,17 +101,17 @@ When the caller of a request gives up (its token is canceled, or the request tim
 
 The server cancels the token of that request only and answers nothing, whatever the exception the handler ends with. A handler that finishes anyway is answered, and the client ignores the response. A cancellation for a request that already ended, or never existed, is ignored.
 
-When a client closes its sending side, the requests still in progress are answered (it may still read), but those still running after the idle timeout of the server (45 seconds) are canceled, so that a connection never stays held.
+When a client closes its sending side, the requests still in progress are answered (it may still read), but those still running after the idle timeout of the server (45 seconds) are canceled, so that a connection never stays held; the service then ends with a failure that the link server logs. A handler must observe the token of its request: one that ignores it holds its place until it ends by itself.
 
-Through the tiers, a front that disconnects stops the work of its call in the Back and in the Very Back, down to the call to the database.
+Through the tiers, a front that disconnects stops the work of its call in the Back and in the Very Back, down to the procedure that calls the database, which passes the token to the SQL client.
 
 ## Heartbeat
 
 | Timing | Value |
 |--------|-------|
 | The client sends a `ping` every | 10 seconds |
-| The client closes when it has received no frame at all for | 30 seconds |
-| The server closes when it has received no frame at all for | 45 seconds |
+| The client closes when it has received no frame at all for more than | 30 seconds, checked at each ping (so within 40 seconds) |
+| The server closes when it has received no frame at all for more than | 45 seconds, checked every 10 seconds (so within 55 seconds) |
 
 Any frame counts, a request or a response as well as a ping or a pong. Each end watches with its own timer, and no read is ever canceled without closing the connection. The write of a ping is bounded by the client timeout, so that a peer that no longer reads cannot block the heartbeat.
 
