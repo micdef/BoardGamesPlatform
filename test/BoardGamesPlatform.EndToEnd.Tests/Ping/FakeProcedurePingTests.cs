@@ -6,6 +6,7 @@
  */
 
 // Using
+using System.Diagnostics;
 using BoardGamesPlatform.EndToEnd.Tests.Support;
 using BoardGamesPlatform.Gateway.Contracts;
 using BoardGamesPlatform.Gateway.Contracts.Ping;
@@ -173,10 +174,13 @@ public sealed class FakeProcedurePingTests
         await procedure.Entered.WaitAsync(token);
 
         // The player closes the tab: the front disconnects while the call runs
+        Stopwatch elapsed = Stopwatch.StartNew();
         await front.DisposeAsync();
 
-        // Checks: the call in the Very Back is canceled, and the Ping of the front ends instead of hanging
+        // Checks: the call in the Very Back is canceled by the propagation, well before the request timeout of the Back (5 seconds) would
+        // cancel it anyway, and the Ping of the front ends instead of hanging
         await procedure.Canceled.WaitAsync(token);
+        elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(3));
         await Should.ThrowAsync<Exception>(async () => await ping);
     }
 

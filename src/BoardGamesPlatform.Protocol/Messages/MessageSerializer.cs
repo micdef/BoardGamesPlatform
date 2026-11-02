@@ -27,7 +27,8 @@ namespace BoardGamesPlatform.Protocol.Messages;
 /// <remarks>
 /// <para><b>Purpose:</b> one single place that decides the JSON format of every message between the tiers, so that both ends of a link always
 /// agree, and that a malformed message is refused the same way everywhere.</para>
-/// <para><b>Behavior:</b> a request is <c>{"operation":"&lt;name&gt;","body":{…}}</c>, a response is <c>{"body":{…}}</c>, in UTF-8, with camelCase
+/// <para><b>Behavior:</b> the error messages never copy a text of the peer (a property name, a value): they reach the logs, where a peer
+/// could otherwise write fake lines or control characters. A request is <c>{"operation":"&lt;name&gt;","body":{…}}</c>, a response is <c>{"body":{…}}</c>, in UTF-8, with camelCase
 /// property names. Reading is strict and refuses with an <see cref="InvalidDataException"/>, which the request client and the request server
 /// treat as a protocol violation: malformed JSON, an unknown property, a property written twice or in another case, a missing envelope part
 /// or constructor parameter, a null body, a number written as a string, a date without its offset, and a JSON nested deeper than
@@ -160,7 +161,7 @@ public static partial class MessageSerializer
         }
         catch (Exception exception) when (exception is JsonException or InvalidOperationException)
         {
-            throw new InvalidDataException($"The {what} is not valid: {exception.Message}", exception);
+            throw new InvalidDataException($"The {what} is not valid JSON for its type");
         }
 
         // Check
@@ -184,7 +185,13 @@ public static partial class MessageSerializer
     /// <returns>
     /// The UTF-8 JSON of the envelope
     /// </returns>
+    /// <remarks>
+    /// <para><b>Behavior:</b> the request is checked against the rules of the reader before anything is written: a name that is not a valid
+    /// operation name, or a body that is not written as a JSON object, is a bug of the caller, refused here with an
+    /// <see cref="ArgumentException"/>. Sent as it is, it would be a protocol violation that closes the connection of every caller.</para>
+    /// </remarks>
     /// <exception cref="ArgumentNullException">If the operation is null, empty or white spaces, or if the body is null</exception>
+    /// <exception cref="ArgumentException">If the operation is not a valid name, or the body is not written as a JSON object</exception>
     public static byte[] WriteRequest<TRequest>(string operation, TRequest body)
         where TRequest : class
     {
@@ -193,9 +200,16 @@ public static partial class MessageSerializer
             throw new ArgumentNullException(nameof(operation), $"The value of the parameter: {nameof(operation)} cannot be null or empty");
         if (body is null)
             throw new ArgumentNullException(nameof(body), $"The value of the parameter: {nameof(body)} cannot be null");
+        if (!OperationNamePattern().IsMatch(operation))
+            throw new ArgumentException($"The value of the parameter: {nameof(operation)} is not a valid operation name (1 to {MaxOperationNameLength} characters among A-Z, a-z, 0-9, '.', '_', '-')", nameof(operation));
+
+        // Transforming data: the body first, which must be a JSON object
+        JsonElement element = JsonSerializer.SerializeToElement(body, _options);
+        if (element.ValueKind != JsonValueKind.Object)
+            throw new ArgumentException($"The value of the parameter: {nameof(body)} is not written as a JSON object", nameof(body));
 
         // Function's return
-        return JsonSerializer.SerializeToUtf8Bytes(new RequestEnvelope<TRequest>(operation, body), _options);
+        return JsonSerializer.SerializeToUtf8Bytes(new RequestEnvelope<JsonElement>(operation, element), _options);
     }
 
     /// <summary>
@@ -251,7 +265,7 @@ public static partial class MessageSerializer
         }
         catch (Exception exception) when (exception is JsonException or InvalidOperationException)
         {
-            throw new InvalidDataException($"The message body is not valid: {exception.Message}", exception);
+            throw new InvalidDataException("The message body is not valid JSON for its type");
         }
 
         // Check
@@ -387,7 +401,7 @@ public static partial class MessageSerializer
         }
         catch (Exception exception) when (exception is JsonException or InvalidOperationException)
         {
-            throw new InvalidDataException("The control message is not valid JSON", exception);
+            throw new InvalidDataException("The control message is not valid JSON");
         }
 
         // Function's return: the whole message, read with the type of its kind

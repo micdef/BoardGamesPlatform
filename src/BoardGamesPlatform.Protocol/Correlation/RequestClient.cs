@@ -128,6 +128,17 @@ public sealed class RequestClient : IAsyncDisposable
     private long _lastCorrelationId;
 
     /// <summary>
+    /// Ping written at each tick of the heartbeat, built once
+    /// </summary>
+    private static readonly byte[] _ping = MessageSerializer.WriteControl(HeartbeatMessage.Ping);
+
+    /// <summary>
+    /// Failure to close the connection met by a cancellation sent apart from any caller; thrown by <see cref="DisposeAsync"/>, so that it is
+    /// never lost; null while none happened
+    /// </summary>
+    private Exception? _detachedCloseFailure;
+
+    /// <summary>
     /// Why the client closed; null while it is open
     /// </summary>
     private Exception? _closeReason;
@@ -174,6 +185,11 @@ public sealed class RequestClient : IAsyncDisposable
     /// <see cref="Completion"/> completes, so that a caller never picks a client that is closing
     /// </summary>
     public bool IsOpen => Volatile.Read(ref _closeReason) is null;
+
+    /// <summary>
+    /// Why the client closed (the peer, a failure, a violation, the heartbeat, the disposal), for the logs of the caller; null while it is open
+    /// </summary>
+    public Exception? CloseReason => Volatile.Read(ref _closeReason);
 
     #endregion
 
@@ -332,7 +348,7 @@ public sealed class RequestClient : IAsyncDisposable
                     await _writeLock.WaitAsync(writing.Token).ConfigureAwait(false);
                     try
                     {
-                        await _codec.WriteAsync(_connection.Stream, new Frame(Frame.NoCorrelation, MessageSerializer.WriteControl(HeartbeatMessage.Ping)), writing.Token)
+                        await _codec.WriteAsync(_connection.Stream, new Frame(Frame.NoCorrelation, _ping), writing.Token)
                             .ConfigureAwait(false);
                     }
                     finally
@@ -420,8 +436,9 @@ public sealed class RequestClient : IAsyncDisposable
     /// </summary>
     /// <remarks>
     /// <para><b>Behavior:</b> best effort, run apart from the caller who canceled: the message waits for the write lock like any frame. When
-    /// the client closes meanwhile, nothing is sent (the server then cancels every request of the connection anyway). A failed write closes the
-    /// client, following the connection rule of the codec; the task itself never fails.</para>
+    /// the client closes meanwhile, nothing is sent (the server then cancels the requests still running after its idle timeout). A failed write
+    /// closes the client, following the connection rule of the codec; a failure of that close is thrown by <see cref="DisposeAsync"/>. The task
+    /// itself never fails.</para>
     /// </remarks>
     /// <param name="correlationId">Correlation identifier of the abandoned request</param>
     /// <returns>
@@ -445,13 +462,20 @@ public sealed class RequestClient : IAsyncDisposable
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
         {
-            // The client closes: the server sees the connection end and cancels every request of it
+            // The client closes: the server sees the connection end, and cancels the requests still running after its idle timeout
         }
         catch (Exception exception)
         {
-            // A failed write leaves the stream in an unknown state: the client closes; a failure of that close is kept by the close itself
-            // (it completes the client in every case) and is thrown to the caller of DisposeAsync
-            await CloseAsync(exception).ConfigureAwait(false);
+            // A failed write leaves the stream in an unknown state: the client closes (it completes in every case); a failure of that close
+            // has no caller here, so it is kept for DisposeAsync
+            try
+            {
+                await CloseAsync(exception).ConfigureAwait(false);
+            }
+            catch (Exception closeFailure)
+            {
+                Interlocked.CompareExchange(ref _detachedCloseFailure, closeFailure, null);
+            }
         }
     }
 
@@ -614,6 +638,11 @@ public sealed class RequestClient : IAsyncDisposable
         await CloseAsync(new ObjectDisposedException(nameof(RequestClient), "The request client has been disposed")).ConfigureAwait(false);
         await _readLoop.ConfigureAwait(false);
         await _heartbeatLoop.ConfigureAwait(false);
+
+        // Throwing the failure of a close that no caller could see
+        Exception? detached = Volatile.Read(ref _detachedCloseFailure);
+        if (detached is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(detached).Throw();
     }
 
     #endregion
