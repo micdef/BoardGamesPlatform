@@ -62,14 +62,14 @@ Any other combination (a hello after the handshake, a ping from the server, a ca
 
 ## Requests and responses
 
-A request is `{"operation":"<name>","body":{…}}`. The name is 1 to 64 characters among `A-Z a-z 0-9 . _ -`, matched exactly (case-sensitive).
+A request is `{"operation":"<name>","body":{…}}`. The name is 1 to 64 characters among `A-Z a-z 0-9 . _ -`, matched exactly (case-sensitive). The writer checks both rules: a request the reader would refuse is a bug of its caller, refused before anything is written.
 
 A response holds **exactly one** part:
 
 - `{"body":{…}}`: the answer of the operation;
 - `{"error":{"code":"…"}}`: why there is no answer.
 
-The JSON is UTF-8 and camelCase. It is read strictly: an unknown or duplicated property, a property in another case, a number written as a string, a date without its offset, and nesting deeper than 16 levels are refused.
+The JSON is UTF-8 and camelCase. It is read strictly: an unknown or duplicated property, a property in another case, a number written as a string, a date without its offset, and nesting deeper than 16 levels are refused. The error never copies a text of the peer (a property name, a value), so that a peer cannot write lines or control characters into the logs.
 
 Responses may arrive in any order: the correlation identifier pairs each one with its request.
 
@@ -81,14 +81,14 @@ A code is a short dotted name, never a display text and never an internal detail
 |------|---------|------------|
 | `request.unknownOperation` | The operation is unknown to the peer (two tiers of different versions, for example) | kept |
 | `request.invalid` | The body does not match its operation | kept |
-| `internal` | The peer failed while handling the request | kept |
+| `internal` | The peer failed while handling the request, could not write its response, or wrote one larger than the link can carry | kept |
 | `link.unavailable` | A tier the peer needs cannot be reached, or its connection was lost before the response | kept |
-| `link.timeout` | A tier the peer needs did not answer in time; the request was canceled there | kept |
+| `link.timeout` | A tier the peer needs did not answer within the request timeout (the wait for the connection included); the request was canceled there | kept |
 | `server.busy` | The connection already has as many requests in progress as the server allows; the request was not started | kept |
 | `protocol.versionUnsupported` | No common protocol version (handshake) | closed |
 | `protocol.limitsMismatch` | Different largest payloads (handshake) | closed |
 
-A tier passes on the code of a failed link: when the Very Back cannot be reached, the Back answers the Gateway `link.unavailable`.
+A tier passes on the code of a failed link: when the Very Back cannot be reached, the Back answers the Gateway `link.unavailable`. A code answered by a tier behind is not passed on, except `server.busy`: any other one becomes `internal`, since it could tell how the tiers are built.
 
 **What closes the connection instead of a code**: a malformed frame, a malformed request envelope, a malformed or unexpected control message, a request before the hello, a request whose identifier is still in progress, a response to an identifier that was never sent, and a failed write. In each of these cases, the stream can no longer be trusted.
 
@@ -99,7 +99,9 @@ When the caller of a request gives up (its token is canceled, or the request tim
 1. stops waiting at once, and forgets the request: a late response is ignored;
 2. once the request is written, sends `{"control":"cancel","correlationId":N}`, once.
 
-The server cancels the token of that request only and answers nothing. A handler that finishes anyway is answered, and the client ignores the response. A cancellation for a request that already ended, or never existed, is ignored.
+The server cancels the token of that request only and answers nothing, whatever the exception the handler ends with. A handler that finishes anyway is answered, and the client ignores the response. A cancellation for a request that already ended, or never existed, is ignored.
+
+When a client closes its sending side, the requests still in progress are answered (it may still read), but those still running after the idle timeout of the server (45 seconds) are canceled, so that a connection never stays held.
 
 Through the tiers, a front that disconnects stops the work of its call in the Back and in the Very Back, down to the call to the database.
 
@@ -118,12 +120,13 @@ Any frame counts, a request or a response as well as a ping or a pong. Each end 
 | Limit | Value | When reached |
 |-------|-------|--------------|
 | Largest payload of a frame | 1 MiB (16 MiB at most) | the frame is refused, the connection closed |
-| Requests in progress per connection | 64, announced in the handshake | the client waits for a place; a request beyond it is answered `server.busy` |
+| Requests in progress per connection | 64, announced in the handshake (the client never keeps more than 64, whatever the server announces) | the client waits for a place; a request beyond it is answered `server.busy` |
 | Connections served by a link server | 8 | a new connection is closed at once, and a warning is logged |
 | Handshake | 5 seconds | the connection is closed |
-| Request timeout | `Back:RequestTimeout` (Gateway, 8 s) and `VeryBack:RequestTimeout` (Back, 5 s), at most 5 minutes | `link.timeout`, the request is canceled on the peer |
+| Request timeout, the wait for the connection included | `Back:RequestTimeout` (Gateway, 8 s) and `VeryBack:RequestTimeout` (Back, 5 s), at most 5 minutes | `link.timeout`, the request is canceled on the peer |
+| Response of an operation | the largest payload of the link | `internal`, logged; the connection stays open |
 
-The server never stops reading while a connection lives, so that a cancellation or a ping is always received, even when every place is taken. It gives the place of a request back just before writing its response, so that the next request of the client always finds it free.
+The server never waits for a place to read, so that a cancellation or a ping is received at once, even when every place is taken; only a client that stops reading the answers written from the read loop (a pong, a `server.busy`) can stall it, until the idle timeout closes the connection. It gives the place of a request back just before writing its response, so that the next request of the client always finds it free.
 
 The request timeouts decrease along the chain (website 10 s > Gateway 8 s > Back 5 s), so that each tier still answers a code before its caller gives up.
 
@@ -132,7 +135,7 @@ The request timeouts decrease along the chain (website 10 s > Gateway 8 s > Back
 The link client shares one connection between all its callers.
 
 - A lost connection is opened again by the next call, at once.
-- When opening fails (the peer is down, refuses, or breaks the handshake), the next attempt waits a back-off delay: 0.5 second, doubled after each failure up to 30 seconds, spread at random by 20 % either way.
+- When opening fails (the peer is down, refuses, or breaks the handshake), the next attempt waits a back-off delay: 0.5 second, doubled after each failure, spread at random by 20 % either way, and never more than 30 seconds. It is counted on a monotonic clock, so that a change of the system time does not change it.
 - During the delay, calls fail at once with `link.unavailable`, without touching the network.
 - The first connection that opens resets the delay.
 - A request in flight on a lost connection fails with `link.unavailable`. No request is ever retried automatically, since the peer may already have handled it (idempotency comes with 0.14.0).
@@ -145,4 +148,6 @@ The protocol logs through the logger of the tier that uses it, with event ids re
 |-------|-----------|
 | `LinkClient` | 9001-9006 |
 | `LinkServer` | 9011-9019 |
-| `OperationDispatcher` | 9021-9024 |
+| `OperationDispatcher` | 9021-9026 |
+
+The loss of a connection is logged with its reason (heartbeat timeout, protocol violation, reset by the peer).
