@@ -242,6 +242,7 @@ public sealed class RequestServer
             }
             catch (OperationCanceledException) when (requestToken.IsCancellationRequested && !service.Token.IsCancellationRequested)
             {
+                // Function's return: nothing to answer
                 return;
             }
 
@@ -337,6 +338,8 @@ public sealed class RequestServer
                 if (_timeProvider.GetElapsedTime(service.LastReceived) > _heartbeat.ServerIdleTimeout)
                 {
                     service.Fail(new TimeoutException($"The client sent no frame for more than {_heartbeat.ServerIdleTimeout}"));
+
+                    // Function's return: the service ends
                     return;
                 }
             }

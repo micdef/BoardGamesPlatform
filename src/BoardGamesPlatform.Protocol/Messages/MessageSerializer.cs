@@ -236,9 +236,9 @@ public static partial class MessageSerializer
         {
             _ = envelope.Body.GetRawText();
         }
-        catch (InvalidOperationException exception)
+        catch (InvalidOperationException)
         {
-            throw new InvalidDataException("The body of the request envelope is not valid UTF-8", exception);
+            throw new InvalidDataException("The body of the request envelope is not valid UTF-8");
         }
 
         // Function's return

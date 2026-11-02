@@ -246,9 +246,9 @@ public sealed partial class OperationDispatcher
                 TResponse response = await handler(request, cancellationToken).ConfigureAwait(false);
                 written = MessageSerializer.WriteResponse(response);
             }
-            catch (Exception) when (cancellationToken.IsCancellationRequested)
+            catch (Exception exception) when (cancellationToken.IsCancellationRequested)
             {
-                throw new OperationCanceledException(cancellationToken);
+                throw new OperationCanceledException($"The request of {operation} was canceled", exception, cancellationToken);
             }
             catch (RemoteErrorException exception)
             {

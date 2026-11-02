@@ -239,7 +239,7 @@ public sealed class LinkHardeningTests
 
     /// <summary>
     /// A client that closes its sending side while a request runs does not hold the server: the request is canceled once the idle timeout
-    /// has passed, and the service ends without error
+    /// has passed, and the service reports it
     /// </summary>
     [Fact(Timeout = TestTimeout)]
     public async Task AClosedClientDoesNotHoldTheServerAsync()
@@ -277,9 +277,9 @@ public sealed class LinkHardeningTests
         await Task.Delay(500, token);
         clock.Advance(HeartbeatSettings.Default.ServerIdleTimeout + TimeSpan.FromSeconds(1));
 
-        // Checks: the handler is canceled, and the service ends without error
+        // Checks: the handler is canceled, and the service reports the requests it had to cancel, so that the link server logs them
         await canceled.Task.WaitAsync(token);
-        await serving;
+        await Should.ThrowAsync<TimeoutException>(() => serving);
     }
 
     #endregion
