@@ -33,11 +33,13 @@ namespace BoardGamesPlatform.Protocol.Correlation;
 /// the same time; beyond it, the request is answered at once with the code <see cref="ErrorCodes.ServerBusy"/>, without being started, so that
 /// a peer cannot make the server start an unbounded amount of work. The frames are written one at a time.</para>
 /// <list type="bullet">
+/// <item><description>A ping of the client is answered with a pong; a connection on which nothing at all was received for the idle timeout
+/// of <see cref="HeartbeatSettings"/> is given up, so that a dead client does not hold its slots.</description></item>
 /// <item><description>Each request has its own token: a <see cref="CancelMessage"/> of the client cancels it, and a handler that ends with
 /// that cancellation is not answered (the client already forgot the request). A handler that finishes anyway is answered; the client
 /// ignores the response.</description></item>
-/// <item><description>A request whose identifier is still in progress, a control message other than a cancellation, or a malformed one, is a
-/// protocol violation.</description></item>
+/// <item><description>A request whose identifier is still in progress, a control message other than a cancellation or a ping, or a malformed
+/// one, is a protocol violation.</description></item>
 /// <item><description>A handler that throws ends the service of the connection, since a client must not wait for a response that will never
 /// come. The handler of the tiers, <see cref="OperationDispatcher"/>, turns the failures of a request into an error code instead, so that it
 /// only throws for a malformed envelope.</description></item>
@@ -77,6 +79,21 @@ public sealed class RequestServer
     /// Number of requests of one connection handled at the same time, at most
     /// </summary>
     private readonly int _maxConcurrentRequests;
+
+    /// <summary>
+    /// Timings of the heartbeat
+    /// </summary>
+    private readonly HeartbeatSettings _heartbeat;
+
+    /// <summary>
+    /// Clock of the heartbeat (the system clock outside the tests)
+    /// </summary>
+    private readonly TimeProvider _timeProvider;
+
+    /// <summary>
+    /// Pong written for each ping, built once
+    /// </summary>
+    private static readonly byte[] _pong = MessageSerializer.WriteControl(HeartbeatMessage.Pong);
 
     #endregion
 
@@ -135,10 +152,12 @@ public sealed class RequestServer
     /// called for several requests at the same time. It must observe the token: the service of a connection only ends once every handler has
     /// returned. Its response must not exceed the maximum length of the codec; a larger one is a handler failure.</param>
     /// <param name="maxConcurrentRequests">Number of requests of one connection handled at the same time, at most; 1 or more</param>
+    /// <param name="heartbeat">[Can be null] Timings of the heartbeat; null for <see cref="HeartbeatSettings.Default"/></param>
+    /// <param name="timeProvider">[Can be null] Clock of the heartbeat; null for the system clock</param>
     /// <exception cref="ArgumentNullException">If the codec or the handler is null</exception>
     /// <exception cref="ArgumentOutOfRangeException">If the maximum number of requests is zero or negative</exception>
     public RequestServer(FrameCodec codec, Func<ReadOnlyMemory<byte>, CancellationToken, Task<ReadOnlyMemory<byte>>> handler,
-        int maxConcurrentRequests = DefaultMaxConcurrentRequests)
+        int maxConcurrentRequests = DefaultMaxConcurrentRequests, HeartbeatSettings? heartbeat = null, TimeProvider? timeProvider = null)
     {
         // Checks
         if (codec is null)
@@ -152,6 +171,8 @@ public sealed class RequestServer
         _codec = codec;
         _handler = handler;
         _maxConcurrentRequests = maxConcurrentRequests;
+        _heartbeat = heartbeat ?? HeartbeatSettings.Default;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     #endregion
@@ -258,18 +279,65 @@ public sealed class RequestServer
     /// <summary>
     /// Method used to act on a control message received after the handshake
     /// </summary>
+    /// <param name="connection">[Cannot be null] Connection to answer on</param>
     /// <param name="frame">[Cannot be null] Frame with the reserved identifier</param>
     /// <param name="service">[Cannot be null] State shared by the requests of the connection</param>
+    /// <returns>
+    /// A task that completes once the message is handled
+    /// </returns>
     /// <exception cref="InvalidDataException">If the message is malformed, or is not one the client may send after the handshake</exception>
-    private static void HandleControl(Frame frame, ServedConnectionState service)
+    private async Task HandleControlAsync(ITransportConnection connection, Frame frame, ServedConnectionState service)
     {
-        // Reading the message: only a cancellation is expected
+        // Reading the message: a cancellation or a ping is expected
         ControlMessage message = MessageSerializer.ReadControl(frame.Payload.Span);
-        if (message is not CancelMessage cancel)
-            throw new InvalidDataException("The client sent a control message that is not expected after the handshake");
+        switch (message)
+        {
+            // Canceling the request, if it is still in progress
+            case CancelMessage cancel:
+                service.CancelRequest(cancel.CorrelationId);
+                break;
 
-        // Canceling the request, if it is still in progress
-        service.CancelRequest(cancel.CorrelationId);
+            // Answering the ping, like any frame
+            case HeartbeatMessage { Control: ControlKinds.Ping }:
+                await WriteAsync(connection, new Frame(Frame.NoCorrelation, _pong), service).ConfigureAwait(false);
+                break;
+
+            default:
+                throw new InvalidDataException("The client sent a control message that is not expected after the handshake");
+        }
+    }
+
+    /// <summary>
+    /// Method used to end the service of a connection on which nothing was received for too long
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> checks at each ping interval the time since the last frame received; beyond the server idle timeout, the service
+    /// fails with a <see cref="TimeoutException"/>, which cancels the read and the requests in progress (the caller then closes the connection,
+    /// following the connection rule of the codec). Never throws.</para>
+    /// </remarks>
+    /// <param name="service">[Cannot be null] State shared by the requests of the connection</param>
+    /// <param name="cancellationToken">Token canceled when the read loop has ended</param>
+    /// <returns>
+    /// A task that completes when the watch stops
+    /// </returns>
+    private async Task WatchIdleAsync(ServedConnectionState service, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using PeriodicTimer timer = new PeriodicTimer(_heartbeat.PingInterval, _timeProvider);
+            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+            {
+                if (_timeProvider.GetElapsedTime(service.LastReceived) > _heartbeat.ServerIdleTimeout)
+                {
+                    service.Fail(new TimeoutException($"The client sent no frame for more than {_heartbeat.ServerIdleTimeout}"));
+                    return;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The read loop has ended
+        }
     }
 
     #endregion
@@ -301,7 +369,9 @@ public sealed class RequestServer
             throw new ArgumentNullException(nameof(connection), $"The value of the parameter: {nameof(connection)} cannot be null");
 
         // Reading the frames until the peer closes or the service fails: never waiting for a slot, so that the control messages always arrive
-        using ServedConnectionState service = new ServedConnectionState(_maxConcurrentRequests, cancellationToken);
+        using ServedConnectionState service = new ServedConnectionState(_maxConcurrentRequests, _timeProvider.GetTimestamp(), cancellationToken);
+        using CancellationTokenSource watching = CancellationTokenSource.CreateLinkedTokenSource(service.Token);
+        Task watchdog = WatchIdleAsync(service, watching.Token);
         try
         {
             while (true)
@@ -309,11 +379,12 @@ public sealed class RequestServer
                 Frame? frame = await _codec.ReadAsync(connection.Stream, service.Token).ConfigureAwait(false);
                 if (frame is null)
                     break;
+                service.MarkReceived(_timeProvider.GetTimestamp());
 
                 // A control message is handled at once, in the read loop
                 if (frame.CorrelationId == Frame.NoCorrelation)
                 {
-                    HandleControl(frame, service);
+                    await HandleControlAsync(connection, frame, service).ConfigureAwait(false);
                     continue;
                 }
 
@@ -337,6 +408,10 @@ public sealed class RequestServer
         {
             service.Fail(exception);
         }
+
+        // Stopping the idle watch: the read loop has ended
+        await watching.CancelAsync().ConfigureAwait(false);
+        await watchdog.ConfigureAwait(false);
 
         // Waiting for the requests in progress (each one gives its slot back), then for the last response being written, which holds the
         // write lock without a slot: once both are taken, nothing of this connection runs any more

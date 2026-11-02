@@ -397,6 +397,7 @@ public static partial class MessageSerializer
             ControlKinds.HelloAck => Read<HelloAckMessage>(payload, "hello acknowledgement"),
             ControlKinds.HelloRefused => Read<HelloRefusedMessage>(payload, "hello refusal"),
             ControlKinds.Cancel => Read<CancelMessage>(payload, "cancellation"),
+            ControlKinds.Ping or ControlKinds.Pong => Read<HeartbeatMessage>(payload, "heartbeat"),
             _ => throw new InvalidDataException("The kind of the control message is unknown")
         };
     }
