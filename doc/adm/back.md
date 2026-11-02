@@ -20,6 +20,7 @@ As environment variables: `Back__ListenAddress`, `Back__Port`, `VeryBack__Host`,
 
 In 0.3.0 and 0.4.0 both links of the Back are plain TCP, for development only. TLS 1.3 comes with 0.5.0, before any real use.
 
+- **Handshake**: each connection opens with a handshake, before any request: the client offers the protocol versions it speaks and its largest frame, the server chooses the newest common version and answers its own limit of requests in progress. A client without a common version, or configured with another largest frame, is refused with the code `protocol.versionUnsupported` or `protocol.limitsMismatch`, logged, and disconnected. A client that does not complete the handshake within 5 seconds is disconnected too.
 - **From the Gateway**: each connection is served on its own. A request that fails is answered with an error code (never a text), logged with its cause, and the connection stays open. A connection that breaks the protocol (a malformed frame or envelope) is closed and logged as a warning, and the other connections are not affected.
 - **To the Very Back**: one connection, shared by every request, opened on the first one; when it is lost, the next request opens a new one. A failed request is not retried (retries come with 0.4.0).
 - When the Very Back cannot be reached, the request of the Gateway is answered with the code `link.unavailable`, and the connection of the Gateway stays open.

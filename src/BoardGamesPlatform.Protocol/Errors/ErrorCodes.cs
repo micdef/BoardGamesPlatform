@@ -58,6 +58,16 @@ public static partial class ErrorCodes
     /// </summary>
     public const string LinkUnavailable = "link.unavailable";
 
+    /// <summary>
+    /// The server speaks none of the protocol versions of the client: one of the two tiers must be updated
+    /// </summary>
+    public const string ProtocolVersionUnsupported = "protocol.versionUnsupported";
+
+    /// <summary>
+    /// Both ends of the link are not configured with the same largest frame
+    /// </summary>
+    public const string ProtocolLimitsMismatch = "protocol.limitsMismatch";
+
     #endregion
 
     #region Variables

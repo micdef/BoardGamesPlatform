@@ -9,6 +9,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using BoardGamesPlatform.Protocol.Control;
 using BoardGamesPlatform.Protocol.Errors;
 
 // Static using
@@ -334,6 +335,69 @@ public static partial class MessageSerializer
 
         // Function's return
         return envelope.Body!;
+    }
+
+    /// <summary>
+    /// Method used to write a control message, the payload of a frame with the reserved correlation identifier
+    /// </summary>
+    /// <typeparam name="TMessage">Type of the control message</typeparam>
+    /// <param name="message">[Cannot be null] Control message</param>
+    /// <returns>
+    /// The UTF-8 JSON of the message, its kind first
+    /// </returns>
+    /// <exception cref="ArgumentNullException">If the message is null</exception>
+    public static byte[] WriteControl<TMessage>(TMessage message)
+        where TMessage : ControlMessage
+    {
+        // Check
+        if (message is null)
+            throw new ArgumentNullException(nameof(message), $"The value of the parameter: {nameof(message)} cannot be null");
+
+        // Function's return
+        return JsonSerializer.SerializeToUtf8Bytes(message, _options);
+    }
+
+    /// <summary>
+    /// Method used to read a control message, whatever its kind
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> the kind is read first: the first property of the object must be <c>control</c>, a string naming a known kind;
+    /// the whole message is then read strictly with the type of that kind. The kind read is never copied into an error message, since it
+    /// comes from the peer.</para>
+    /// </remarks>
+    /// <param name="payload">UTF-8 JSON of the message</param>
+    /// <returns>
+    /// The message, of the type of its kind (see <see cref="ControlKinds"/>)
+    /// </returns>
+    /// <exception cref="InvalidDataException">If the message is malformed, does not start with its kind, or has an unknown kind</exception>
+    public static ControlMessage ReadControl(ReadOnlySpan<byte> payload)
+    {
+        // Reading the kind: the first property, a string
+        string? kind;
+        try
+        {
+            Utf8JsonReader reader = new Utf8JsonReader(payload, new JsonReaderOptions { MaxDepth = MaxDepth });
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject
+                || !reader.Read() || reader.TokenType != JsonTokenType.PropertyName || !reader.ValueTextEquals("control"u8)
+                || !reader.Read() || reader.TokenType != JsonTokenType.String)
+            {
+                throw new InvalidDataException("A control message must start with its kind, the string property control");
+            }
+            kind = reader.GetString();
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+        {
+            throw new InvalidDataException("The control message is not valid JSON", exception);
+        }
+
+        // Function's return: the whole message, read with the type of its kind
+        return kind switch
+        {
+            ControlKinds.Hello => Read<HelloMessage>(payload, "hello message"),
+            ControlKinds.HelloAck => Read<HelloAckMessage>(payload, "hello acknowledgement"),
+            ControlKinds.HelloRefused => Read<HelloRefusedMessage>(payload, "hello refusal"),
+            _ => throw new InvalidDataException("The kind of the control message is unknown")
+        };
     }
 
     #endregion

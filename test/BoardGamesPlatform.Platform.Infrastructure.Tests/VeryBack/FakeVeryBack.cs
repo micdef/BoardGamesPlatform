@@ -8,6 +8,7 @@
 // Using
 using System.Collections.Concurrent;
 using System.Net;
+using BoardGamesPlatform.Protocol.Control;
 using BoardGamesPlatform.Protocol.Correlation;
 using BoardGamesPlatform.Protocol.Framing;
 using BoardGamesPlatform.Protocol.Messages;
@@ -221,6 +222,8 @@ internal sealed class FakeVeryBack : IAsyncDisposable
         try
         {
             RequestServer server = new RequestServer(new FrameCodec(), HandleAsync);
+            await ProtocolHandshake.RunServerAsync(connection, server.Codec, server.MaxConcurrentRequests, ProtocolHandshake.DefaultServerTimeout, _stopping.Token)
+                .ConfigureAwait(false);
             await server.ServeAsync(connection, _stopping.Token).ConfigureAwait(false);
         }
         catch (Exception exception)

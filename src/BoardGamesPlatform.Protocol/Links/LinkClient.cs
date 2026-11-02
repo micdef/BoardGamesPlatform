@@ -6,6 +6,7 @@
  */
 
 // Using
+using BoardGamesPlatform.Protocol.Control;
 using BoardGamesPlatform.Protocol.Correlation;
 using BoardGamesPlatform.Protocol.Errors;
 using BoardGamesPlatform.Protocol.Framing;
@@ -28,7 +29,8 @@ namespace BoardGamesPlatform.Protocol.Links;
 /// <remarks>
 /// <para><b>Purpose:</b> one connection management for every tier that calls another, instead of a copy per tier that could drift; the typed
 /// clients of the tiers only name their operations.</para>
-/// <para><b>Behavior:</b> the connection opens on the first call, through the connector, within the connect timeout. All the concurrent calls
+/// <para><b>Behavior:</b> the connection opens on the first call, through the connector, and its handshake runs
+/// (<see cref="ProtocolHandshake"/>), both within the connect timeout. All the concurrent calls
 /// share that one connection; a lock guards only its opening. When the connection has closed (the peer, a failure), the next call opens a new
 /// one.</para>
 /// <list type="bullet">
@@ -275,26 +277,44 @@ public sealed partial class LinkClient : IAsyncDisposable
     }
 
     /// <summary>
-    /// Method used to open a connection within the connect timeout
+    /// Method used to open a connection and run its handshake, both within the connect timeout
     /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> a connection whose handshake fails is closed before the exception is thrown.</para>
+    /// </remarks>
     /// <param name="cancellationToken">Token of the caller</param>
     /// <returns>
-    /// The open connection
+    /// The open connection, and the agreement reached by its handshake
     /// </returns>
-    /// <exception cref="TimeoutException">If the connection is not open within the connect timeout</exception>
+    /// <exception cref="TimeoutException">If the connection is not open, or its handshake not ended, within the connect timeout</exception>
     /// <exception cref="OperationCanceledException">If the caller cancels</exception>
     /// <exception cref="System.Net.Sockets.SocketException">If the connection cannot be opened</exception>
-    private async Task<ITransportConnection> ConnectAsync(CancellationToken cancellationToken)
+    /// <exception cref="RemoteErrorException">If the peer refuses the handshake</exception>
+    /// <exception cref="InvalidDataException">If the peer breaks the handshake</exception>
+    /// <exception cref="IOException">If the connection fails during the handshake</exception>
+    private async Task<(ITransportConnection Connection, HandshakeResult Handshake)> ConnectAsync(CancellationToken cancellationToken)
     {
         // Combining the token of the caller with the deadline
         using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(_connectTimeout);
 
-        // Connecting; a cancellation that the caller did not ask for is the deadline
+        // Connecting, then agreeing on the protocol; a cancellation that the caller did not ask for is the deadline
         try
         {
-            // Function's return
-            return await _connector.ConnectAsync(_host, _port, deadline.Token).ConfigureAwait(false);
+            ITransportConnection connection = await _connector.ConnectAsync(_host, _port, deadline.Token).ConfigureAwait(false);
+            try
+            {
+                HandshakeResult handshake = await ProtocolHandshake.RunClientAsync(connection, _codec, deadline.Token).ConfigureAwait(false);
+
+                // Function's return
+                return (connection, handshake);
+            }
+            catch
+            {
+                // The connection rule of the codec: a connection whose handshake failed is closed, never used
+                await connection.DisposeAsync().ConfigureAwait(false);
+                throw;
+            }
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
@@ -313,6 +333,9 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// <exception cref="TimeoutException">If the connection is not open within the connect timeout</exception>
     /// <exception cref="OperationCanceledException">If the caller cancels</exception>
     /// <exception cref="System.Net.Sockets.SocketException">If the connection cannot be opened</exception>
+    /// <exception cref="RemoteErrorException">If the peer refuses the handshake</exception>
+    /// <exception cref="InvalidDataException">If the peer breaks the handshake</exception>
+    /// <exception cref="IOException">If the connection fails during the handshake</exception>
     private async Task<RequestClient> GetRequestClientAsync(CancellationToken cancellationToken)
     {
         // Using the open connection, without any lock
@@ -347,7 +370,7 @@ public sealed partial class LinkClient : IAsyncDisposable
             ITransportConnection connection;
             try
             {
-                connection = await ConnectAsync(cancellationToken).ConfigureAwait(false);
+                (connection, _) = await ConnectAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
@@ -410,13 +433,17 @@ public sealed partial class LinkClient : IAsyncDisposable
         // Check
         ThrowIfDisposed();
 
-        // Getting the connection; a peer that cannot be reached is a failure of the link
+        // Getting the connection; a peer that cannot be reached, or whose handshake fails, is a failure of the link (a refusal keeps its code)
         RequestClient client;
         try
         {
             client = await GetRequestClientAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception exception) when (exception is System.Net.Sockets.SocketException or TimeoutException)
+        catch (RemoteErrorException exception)
+        {
+            throw new LinkFailureException(exception.Code, $"{_peerName} refused the handshake", exception);
+        }
+        catch (Exception exception) when (exception is System.Net.Sockets.SocketException or TimeoutException or IOException or InvalidDataException)
         {
             throw new LinkFailureException(ErrorCodes.LinkUnavailable, $"{_peerName} cannot be reached", exception);
         }

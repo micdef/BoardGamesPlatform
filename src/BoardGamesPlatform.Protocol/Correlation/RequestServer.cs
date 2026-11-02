@@ -90,7 +90,15 @@ public sealed class RequestServer
 
     #region Members & Properties
 
-    // #N/A
+    /// <summary>
+    /// Codec of the link, used by the handshake that opens each connection
+    /// </summary>
+    public FrameCodec Codec => _codec;
+
+    /// <summary>
+    /// Number of requests of one connection handled at the same time, at most; announced to the client by the handshake
+    /// </summary>
+    public int MaxConcurrentRequests => _maxConcurrentRequests;
 
     #endregion
 

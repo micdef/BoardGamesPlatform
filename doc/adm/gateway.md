@@ -23,7 +23,7 @@ Section `Back` (environment variable form: `Back__Host`, `Back__Port`, `Back__Co
 | `Back:ConnectTimeout` | `00:00:05` | Longest time allowed to open the connection to the Back. It must be greater than zero and at most 5 minutes. |
 
 - The settings are checked at startup: an invalid value stops the Gateway, and the message names the setting, never its value.
-- The connection opens on the first `Ping`, is shared by all the fronts, and is opened again on the next call when it is lost. A failed request is not retried (retries come with 0.4.0).
+- The connection opens on the first `Ping`, with a handshake that checks that the Back speaks the same protocol version and uses the same largest frame (a refusal gives the code `protocol.versionUnsupported` or `protocol.limitsMismatch` in the logs); it is shared by all the fronts, and is opened again on the next call when it is lost. A failed request is not retried (retries come with 0.4.0).
 - The reconnection and the connect timeout are behaviors of the shared `LinkClient` of the protocol: they are proven by the tests of the `LinkClient` and of the Very Back client, not again by the Gateway tests.
 - **Plain TCP until 0.5.0**: the link is not encrypted nor authenticated. For development only: keep the Gateway and the Back on the same machine or on a trusted network. TLS comes in 0.5.0.
 
