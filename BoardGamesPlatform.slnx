@@ -31,6 +31,7 @@
     <File Path="doc/analyse/README.md" />
     <File Path="doc/analyse/roadmap.md" />
     <File Path="doc/dev/coding-conventions.md" />
+    <File Path="doc/dev/protocol.md" />
     <File Path="doc/dev/README.md" />
     <File Path="doc/user/README.md" />
   </Folder>
