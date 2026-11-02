@@ -7,6 +7,7 @@
 
 // Using
 using System.Collections.Concurrent;
+using System.Runtime.ExceptionServices;
 using BoardGamesPlatform.Protocol.Control;
 using BoardGamesPlatform.Protocol.Framing;
 using BoardGamesPlatform.Protocol.Messages;
@@ -54,6 +55,11 @@ public sealed class RequestClient : IAsyncDisposable
     #endregion
 
     #region Variables
+
+    /// <summary>
+    /// Ping written at each tick of the heartbeat, built once
+    /// </summary>
+    private static readonly byte[] _ping = MessageSerializer.WriteControl(HeartbeatMessage.Ping);
 
     /// <summary>
     /// Connection the requests travel on, owned by the client
@@ -128,13 +134,8 @@ public sealed class RequestClient : IAsyncDisposable
     private long _lastCorrelationId;
 
     /// <summary>
-    /// Ping written at each tick of the heartbeat, built once
-    /// </summary>
-    private static readonly byte[] _ping = MessageSerializer.WriteControl(HeartbeatMessage.Ping);
-
-    /// <summary>
-    /// Failure to close the connection met by a cancellation sent apart from any caller; thrown by <see cref="DisposeAsync"/>, so that it is
-    /// never lost; null while none happened
+    /// Failure to close the connection met by a cancellation sent apart from any caller; thrown by <see cref="DisposeAsync"/> when it was
+    /// recorded before the disposal ends (a close still running at that moment can record it too late); null while none happened
     /// </summary>
     private Exception? _detachedCloseFailure;
 
@@ -624,6 +625,8 @@ public sealed class RequestClient : IAsyncDisposable
     /// <returns>
     /// A task that completes when the client is closed for good and its read loop has ended
     /// </returns>
+    /// <exception cref="Exception">Whatever closing the connection threw, when no caller could see it (a close started by a cancellation
+    /// sent apart from any caller)</exception>
     public async ValueTask DisposeAsync()
     {
         // Disposing once; a second call waits for the first one
@@ -642,7 +645,7 @@ public sealed class RequestClient : IAsyncDisposable
         // Throwing the failure of a close that no caller could see
         Exception? detached = Volatile.Read(ref _detachedCloseFailure);
         if (detached is not null)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(detached).Throw();
+            ExceptionDispatchInfo.Capture(detached).Throw();
     }
 
     #endregion

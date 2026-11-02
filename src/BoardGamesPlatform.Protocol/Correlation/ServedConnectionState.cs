@@ -172,7 +172,12 @@ internal sealed class ServedConnectionState : IDisposable
     /// <summary>
     /// Method used to record the first failure and end the service
     /// </summary>
-    /// <param name="exception">[Cannot be null] Failure to record; ignored when another one is already recorded</param>
+    /// <remarks>
+    /// <para><b>Behavior:</b> once the peer has closed, an <see cref="OperationCanceledException"/> is not recorded: it is the end of the
+    /// drain, or the stop of the tier, and either is a normal end for a connection the client left.</para>
+    /// </remarks>
+    /// <param name="exception">[Cannot be null] Failure to record; ignored when another one is already recorded, or when it is a cancellation
+    /// after the close of the peer</param>
     public void Fail(Exception exception)
     {
         // Keeping the first failure, unless it is a cancellation caused by the close of the peer, then canceling the requests in progress
@@ -211,9 +216,15 @@ internal sealed class ServedConnectionState : IDisposable
     /// <summary>
     /// Method used to cancel the requests in progress when the drain delay elapses, the state being perhaps already released
     /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> runs on the thread of the timer, so it never throws: the loss of the requests is recorded as a
+    /// <see cref="TimeoutException"/>, which the service throws when it ends, and the link server logs.</para>
+    /// </remarks>
     private void CancelQuietly()
     {
-        // Canceling; a service that ended meanwhile has released its source, and there is nothing left to cancel
+        // Recording why the requests still in progress are canceled, so that their loss is reported, then canceling; a service that ended
+        // meanwhile has released its source, and there is nothing left to cancel
+        Interlocked.CompareExchange(ref _failure, new TimeoutException("Requests were still in progress when the drain delay after the close of the client elapsed; they are canceled"), null);
         try
         {
             _cancellation.Cancel();
@@ -221,6 +232,11 @@ internal sealed class ServedConnectionState : IDisposable
         catch (ObjectDisposedException)
         {
             // The service ended before the delay: nothing to cancel
+        }
+        catch (Exception exception)
+        {
+            // A callback of a handler failed during the cancellation: kept, never thrown on the thread of the timer
+            Interlocked.CompareExchange(ref _failure, exception, null);
         }
     }
 
