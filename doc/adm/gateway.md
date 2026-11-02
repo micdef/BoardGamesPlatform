@@ -21,7 +21,7 @@ Section `Back` (environment variable form: `Back__Host`, `Back__Port`, `Back__Co
 | `Back:Host` | `127.0.0.1` | Host name or address of the Back. It must not be empty. |
 | `Back:Port` | `7821` | Port the Back listens on, from 1 to 65535. |
 | `Back:ConnectTimeout` | `00:00:05` | Longest time allowed to open the connection to the Back. It must be greater than zero and at most 5 minutes. |
-| `Back:RequestTimeout` | `00:00:08` | Longest time a request waits for the answer of the Back. It must be greater than zero and at most 5 minutes. When it elapses, the request is canceled in the Back, and the front gets the generic error. |
+| `Back:RequestTimeout` | `00:00:08` | Longest time a request waits for the answer of the Back, the wait for the connection included. It must be greater than zero and at most 5 minutes. When it elapses, the request is canceled in the Back, and the front gets the generic error. |
 
 The request timeouts must decrease along the chain, so that each tier still answers a code before its caller gives up: website `Gateway:RequestTimeout` (10 s) > Gateway `Back:RequestTimeout` (8 s) > Back `VeryBack:RequestTimeout` (5 s).
 

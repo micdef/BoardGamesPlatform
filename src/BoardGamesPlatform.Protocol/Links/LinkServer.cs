@@ -264,6 +264,35 @@ public sealed partial class LinkServer
     private partial void LogStoppedListening(string name);
 
     /// <summary>
+    /// Method used to log that closing a connection failed
+    /// </summary>
+    /// <param name="exception">Why the closing failed</param>
+    /// <param name="remoteEndPoint">Address and port of the peer</param>
+    [LoggerMessage(EventId = 9016, Level = LogLevel.Warning, Message = "Closing the connection from {RemoteEndPoint} failed")]
+    private partial void LogCloseFailed(Exception exception, string remoteEndPoint);
+
+    /// <summary>
+    /// Method used to close a connection, logging a failure instead of throwing it
+    /// </summary>
+    /// <param name="connection">[Cannot be null] Connection to close</param>
+    /// <param name="remoteEndPoint">[Cannot be null] Address and port of the peer, for the log</param>
+    /// <returns>
+    /// A task that completes once the connection is closed, or its failure logged
+    /// </returns>
+    private async Task CloseAsync(ITransportConnection connection, string remoteEndPoint)
+    {
+        // Closing; a failure concerns this connection only, and must neither stop the tier nor be lost
+        try
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            LogCloseFailed(exception, remoteEndPoint);
+        }
+    }
+
+    /// <summary>
     /// Method used to log that the listener was lost without a stop request
     /// </summary>
     /// <param name="exception">How the loss showed</param>
@@ -325,7 +354,7 @@ public sealed partial class LinkServer
         }
         finally
         {
-            await connection.DisposeAsync().ConfigureAwait(false);
+            await CloseAsync(connection, remoteEndPoint).ConfigureAwait(false);
         }
     }
 
@@ -389,8 +418,9 @@ public sealed partial class LinkServer
                 _connectionTasks.RemoveAll(task => task.IsCompleted);
                 if (_connectionTasks.Count >= _maxConnections)
                 {
-                    LogConnectionRefused(connection.RemoteEndPoint.ToString() ?? "unknown", _maxConnections);
-                    await connection.DisposeAsync().ConfigureAwait(false);
+                    string refused = connection.RemoteEndPoint.ToString() ?? "unknown";
+                    LogConnectionRefused(refused, _maxConnections);
+                    await CloseAsync(connection, refused).ConfigureAwait(false);
                     continue;
                 }
 

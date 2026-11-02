@@ -8,6 +8,7 @@
 // Using
 using System.Text.Json;
 using BoardGamesPlatform.Protocol.Errors;
+using BoardGamesPlatform.Protocol.Framing;
 using Microsoft.Extensions.Logging;
 
 // Static using
@@ -32,13 +33,15 @@ namespace BoardGamesPlatform.Protocol.Messages;
 /// <item><description>an unknown operation is answered <see cref="ErrorCodes.RequestUnknownOperation"/>, a body that does not match its
 /// operation <see cref="ErrorCodes.RequestInvalid"/>;</description></item>
 /// <item><description>a handler that fails because a tier behind it cannot be reached (<see cref="LinkFailureException"/>) is answered with
-/// the code of that failure, any other failure with <see cref="ErrorCodes.Internal"/>;</description></item>
-/// <item><description>a cancellation of the token of the request is not an answer: it is thrown to the request server, which then sends
-/// nothing.</description></item>
+/// the code of that failure; a tier behind that answered a code (<see cref="RemoteErrorException"/>) gives
+/// <see cref="ErrorCodes.ServerBusy"/> when it was busy, <see cref="ErrorCodes.Internal"/> otherwise; any other failure, a response that
+/// cannot be written, or one larger than the link can carry, gives <see cref="ErrorCodes.Internal"/>;</description></item>
+/// <item><description>a cancellation of the token of the request is not an answer, whatever the exception it caused: it is thrown to the
+/// request server, which then sends nothing.</description></item>
 /// </list>
 /// <para>A malformed envelope is still a protocol violation: <see cref="HandleAsync"/> throws an <see cref="InvalidDataException"/>, which
 /// ends the service of the connection. Every failure is logged with its exception, through the logger of the tier, with the event ids 9021 to
-/// 9024, reserved for this class (see the coding conventions); the peer only receives the code.</para>
+/// 9026, reserved for this class (see the coding conventions); the peer only receives the code.</para>
 /// </remarks>
 public sealed partial class OperationDispatcher
 {
@@ -61,6 +64,11 @@ public sealed partial class OperationDispatcher
     /// Logger of the tier that answers
     /// </summary>
     private readonly ILogger _logger;
+
+    /// <summary>
+    /// Largest response the link can carry, in bytes
+    /// </summary>
+    private readonly int _maxResponseLength;
 
     #endregion
 
@@ -106,16 +114,21 @@ public sealed partial class OperationDispatcher
     /// Constructor
     /// </summary>
     /// <param name="logger">[Cannot be null] Logger of the tier that answers, which receives the details of every failure</param>
+    /// <param name="maxResponseLength">Largest response the link can carry, in bytes: the largest payload of its codec; 1 or more</param>
     /// <exception cref="ArgumentNullException">If the logger is null</exception>
-    public OperationDispatcher(ILogger logger)
+    /// <exception cref="ArgumentOutOfRangeException">If the largest response is zero or negative</exception>
+    public OperationDispatcher(ILogger logger, int maxResponseLength = FrameCodec.DefaultMaxPayloadLength)
     {
-        // Check
+        // Checks
         if (logger is null)
             throw new ArgumentNullException(nameof(logger), $"The value of the parameter: {nameof(logger)} cannot be null");
+        if (maxResponseLength <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxResponseLength), maxResponseLength, $"The value of the parameter: {nameof(maxResponseLength)} must be greater than zero");
 
         // Setting
         _handlers = new Dictionary<string, Func<JsonElement, CancellationToken, Task<byte[]>>>(StringComparer.Ordinal);
         _logger = logger;
+        _maxResponseLength = maxResponseLength;
     }
 
     #endregion
@@ -162,6 +175,24 @@ public sealed partial class OperationDispatcher
     [LoggerMessage(EventId = 9024, Level = LogLevel.Error, Message = "The handler of {Operation} failed; answered internal")]
     private partial void LogHandlerFailed(Exception exception, string operation);
 
+    /// <summary>
+    /// Method used to log a response that the link cannot carry
+    /// </summary>
+    /// <param name="operation">Name of the operation</param>
+    /// <param name="length">Length of the response, in bytes</param>
+    /// <param name="maxLength">Largest response of the link, in bytes</param>
+    [LoggerMessage(EventId = 9025, Level = LogLevel.Error, Message = "The response of {Operation} is {Length} bytes, more than the {MaxLength} bytes of the link; answered internal")]
+    private partial void LogResponseTooLarge(string operation, int length, int maxLength);
+
+    /// <summary>
+    /// Method used to log a handler whose call to a tier behind was answered with an error code
+    /// </summary>
+    /// <param name="operation">Name of the operation</param>
+    /// <param name="received">Code answered by the tier behind</param>
+    /// <param name="code">Code answered in turn</param>
+    [LoggerMessage(EventId = 9026, Level = LogLevel.Warning, Message = "The handler of {Operation} was answered {Received} by a tier behind; answered {Code}")]
+    private partial void LogRemoteError(string operation, string received, string code);
+
     #endregion
 
     #region Publics
@@ -207,15 +238,26 @@ public sealed partial class OperationDispatcher
                 return MessageSerializer.WriteError(ErrorCodes.RequestInvalid);
             }
 
-            // Running the handler; the cancellation of the request is not answered
-            TResponse response;
+            // Running the handler and writing its response; the cancellation of the request is not answered, whatever the exception it caused
+            // (a client library may report a canceled call as an error of its own)
+            byte[] written;
             try
             {
-                response = await handler(request, cancellationToken).ConfigureAwait(false);
+                TResponse response = await handler(request, cancellationToken).ConfigureAwait(false);
+                written = MessageSerializer.WriteResponse(response);
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            catch (Exception) when (cancellationToken.IsCancellationRequested)
             {
-                throw;
+                throw new OperationCanceledException(cancellationToken);
+            }
+            catch (RemoteErrorException exception)
+            {
+                // A code of a tier behind is not passed on (it could tell how the tiers are built), except "busy", which the caller may act on
+                string code = exception.Code == ErrorCodes.ServerBusy ? ErrorCodes.ServerBusy : ErrorCodes.Internal;
+                LogRemoteError(operation, exception.Code, code);
+
+                // Function's return
+                return MessageSerializer.WriteError(code);
             }
             catch (LinkFailureException exception)
             {
@@ -232,8 +274,17 @@ public sealed partial class OperationDispatcher
                 return MessageSerializer.WriteError(ErrorCodes.Internal);
             }
 
+            // Refusing a response that the link cannot carry: written as it is, it would close the connection of every caller
+            if (written.Length > _maxResponseLength)
+            {
+                LogResponseTooLarge(operation, written.Length, _maxResponseLength);
+
+                // Function's return
+                return MessageSerializer.WriteError(ErrorCodes.Internal);
+            }
+
             // Function's return
-            return MessageSerializer.WriteResponse(response);
+            return written;
         });
 
         // Function's return
