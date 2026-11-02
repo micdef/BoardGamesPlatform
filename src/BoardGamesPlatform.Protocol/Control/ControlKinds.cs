@@ -44,6 +44,11 @@ public static class ControlKinds
     /// </summary>
     public const string HelloRefused = "helloRefused";
 
+    /// <summary>
+    /// Cancellation of a request by the client, after the handshake (<see cref="CancelMessage"/>)
+    /// </summary>
+    public const string Cancel = "cancel";
+
     #endregion
 
     #region Variables

@@ -26,6 +26,8 @@ In 0.3.0 and 0.4.0 the link is plain TCP, for development only. TLS 1.3 with an 
 
 Each connection opens with a handshake, before any request: the client offers the protocol versions it speaks and its largest frame, the server chooses the newest common version and answers its own limit of requests in progress. A client without a common version, or configured with another largest frame, is refused with the code `protocol.versionUnsupported` or `protocol.limitsMismatch`, logged, and disconnected. A client that does not complete the handshake within 5 seconds is disconnected too.
 
+Each connection handles at most 64 requests at the same time; the client never sends more (it learns the limit in the handshake), and a request beyond it is answered `server.busy` at once, without being started. A request canceled by the client (its caller gave up, for example a player who closed the tab) stops at once, including its call to the database.
+
 Each connection of the Back is served on its own. A request that fails (for example when the database is unreachable or answers something unexpected) is answered with the error code `internal`, its cause is logged as an error, and the connection stays open: the other requests in progress on it go on. A connection that breaks the protocol (a malformed frame or envelope) is closed and logged as a warning, and the other connections are not affected.
 
 The logs name the remote end point and the error, never the connection string. An error of SQL Server itself may name the server, the database or the login, as SQL Server writes them in its messages.

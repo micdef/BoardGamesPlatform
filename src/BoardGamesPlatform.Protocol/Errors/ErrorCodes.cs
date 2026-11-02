@@ -68,6 +68,11 @@ public static partial class ErrorCodes
     /// </summary>
     public const string ProtocolLimitsMismatch = "protocol.limitsMismatch";
 
+    /// <summary>
+    /// The peer already handles as many requests of this connection as it allows; the request was not started and may be sent again later
+    /// </summary>
+    public const string ServerBusy = "server.busy";
+
     #endregion
 
     #region Variables

@@ -115,9 +115,10 @@ public static class TestRequestClients
         // Connecting, then agreeing on the protocol (a failed handshake closes the connection)
         FrameCodec codec = new FrameCodec();
         ITransportConnection connection = await new TcpTransportConnector().ConnectAsync(host, port, cancellationToken);
+        HandshakeResult handshake;
         try
         {
-            await ProtocolHandshake.RunClientAsync(connection, codec, cancellationToken);
+            handshake = await ProtocolHandshake.RunClientAsync(connection, codec, cancellationToken);
         }
         catch
         {
@@ -126,7 +127,7 @@ public static class TestRequestClients
         }
 
         // Function's return
-        return new RequestClient(connection, codec);
+        return new RequestClient(connection, codec, handshake.MaxConcurrentRequests);
     }
 
     #endregion
