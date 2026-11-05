@@ -14,13 +14,16 @@ The hub offers one method for now, `Ping`, which checks that the chain of tiers 
 
 ### Link to the Back
 
-Section `Back` (environment variable form: `Back__Host`, `Back__Port`, `Back__ConnectTimeout`).
+Section `Back` (environment variable form: `Back__Host`, `Back__Port`, `Back__ConnectTimeout`, `Back__RequestTimeout`).
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
 | `Back:Host` | `127.0.0.1` | Host name or address of the Back. It must not be empty. |
 | `Back:Port` | `7821` | Port the Back listens on, from 1 to 65535. |
 | `Back:ConnectTimeout` | `00:00:05` | Longest time allowed to open the connection to the Back. It must be greater than zero and at most 5 minutes. |
+| `Back:RequestTimeout` | `00:00:08` | Longest time a request waits for the answer of the Back. It must be greater than zero and at most 5 minutes. When it elapses, the request is canceled in the Back, and the front gets the generic error. |
+
+The request timeouts must decrease along the chain, so that each tier still answers a code before its caller gives up: website `Gateway:RequestTimeout` (10 s) > Gateway `Back:RequestTimeout` (8 s) > Back `VeryBack:RequestTimeout` (5 s).
 
 - The settings are checked at startup: an invalid value stops the Gateway, and the message names the setting, never its value.
 - The connection opens on the first `Ping`, with a handshake that checks that the Back speaks the same protocol version and uses the same largest frame (a refusal gives the code `protocol.versionUnsupported` or `protocol.limitsMismatch` in the logs); it is shared by all the fronts, and is opened again on the next call when it is lost. A failed request is not retried (retries come with 0.4.0).

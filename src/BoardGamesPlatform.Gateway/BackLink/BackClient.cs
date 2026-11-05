@@ -115,7 +115,7 @@ public sealed class BackClient : IBackClient, IAsyncDisposable
             throw new InvalidOperationException(problem);
 
         // Setting (the link copies the validated values)
-        _link = new LinkClient(options.Host, options.Port, options.ConnectTimeout, PeerName, connector, logger);
+        _link = new LinkClient(options.Host, options.Port, options.ConnectTimeout, options.RequestTimeout, PeerName, connector, logger);
     }
 
     #endregion

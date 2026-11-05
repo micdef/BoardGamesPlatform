@@ -186,6 +186,33 @@ public sealed class VeryBackClientOptionsTests
     }
 
     /// <summary>
+    /// The request timeout must be greater than zero and at most its maximum; the message names the setting
+    /// </summary>
+    /// <param name="milliseconds">Invalid request timeout, in milliseconds</param>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(300001)]
+    public void AnInvalidRequestTimeoutIsRefused(int milliseconds)
+    {
+        // Check
+        InvalidOperationException exception = Should.Throw<InvalidOperationException>(
+            new VeryBackClientOptions { RequestTimeout = TimeSpan.FromMilliseconds(milliseconds) }.Validate);
+        exception.Message.ShouldContain("VeryBack:RequestTimeout");
+    }
+
+    /// <summary>
+    /// The default request timeout is 5 seconds, and the maximum itself is accepted
+    /// </summary>
+    [Fact]
+    public void TheRequestTimeoutLimitsAreAccepted()
+    {
+        // Checks
+        new VeryBackClientOptions().RequestTimeout.ShouldBe(TimeSpan.FromSeconds(5));
+        new VeryBackClientOptions { RequestTimeout = VeryBackClientOptions.MaxRequestTimeout }.FindProblem().ShouldBeNull();
+    }
+
+    /// <summary>
     /// The maximum connect timeout itself is accepted
     /// </summary>
     [Fact]
