@@ -594,9 +594,10 @@ public sealed partial class LinkClient : IAsyncDisposable
         {
             throw new LinkFailureException(exception.Code, $"{_peerName} refused the handshake", exception);
         }
-        catch (Exception exception) when (exception is (System.Net.Sockets.SocketException or TimeoutException or IOException or InvalidDataException)
-            and not LinkFailureException)
+        catch (Exception exception) when (exception is (System.Net.Sockets.SocketException or TimeoutException or IOException or InvalidDataException
+            or System.Security.Authentication.AuthenticationException) and not LinkFailureException)
         {
+            // A peer whose certificate is refused, or that refuses this tier, cannot be reached either; the reason stays in the logs of the tier
             throw new LinkFailureException(ErrorCodes.LinkUnavailable, $"{_peerName} cannot be reached", exception);
         }
 

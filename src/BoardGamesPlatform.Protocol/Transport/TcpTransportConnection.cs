@@ -27,8 +27,8 @@ namespace BoardGamesPlatform.Protocol.Transport;
 /// and waiting to group it with the next one would only delay the response. An IPv4 address seen through an IPv6 socket
 /// (<c>::ffff:127.0.0.1</c>) is given back as IPv4, so that both ends of a connection report the same form.</para>
 /// <para>Disposing the connection closes the stream and the socket at once; disposing it twice does nothing more. When bytes sent by the
-/// peer are still unread, the system resets the connection, and the peer may lose what this end wrote just before: a graceful close
-/// comes with 0.4.0.</para>
+/// peer are still unread, the system resets the connection, and the peer may lose what this end wrote just before. <see cref="CloseSendAsync"/>
+/// closes the sending side only (a TCP FIN). A plain TCP connection authenticates nobody: <see cref="PeerIdentity"/> is null.</para>
 /// </remarks>
 internal sealed class TcpTransportConnection : ITransportConnection
 {
@@ -88,6 +88,14 @@ internal sealed class TcpTransportConnection : ITransportConnection
 
     /// <inheritdoc/>
     public EndPoint RemoteEndPoint => _remoteEndPoint;
+
+    /// <inheritdoc/>
+    public string? PeerIdentity => null;
+
+    /// <summary>
+    /// Socket of the connection, for the TLS connection that wraps it and closes its sending side
+    /// </summary>
+    internal Socket Socket => _client.Client;
 
     #endregion
 
@@ -159,6 +167,24 @@ internal sealed class TcpTransportConnection : ITransportConnection
     #endregion
 
     #region Publics
+
+    /// <summary>
+    /// Method used to stop sending, while still reading: the peer reads the end of the stream
+    /// </summary>
+    /// <param name="cancellationToken">Not used: closing the sending side does not wait for the peer</param>
+    /// <returns>
+    /// A completed task
+    /// </returns>
+    /// <exception cref="ObjectDisposedException">If the connection is closed</exception>
+    /// <exception cref="SocketException">If the socket fails</exception>
+    public Task CloseSendAsync(CancellationToken cancellationToken = default)
+    {
+        // Sending the end of the stream (FIN), the receiving side staying open
+        _client.Client.Shutdown(SocketShutdown.Send);
+
+        // Function's return
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// Method used to close the connection, its stream and its socket
