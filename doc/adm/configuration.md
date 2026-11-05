@@ -11,6 +11,7 @@ The vault of the platform is chosen in 0.7.0; until then, these conventions appl
    The `Observability` section already works this way: an invalid collector address stops the startup.
 3. **A secret value is never written to a log**, at any level, Debug included. Error messages name the setting, never its value.
 4. **Only the Very Back declares database connection strings** (`ConnectionStrings` section): no other tier can even be configured to reach the database.
+5. **Certificates and keys are files outside the repository**: the PFX of a tier and the root key of the authority are never committed (`*.pfx`, `*.key`, `*.csr` and `.certificates/` are ignored by Git). Only their paths are settings; the password of a PFX is a secret like any other (`Tls:CertificatePassword`). See [certificates.md](certificates.md).
 
 Rules 1 and 4 are checked by the CI ([ConfigurationFileTests.cs](../../test/BoardGamesPlatform.Architecture.Tests/ConfigurationFileTests.cs)).
 The CI reads the `appsettings*.json` files and the `Properties/launchSettings.json` file of every project.
@@ -44,7 +45,8 @@ dotnet user-secrets init --project src/BoardGamesPlatform.VeryBack
 dotnet user-secrets set "ConnectionStrings:Main" "<connection string>" --project src/BoardGamesPlatform.VeryBack
 ```
 
-- `init` adds a `UserSecretsId` to the project file; it is done once per project, in the pull request that brings its first secret.
+- `init` adds a `UserSecretsId` to the project file; it is done once per project, in the pull request that brings its first secret. The Gateway, the Back and the Very Back have one.
+- The password of the development certificates (`Tls:CertificatePassword`) is set in the user secrets of the three tiers by `tools/certificates/New-DevelopmentCertificates.ps1`. To remove it: `dotnet user-secrets remove "Tls:CertificatePassword" --project <project of the tier>`.
 - The values are stored **unencrypted** in a JSON file of the user profile (`%APPDATA%\Microsoft\UserSecrets\<id>\secrets.json` on Windows,
   `~/.microsoft/usersecrets/<id>/secrets.json` on Linux). They are for development only: never put a secret of an acceptance or production server there
   ([Microsoft Learn](https://learn.microsoft.com/aspnet/core/security/app-secrets?view=aspnetcore-10.0#use-the-secret-manager-tool)).
@@ -52,7 +54,7 @@ dotnet user-secrets set "ConnectionStrings:Main" "<connection string>" --project
 ## Acceptance and production: environment variables (until 0.7.0)
 
 On the servers, the deployment sets each secret as an environment variable of the service only, never of the whole machine.
-A key `Section:Key` becomes the variable `Section__Key` (double underscore), the form every system accepts, for example `ConnectionStrings__Main`.
+A key `Section:Key` becomes the variable `Section__Key` (double underscore), the form every system accepts, for example `ConnectionStrings__Main` or `Tls__CertificatePassword`.
 
 | Host | Where the variables are set | Protection |
 |------|-----------------------------|------------|

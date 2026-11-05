@@ -5,9 +5,10 @@ It describes version 1 of the protocol, delivered in 0.4.0. The code is in `src/
 
 **Security limits of this version**
 
-- Until 0.5.0 the links are plain TCP, for development only: nothing is encrypted nor authenticated.
-- Until then, any process that can reach the port can call every operation, and keep one of the 8 connections of the server open by pinging. Keep the listeners on the loopback address or on a trusted network (see `doc/adm/back.md` and `doc/adm/very-back.md`).
-- TLS 1.3 with mutual authentication comes in 0.5.0, and an authenticated ECDH handshake on the Back → Very Back link in 0.6.0. Both wrap the byte stream described here and change nothing above it. TLS identifies the tiers, not the players: the requests carry no session before 0.10.0.
+- From 0.5.0 both links run over mutual TLS 1.3 (see [Transport security](#transport-security-mutual-tls-13) and `doc/adm/certificates.md`): each end presents the certificate of its role, issued by the authority of the platform, and only the expected role is accepted. TLS wraps the byte stream described here and changes nothing above it.
+- TLS identifies the **tiers, not the players**: the requests carry no session before 0.10.0, so a tier that holds a valid certificate of its role can call every operation of its peer.
+- A process that can reach the port but holds no certificate can still open connections: it gets one of the 4 places of the handshakes (2 per IP address) for 5 seconds at most, never the place of a served connection. Keep the listeners on the loopback address or behind a firewall that admits the peer tier only.
+- A withdrawn certificate is refused through `Tls:RefusedThumbprints` only: there is no revocation list nor OCSP. The authenticated ECDH handshake on the Back → Very Back link comes in 0.6.0, the vault for the passwords of the certificates in 0.7.0.
 
 ## Layers
 
@@ -32,6 +33,7 @@ Every byte of a link travels in a TLS 1.3 session, and both ends prove who they 
 - **Handshake**: TLS 1.3 only (an older version is refused), no renegotiation, and no session resumption, so that every connection checks the certificates again. On the server, the TLS handshake runs in the task of the connection, never in the accept loop, within the same handshake timeout as the protocol handshake below (5 seconds for both): a silent peer never holds the accept loop.
 - **Refusal**: a refused peer is logged with the reason and the thumbprint of its certificate, never with a text the peer chose. For the caller of a link, a refused peer is `link.unavailable`, like a peer that cannot be reached. In TLS 1.3, the server may refuse the certificate of the client after the client ended its handshake: the client then sees the refusal at its first read, as a failure of the connection.
 - **Renewal**: before each new connection, a tier checks whether its PFX or the file of its roots changed. If so, it loads and checks them again, and uses them for the new connections; files that fail the check are logged, and the current certificate is kept. An established connection keeps the certificate it started with.
+- **Prerequisite**: TLS 1.3 needs Windows Server 2022 or Windows 11 or later (Schannel), or OpenSSL 1.1.1 or later on Linux.
 - **Closing the sending side** announces the end of the session (close_notify), then sends the end of the TCP stream; the other end reads a clean end and may still answer.
 
 ## Frames

@@ -79,10 +79,11 @@ Other UIs   ┘
 
 #### 0.5.0 — Mutual TLS 1.3 [SEC]
 
-- **Content**: TLS 1.3 with mutual authentication (`SslStream`) on both socket links (Gateway ↔ Back, Back ↔ Very Back), certificate validation and pinning rules, PowerShell scripts that issue development certificates.
+- **Content**: TLS 1.3 with mutual authentication (`SslStream`) on both socket links (Gateway ↔ Back, Back ↔ Very Back), certificate validation rules (identity by role, no pinning of a leaf certificate, a refused list of thumbprints), the offline certificate authority of the platform, a PowerShell script that issues development certificates; the four limits deferred by the security review of 0.4.0 (places of the handshakes per source, largest frame per link, deadline of the server writes, back-off reset only after a response).
 - **Done**: a connection without a valid client certificate is refused.
 - **Tests**: valid, missing, wrong-authority and expired certificates. Test certificates are generated at run time; no private key is ever committed.
-- **Branches**: `feature/mtls-transport`, `chore/dev-certificate-scripts`, `docs/certificates-and-rotation`.
+- **Branches**: `fix/link-server-lost-listener`, `fix/cancellation-outside-read-loop`, `fix/heartbeat-large-frames`, `feature/certificate-authority`, `feature/mtls-transport`, `feature/tier-tls`, `feature/connection-slots-per-source`, `feature/frame-size-per-link`, `feature/server-write-deadline`, `fix/backoff-reset-after-response`, `docs/certificates-and-rotation`.
+- **Prerequisite**: Windows Server 2022 or Windows 11 or later (TLS 1.3 in Schannel), or Linux with OpenSSL 1.1.1 or later.
 
 #### 0.6.0 — Authenticated ECDH handshake, Back ↔ Very Back [SEC]
 
@@ -310,6 +311,7 @@ Every tier communicates through the network. All ports are configurable; the def
 | Hosting | Every executable, the website and the gateway included, runs on Kestrel as a Windows service or a Linux systemd daemon; no IIS required. The website is exposed to the Internet behind a reverse proxy (Nginx; IIS possible); the gateway stays in the server zone, reached only by the website. Every tier can run on its own machine or container. Docker variant offered for other deployments |
 | Back ↔ Very Back | Raw TCP sockets, TLS 1.3 with mutual authentication, plus an authenticated ECDH handshake |
 | Gateway ↔ Back | Raw TCP sockets, TLS 1.3 with mutual authentication |
+| Certificates of the links (0.5.0, decided by the project lead after a second reading by the architect agent) | A private authority of the platform, as an offline tool that opens no port (`init`, `request`, `sign`, `install`, `list`); its self-signed root is the only trust anchor, never the store of the system. A tier makes its own key and sends a request: its key never leaves its machine. Identity by role (DNS name `<role>.<suffix>` and the usages of its side), no pinning of a leaf certificate, withdrawal by a refused list of thumbprints. PFX files everywhere, their password in an environment variable of the service until the vault (0.7.0). The public wildcard of the author serves the website only. Specified in `doc/adm/certificates.md` |
 | Socket protocol | The transport hands over a byte stream, so that TLS wraps it; frames carry a length prefix, a correlation identifier and a UTF-8 JSON payload (System.Text.Json), with a maximum frame size; several requests in flight on one connection. From 0.4.0 the version is agreed once per connection by a handshake (`hello` / `helloAck`), never written in each message; the control messages (handshake, heartbeat, cancellation) travel on the reserved correlation identifier 0. Specified in `doc/dev/protocol.md` |
 | Message envelope | From 0.3.0, every request is `{"operation":"<name>","body":{…}}` and every response `{"body":{…}}` (UTF-8 JSON, camelCase); each tier routes the requests by operation name. Reading is strict: any other shape is a protocol violation. From 0.4.0 a response holds either its body or an error, `{"error":{"code":"…"}}`, never both; a failed request is answered with a code and the connection stays open |
 | Protocol robustness (0.4.0, after a second reading by the architect agent) | Only the client pings, the server answers; each end closes on silence with its own timer, never by canceling a read. The server never stops reading: a request beyond its limit is answered `server.busy`. Reconnection on demand with a back-off; no queue and no automatic retry. Only the connect and request timeouts are settings; the other limits are constants until a need shows |
@@ -332,7 +334,6 @@ Every tier communicates through the network. All ports are configurable; the def
 
 | Choice | Decided in |
 |--------|------------|
-| Certificate authority (private CA or self-signed with pinning), key storage and rotation | 0.5.0 |
 | Vault product | 0.7.0 |
 | How clients present the session token to the SignalR hub | 0.10.0 |
 | Chat retention and GDPR (hiding versus deleting) | 0.12.0 |
