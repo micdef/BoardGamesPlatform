@@ -466,6 +466,55 @@ public sealed class HeartbeatTests
         await serving;
     }
 
+    /// <summary>
+    /// A server that reads everything but never answers is given up by the client, even while short requests leave at every interval: a
+    /// write that completes is not a sign of life
+    /// </summary>
+    [Fact(Timeout = TestTimeout)]
+    public async Task ShortRequestsNeverKeepASilentServerAliveAsync()
+    {
+        // Opening a client on a fake clock, in front of a raw server that reads every frame and answers none
+        CancellationToken token = TestContext.Current.CancellationToken;
+        FakeTimeProvider clock = new FakeTimeProvider();
+        FrameCodec codec = new FrameCodec();
+        (ITransportConnection clientEnd, ITransportConnection serverEnd) = await ConnectAsync(token);
+        await using ITransportConnection raw = serverEnd;
+        await using RequestClient client = new RequestClient(clientEnd, codec, heartbeat: _timings, timeProvider: clock);
+        using SemaphoreSlim requestRead = new SemaphoreSlim(0);
+        Task draining = Task.Run(async () =>
+        {
+            try
+            {
+                while (await codec.ReadAsync(raw.Stream, token) is Frame frame)
+                {
+                    if (frame.CorrelationId != Frame.NoCorrelation)
+                        requestRead.Release();
+                }
+            }
+            catch (Exception exception) when (exception is IOException or InvalidDataException or OperationCanceledException)
+            {
+                // The client closed
+            }
+        }, token);
+
+        // Sending a short request at every interval, each one read by the server before the clock moves, then given up by its caller
+        int intervals = (int)(_timings.ClientTimeout / _timings.PingInterval) + 3;
+        for (int interval = 0; interval < intervals && !client.Completion.IsCompleted; interval++)
+        {
+            using CancellationTokenSource caller = new CancellationTokenSource();
+            Task<ReadOnlyMemory<byte>> pending = client.SendAsync(new byte[] { 7 }, caller.Token);
+            await requestRead.WaitAsync(token);
+            clock.Advance(_timings.PingInterval);
+            await caller.CancelAsync();
+            await Should.ThrowAsync<Exception>(() => pending);
+        }
+
+        // Checks: the client closed at its timeout, the requests notwithstanding
+        await client.Completion.WaitAsync(token);
+        client.CloseReason.ShouldBeOfType<TimeoutException>();
+        raw.Stream.Close();
+        await draining;
+    }
     #endregion
 
     #endregion
