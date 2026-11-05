@@ -157,7 +157,7 @@ The link client shares one connection between all its callers.
 - A lost connection is opened again by the next call, at once.
 - When opening fails (the peer is down, refuses, breaks the handshake, or the request timeout cuts the opening), the next attempt waits a back-off delay: 0.5 second, doubled after each failure, spread at random by 20 % either way, and never more than 30 seconds. It is counted on a monotonic clock, so that a change of the system time does not change it.
 - During the delay, calls fail at once with `link.unavailable`, without touching the network.
-- The first connection that opens resets the delay.
+- A connection that opens lets the next attempt go at once, but the failures in a row are only forgotten once it answers a request (an error code of the peer included). A connection lost before any response counts as a failure to open: a peer in a crash loop (it accepts the handshake, then dies at the first request) is reconnected with the back-off, not on every call.
 - A request in flight on a lost connection fails with `link.unavailable`. No request is ever retried automatically, since the peer may already have handled it (idempotency comes with 0.14.0).
 
 ## Logs
@@ -166,7 +166,7 @@ The protocol logs through the logger of the tier that uses it, with event ids re
 
 | Class | Event ids |
 |-------|-----------|
-| `LinkClient` | 9001-9006 |
+| `LinkClient` | 9001-9007 |
 | `LinkServer` | 9011-9019, 9041-9043 |
 | `OperationDispatcher` | 9021-9026 |
 | `TlsTransportListener` | 9031-9033 |
