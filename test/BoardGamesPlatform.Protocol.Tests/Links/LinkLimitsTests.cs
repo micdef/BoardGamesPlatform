@@ -172,7 +172,7 @@ public sealed class LinkLimitsTests
         try
         {
             // Sending a Ping with a short request timeout
-            await using LinkClient client = new LinkClient("127.0.0.1", port, TimeSpan.FromSeconds(5), TimeSpan.FromMilliseconds(300), PeerName,
+            await using LinkClient client = new LinkClient("127.0.0.1", port, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(1), PeerName,
                 new TcpTransportConnector(), NullLogger.Instance);
             LinkFailureException failure = await Should.ThrowAsync<LinkFailureException>(
                 () => client.SendAsync<PingRequest, PingResponse>(BackOperations.Ping, new PingRequest(), token));

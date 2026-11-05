@@ -28,8 +28,9 @@ namespace BoardGamesPlatform.Protocol.Correlation;
 /// <para><b>Purpose:</b> lets the Back and the Very Back answer the requests of the tier in front of them, each response carrying the
 /// correlation identifier of its request, so that the client can pair them whatever the order.</para>
 /// <para><b>Behavior:</b> the connection has already passed its handshake (<see cref="ProtocolHandshake"/>). The server reads the frames one
-/// after the other and never stops reading while the connection lives, so that a control message (a cancellation) is always received at once,
-/// even when every slot is busy. Each request is handed to the handler without waiting for the previous one, up to a maximum number handled at
+/// after the other and never waits for a slot to read, so that a control message (a cancellation, a ping) is received at once, even when every
+/// slot is busy; only a client that stops reading the answers written from the read loop (a pong, a "busy") can stall it, until the idle
+/// timeout ends the connection. Each request is handed to the handler without waiting for the previous one, up to a maximum number handled at
 /// the same time; beyond it, the request is answered at once with the code <see cref="ErrorCodes.ServerBusy"/>, without being started, so that
 /// a peer cannot make the server start an unbounded amount of work. The frames are written one at a time.</para>
 /// <list type="bullet">
@@ -66,6 +67,11 @@ public sealed class RequestServer
     private static readonly byte[] _busyResponse = MessageSerializer.WriteError(ErrorCodes.ServerBusy);
 
     /// <summary>
+    /// Pong written for each ping, built once
+    /// </summary>
+    private static readonly byte[] _pong = MessageSerializer.WriteControl(HeartbeatMessage.Pong);
+
+    /// <summary>
     /// Codec used to read the requests and write the responses
     /// </summary>
     private readonly FrameCodec _codec;
@@ -89,11 +95,6 @@ public sealed class RequestServer
     /// Clock of the heartbeat (the system clock outside the tests)
     /// </summary>
     private readonly TimeProvider _timeProvider;
-
-    /// <summary>
-    /// Pong written for each ping, built once
-    /// </summary>
-    private static readonly byte[] _pong = MessageSerializer.WriteControl(HeartbeatMessage.Pong);
 
     #endregion
 
@@ -241,6 +242,7 @@ public sealed class RequestServer
             }
             catch (OperationCanceledException) when (requestToken.IsCancellationRequested && !service.Token.IsCancellationRequested)
             {
+                // Function's return: nothing to answer
                 return;
             }
 
@@ -254,6 +256,12 @@ public sealed class RequestServer
                 service.Slots.Release();
                 isEnded = true;
                 await _codec.WriteAsync(connection.Stream, new Frame(request.CorrelationId, response), service.Token).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                // Recording the failure while the write lock is still held: the end of the service waits for this lock, so it always sees
+                // the failure, and the state it shares is not yet released
+                service.Fail(exception);
             }
             finally
             {
@@ -330,6 +338,8 @@ public sealed class RequestServer
                 if (_timeProvider.GetElapsedTime(service.LastReceived) > _heartbeat.ServerIdleTimeout)
                 {
                     service.Fail(new TimeoutException($"The client sent no frame for more than {_heartbeat.ServerIdleTimeout}"));
+
+                    // Function's return: the service ends
                     return;
                 }
             }
@@ -348,8 +358,9 @@ public sealed class RequestServer
     /// Method used to answer the requests of a connection until it ends
     /// </summary>
     /// <remarks>
-    /// <para><b>Behavior:</b> returns when the peer closes the connection between two frames, once every request in progress has ended. When
-    /// anything else ends the service (a protocol violation, a failure of the stream, a failing handler, the cancellation), the requests still
+    /// <para><b>Behavior:</b> returns when the peer closes the connection between two frames, once every request in progress has ended:
+    /// they are still answered, for a client that closed only its sending side, but those still running after the idle timeout of the
+    /// heartbeat are canceled. When anything else ends the service (a protocol violation, a failure of the stream, a failing handler, the cancellation), the requests still
     /// in progress are canceled and awaited, then the cause is thrown. In every case, the caller then disposes the connection.</para>
     /// </remarks>
     /// <param name="connection">[Cannot be null] Connection to serve, its handshake done; it stays owned by the caller</param>
@@ -360,6 +371,7 @@ public sealed class RequestServer
     /// <exception cref="ArgumentNullException">If the connection is null</exception>
     /// <exception cref="InvalidDataException">If the peer breaks the protocol (a malformed frame or control message, an identifier in progress)</exception>
     /// <exception cref="IOException">If the stream fails</exception>
+    /// <exception cref="TimeoutException">If the client sent no frame for the idle timeout of the heartbeat</exception>
     /// <exception cref="OperationCanceledException">If the service is canceled</exception>
     /// <exception cref="Exception">Whatever a handler throws</exception>
     public async Task ServeAsync(ITransportConnection connection, CancellationToken cancellationToken = default)
@@ -378,7 +390,12 @@ public sealed class RequestServer
             {
                 Frame? frame = await _codec.ReadAsync(connection.Stream, service.Token).ConfigureAwait(false);
                 if (frame is null)
+                {
+                    // The client sends nothing more: the requests in progress may still be answered (a client that closed only its sending
+                    // side still reads), but within the idle timeout, after which they are canceled, so that a connection never stays held
+                    service.EndOnPeerClose(_heartbeat.ServerIdleTimeout, _timeProvider);
                     break;
+                }
                 service.MarkReceived(_timeProvider.GetTimestamp());
 
                 // A control message is handled at once, in the read loop

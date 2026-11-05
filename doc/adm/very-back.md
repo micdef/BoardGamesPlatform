@@ -22,7 +22,7 @@ As environment variables: `VeryBack__ListenAddress`, `VeryBack__Port`, `Connecti
 
 ## Transport
 
-In 0.3.0 and 0.4.0 the link is plain TCP, for development only. TLS 1.3 with an authenticated key exchange comes with 0.5.0, before any real use.
+In 0.3.0 and 0.4.0 the link is plain TCP, for development only. TLS 1.3 with mutual authentication comes with 0.5.0, before any real use, and an authenticated key exchange on top of it with 0.6.0.
 
 Each connection opens with a handshake, before any request: the client offers the protocol versions it speaks and its largest frame, the server chooses the newest common version and answers its own limit of requests in progress. A client without a common version, or configured with another largest frame, is refused with the code `protocol.versionUnsupported` or `protocol.limitsMismatch`, logged, and disconnected. A client that does not complete the handshake within 5 seconds is disconnected too.
 
