@@ -6,6 +6,7 @@
  */
 
 // Using
+using BoardGamesPlatform.Protocol.Control;
 using BoardGamesPlatform.Protocol.Correlation;
 using BoardGamesPlatform.Protocol.Transport;
 using Microsoft.Extensions.Logging;
@@ -24,8 +25,8 @@ namespace BoardGamesPlatform.Protocol.Links;
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> one hardened accept loop for every tier that listens, instead of a copy per tier that could drift.</para>
-/// <para><b>Behavior:</b> accepts the connections of a started listener until the stop is requested, and serves each one in its own task with
-/// the request server. The loop follows the rule of <see cref="ITransportListener"/>, and never ends silently:</para>
+/// <para><b>Behavior:</b> accepts the connections of a started listener until the stop is requested, and serves each one in its own task: the
+/// handshake first (<see cref="ProtocolHandshake"/>, within its timeout), then the request server. The loop follows the rule of <see cref="ITransportListener"/>, and never ends silently:</para>
 /// <list type="bullet">
 /// <item><description>A disposed listener or a cancellation ends it when the stop is requested.</description></item>
 /// <item><description>The same exceptions without a stop request mean the listener is lost: <see cref="RunAsync"/> fails, so that the tier
@@ -82,6 +83,11 @@ public sealed partial class LinkServer
     /// Pause after an accept failure
     /// </summary>
     private readonly TimeSpan _acceptFailurePause;
+
+    /// <summary>
+    /// Time allowed to a client for the handshake that opens its connection
+    /// </summary>
+    private readonly TimeSpan _handshakeTimeout;
 
     /// <summary>
     /// Services of the connections accepted and not yet swept; only the accept loop reads and writes it
@@ -146,6 +152,24 @@ public sealed partial class LinkServer
     /// <exception cref="ArgumentException">If the name is blank</exception>
     /// <exception cref="ArgumentOutOfRangeException">If the pause is negative</exception>
     public LinkServer(ITransportListener listener, RequestServer server, string name, ILogger logger, TimeSpan acceptFailurePause)
+        : this(listener, server, name, logger, acceptFailurePause, ProtocolHandshake.DefaultServerTimeout)
+    {
+    }
+
+    /// <summary>
+    /// Constructor with the time allowed for the handshake (the tests shorten it)
+    /// </summary>
+    /// <param name="listener">[Cannot be null] Listener of the link, already started; the server disposes it when the loop ends</param>
+    /// <param name="server">[Cannot be null] Server that answers the requests</param>
+    /// <param name="name">[Cannot be null or blank] Name of the tier in the logs, for example "the Very Back"</param>
+    /// <param name="logger">[Cannot be null] Logger of the tier</param>
+    /// <param name="acceptFailurePause">Pause after an accept failure; zero or more</param>
+    /// <param name="handshakeTimeout">Time allowed to a client for the handshake of its connection; greater than zero
+    /// (<see cref="ProtocolHandshake.DefaultServerTimeout"/> outside the tests)</param>
+    /// <exception cref="ArgumentNullException">If a parameter is null</exception>
+    /// <exception cref="ArgumentException">If the name is blank</exception>
+    /// <exception cref="ArgumentOutOfRangeException">If the pause is negative, or the handshake timeout is not greater than zero</exception>
+    public LinkServer(ITransportListener listener, RequestServer server, string name, ILogger logger, TimeSpan acceptFailurePause, TimeSpan handshakeTimeout)
     {
         // Checks
         if (listener is null)
@@ -160,6 +184,8 @@ public sealed partial class LinkServer
             throw new ArgumentNullException(nameof(logger), $"The value of the parameter: {nameof(logger)} cannot be null");
         if (acceptFailurePause < TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(acceptFailurePause), $"The value of the parameter: {nameof(acceptFailurePause)} cannot be negative");
+        if (handshakeTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(handshakeTimeout), $"The value of the parameter: {nameof(handshakeTimeout)} must be greater than zero");
 
         // Setting
         _listener = listener;
@@ -167,6 +193,7 @@ public sealed partial class LinkServer
         _name = name;
         _logger = logger;
         _acceptFailurePause = acceptFailurePause;
+        _handshakeTimeout = handshakeTimeout;
     }
 
     #endregion
@@ -254,7 +281,8 @@ public sealed partial class LinkServer
         LogAccepted(remoteEndPoint);
         try
         {
-            // Serving the connection to its end
+            // Agreeing on the protocol with the client, then serving the connection to its end
+            await ProtocolHandshake.RunServerAsync(connection, _server.Codec, _server.MaxConcurrentRequests, _handshakeTimeout, cancellationToken).ConfigureAwait(false);
             await _server.ServeAsync(connection, cancellationToken).ConfigureAwait(false);
             LogClosed(remoteEndPoint);
         }

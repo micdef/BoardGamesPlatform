@@ -15,7 +15,6 @@ using BoardGamesPlatform.Observability;
 using BoardGamesPlatform.Platform.Infrastructure.VeryBack;
 using BoardGamesPlatform.Protocol.Correlation;
 using BoardGamesPlatform.Protocol.Errors;
-using BoardGamesPlatform.Protocol.Framing;
 using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
 using BoardGamesPlatform.TestKit;
@@ -180,11 +179,8 @@ public sealed class BackListenerServiceTests
     /// </returns>
     private static async Task<RequestClient> ConnectAsGatewayAsync(BackListenerService service, CancellationToken cancellationToken)
     {
-        // Connecting
-        ITransportConnection connection = await new TcpTransportConnector().ConnectAsync(LoopbackHost, service.LocalEndPoint.Port, cancellationToken);
-
-        // Function's return
-        return new RequestClient(connection, new FrameCodec());
+        // Function's return: connected and agreed on the protocol, like the Gateway
+        return await TestRequestClients.ConnectAsync(LoopbackHost, service.LocalEndPoint.Port, cancellationToken);
     }
 
     #endregion
