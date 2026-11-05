@@ -15,6 +15,7 @@ using BoardGamesPlatform.Observability;
 using BoardGamesPlatform.Platform.Infrastructure.VeryBack;
 using BoardGamesPlatform.Protocol.Correlation;
 using BoardGamesPlatform.Protocol.Errors;
+using BoardGamesPlatform.Protocol.Links;
 using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
 using BoardGamesPlatform.TestKit;
@@ -162,7 +163,7 @@ public sealed class BackListenerServiceTests
     {
         // Creating and starting the service
         BackListenerService service = new BackListenerService(Options.Create(new BackOptions { ListenAddress = LoopbackHost, Port = TestPorts.Block.Next() }), veryBackClient,
-            logger);
+            logger, endPoint => TcpTransportListener.Start(endPoint), LinkServer.DefaultAcceptFailurePause);
         await service.StartAsync(cancellationToken);
 
         // Function's return
@@ -304,17 +305,17 @@ public sealed class BackListenerServiceTests
     }
 
     /// <summary>
-    /// A listen address that other machines can reach is accepted, with a warning; the loopback address gives none
+    /// A listen address that other machines can reach is accepted, and logged; the loopback address is not
     /// </summary>
     /// <param name="address">Address the listener claims to listen on</param>
-    /// <param name="warned">Whether a warning is expected</param>
+    /// <param name="warned">Whether the log is expected</param>
     /// <returns>
     /// A task that completes when the check is done
     /// </returns>
     [Theory(Timeout = TestTimeout)]
     [InlineData("0.0.0.0", true)]
     [InlineData("127.0.0.1", false)]
-    public async Task AnAddressOtherThanLoopbackIsLoggedAsAWarningAsync(string address, bool warned)
+    public async Task AnAddressOtherThanLoopbackIsLoggedAsync(string address, bool warned)
     {
         // Starting the service on an idle listener with that address, then stopping it once its loop waits for a connection
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
@@ -327,7 +328,7 @@ public sealed class BackListenerServiceTests
         await service.StopAsync(cancellationToken);
 
         // Checks
-        logger.Entries.Any(entry => entry.Level == LogLevel.Warning && entry.Message.Contains("not a loopback address")).ShouldBe(warned);
+        logger.Entries.Any(entry => entry.Level == LogLevel.Information && entry.Message.Contains("not a loopback address")).ShouldBe(warned);
         service.ExecuteTask.ShouldNotBeNull().IsCompletedSuccessfully.ShouldBeTrue();
     }
 

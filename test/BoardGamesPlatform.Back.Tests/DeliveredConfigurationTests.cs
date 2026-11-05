@@ -9,6 +9,7 @@
 using System.Net;
 using System.Net.Sockets;
 using BoardGamesPlatform.Back.Services;
+using BoardGamesPlatform.Protocol.Transport.Tls;
 using BoardGamesPlatform.TestKit;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -132,7 +133,8 @@ public sealed class DeliveredConfigurationTests
         string? deliveredAddress = builder.Configuration["Back:ListenAddress"];
         TestPortBlock.EnsureDeliveredPortFree(deliveredPort, "Back");
 
-        // Building the host as Program.cs does
+        // Building the host as Program.cs does, with the certificate of the tests, which is not delivered
+        builder.Configuration.AddInMemoryCollection(TestTlsFiles.Shared.GetSettings(PlatformRole.Back));
         builder.Services.AddLogging();
         builder.AddPlatformBack();
         using IHost host = builder.Build();

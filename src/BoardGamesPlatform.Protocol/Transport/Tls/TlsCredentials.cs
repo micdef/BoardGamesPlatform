@@ -434,6 +434,33 @@ public sealed partial class TlsCredentials
     }
 
     /// <summary>
+    /// Method used to load the credentials of a tier from its "Tls" settings, already checked by <see cref="TlsOptionsValidator"/>
+    /// </summary>
+    /// <param name="role">Role of the tier</param>
+    /// <param name="options">[Cannot be null] Settings of the tier</param>
+    /// <param name="contentRoot">[Cannot be null or blank] Folder of the tier, from which a relative path is taken</param>
+    /// <param name="timeProvider">[Cannot be null] Clock of the checks</param>
+    /// <param name="logger">[Cannot be null] Logger of the tier</param>
+    /// <returns>
+    /// The credentials, reloaded when their files change
+    /// </returns>
+    /// <exception cref="ArgumentNullException">If a parameter is null</exception>
+    /// <exception cref="ArgumentException">If a setting is invalid</exception>
+    /// <exception cref="InvalidOperationException">If a file is missing or unreadable, or the certificate cannot be used by this tier</exception>
+    public static TlsCredentials FromOptions(PlatformRole role, TlsOptions options, string contentRoot, TimeProvider timeProvider, ILogger logger)
+    {
+        // Checks
+        if (options is null)
+            throw new ArgumentNullException(nameof(options), $"The value of the parameter: {nameof(options)} cannot be null");
+        if (string.IsNullOrWhiteSpace(contentRoot))
+            throw new ArgumentException($"The value of the parameter: {nameof(contentRoot)} cannot be null or blank", nameof(contentRoot));
+
+        // Function's return: the paths taken from the folder of the tier when they are relative
+        return FromFiles(role, options.IdentitySuffix, Path.Combine(contentRoot, options.CertificatePath), options.CertificatePassword,
+            Path.Combine(contentRoot, options.TrustedRootsPath), options.RefusedThumbprints, options.ExpiryWarning, timeProvider, logger);
+    }
+
+    /// <summary>
     /// Method used to take the certificate files again when they changed, before a new connection
     /// </summary>
     /// <remarks>

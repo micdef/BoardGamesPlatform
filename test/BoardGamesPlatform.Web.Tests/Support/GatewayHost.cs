@@ -10,6 +10,8 @@ extern alias GatewayApp;
 
 // Using
 using BoardGamesPlatform.Gateway.Contracts;
+using BoardGamesPlatform.Protocol.Transport.Tls;
+using BoardGamesPlatform.TestKit;
 using GatewayApp::BoardGamesPlatform.Gateway.BackLink;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
@@ -168,11 +170,11 @@ public sealed class GatewayHost : WebApplicationFactory<GatewayApp::Program>
         // Pinning the environment and the settings the Gateway reads; added last, they win over the environment variables of the machine
         builder.UseEnvironment("Testing");
         builder.ConfigureAppConfiguration((_, configuration) =>
-            configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            configuration.AddInMemoryCollection(TestTlsFiles.Shared.AddTo(new Dictionary<string, string?>
             {
                 ["Gateway:HubPath"] = PlatformHubContract.DefaultPath,
                 ["Observability:OtlpEndpoint"] = string.Empty
-            }));
+            }, PlatformRole.Gateway)));
 
         // Replacing the Back client
         builder.ConfigureTestServices(services =>

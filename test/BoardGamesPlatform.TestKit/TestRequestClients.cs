@@ -110,11 +110,28 @@ public static class TestRequestClients
     /// <returns>
     /// The request client, owned by the caller, who disposes it
     /// </returns>
-    public static async Task<RequestClient> ConnectAsync(string host, int port, CancellationToken cancellationToken)
+    public static Task<RequestClient> ConnectAsync(string host, int port, CancellationToken cancellationToken)
+    {
+        // Function's return: over plain TCP
+        return ConnectAsync(host, port, new TcpTransportConnector(), cancellationToken);
+    }
+
+    /// <summary>
+    /// Method used to connect with the connector given (over mutual TLS for a tier started as delivered), run the handshake and return a request
+    /// client on the connection (Asynchronous)
+    /// </summary>
+    /// <param name="host">[Cannot be null] Host of the tier</param>
+    /// <param name="port">Port of the tier</param>
+    /// <param name="connector">[Cannot be null] Connector of the transport</param>
+    /// <param name="cancellationToken">Token of the test</param>
+    /// <returns>
+    /// The request client, owned by the caller, who disposes it
+    /// </returns>
+    public static async Task<RequestClient> ConnectAsync(string host, int port, ITransportConnector connector, CancellationToken cancellationToken)
     {
         // Connecting, then agreeing on the protocol (a failed handshake closes the connection)
         FrameCodec codec = new FrameCodec();
-        ITransportConnection connection = await new TcpTransportConnector().ConnectAsync(host, port, cancellationToken);
+        ITransportConnection connection = await connector.ConnectAsync(host, port, cancellationToken);
         HandshakeResult handshake;
         try
         {

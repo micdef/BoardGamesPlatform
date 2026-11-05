@@ -8,6 +8,8 @@
 // Using
 using BoardGamesPlatform.Back.Services;
 using BoardGamesPlatform.Platform.Infrastructure.VeryBack;
+using BoardGamesPlatform.Protocol.Transport.Tls;
+using BoardGamesPlatform.TestKit;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -114,13 +116,13 @@ public sealed class BackExtensionsTests
     {
         // Building the host with the same registrations as Program.cs
         HostApplicationBuilder builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings());
-        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        builder.Configuration.AddInMemoryCollection(TestTlsFiles.Shared.AddTo(new Dictionary<string, string?>
         {
             ["Back:ListenAddress"] = "127.0.0.1",
             ["Back:Port"] = backPort,
             ["VeryBack:Host"] = "127.0.0.1",
             ["VeryBack:Port"] = veryBackPort,
-        });
+        }, PlatformRole.Back));
         builder.Services.AddLogging();
         builder.AddPlatformBack();
 

@@ -1,6 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <!-- Gateway: single entry point of the fronts (SignalR hub, authentication, shape validation, rate limiting), socket client of the Back -->
 
+  <!-- Secrets of a developer machine, stored outside the repository by "dotnet user-secrets" (see doc/adm/configuration.md) -->
+  <PropertyGroup>
+    <UserSecretsId>81e04d05-1eba-4a7f-a2d7-24e8c312e253</UserSecretsId>
+  </PropertyGroup>
+
   <!-- Projects -->
   <ItemGroup>
     <ProjectReference Include="..\BoardGamesPlatform.Observability\BoardGamesPlatform.Observability.csproj" />

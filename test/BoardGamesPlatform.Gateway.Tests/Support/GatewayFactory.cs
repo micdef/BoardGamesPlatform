@@ -7,6 +7,8 @@
 
 // Using
 using BoardGamesPlatform.Gateway.BackLink;
+using BoardGamesPlatform.Protocol.Transport.Tls;
+using BoardGamesPlatform.TestKit;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -176,8 +178,8 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
     /// <inheritdoc/>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        // Setting the hub path and the port of the Back
-        Dictionary<string, string?> settings = new Dictionary<string, string?>();
+        // Setting the hub path, the port of the Back and the certificate of the Gateway
+        Dictionary<string, string?> settings = TestTlsFiles.Shared.GetSettings(PlatformRole.Gateway);
         if (_hubPath is not null)
             settings["Gateway:HubPath"] = _hubPath;
         if (_backPort is not null)

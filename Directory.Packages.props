@@ -42,6 +42,11 @@
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.14" />
   </ItemGroup>
 
+  <!-- Options: the validator of the TLS settings, shared by the tiers, lives with the TLS layer of the protocol -->
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.14" />
+  </ItemGroup>
+
   <!-- Database: SQL client of the SQL tests (and of the Very Back, the only tier allowed to use it) -->
   <ItemGroup>
     <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.1" />
