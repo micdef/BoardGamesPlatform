@@ -203,7 +203,7 @@ public sealed class SqlSessionsTests
 
             // Pinging, then counting while the host still runs: the pool keeps at least one session open
             await using (RequestClient client = await TestRequestClients.ConnectAsync(LoopbackHost, port, TestTlsFiles.Shared.CreateConnector(PlatformRole.Back, PlatformRole.VeryBack),
-                cancellationToken))
+                VeryBackOperations.LinkMaxPayloadLength, cancellationToken))
             {
                 await client.SendAsync<PingRequest, PingResponse>(VeryBackOperations.Ping, new PingRequest(), cancellationToken);
             }

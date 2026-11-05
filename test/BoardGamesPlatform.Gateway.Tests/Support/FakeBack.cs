@@ -131,9 +131,9 @@ internal sealed class FakeBack : IAsyncDisposable
         TlsTransportListener listener = new TlsTransportListener(TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next())),
             TestTlsFiles.Shared.LoadCredentials(PlatformRole.Back), PlatformRole.Gateway, NullLogger.Instance);
         Port = listener.LocalEndPoint.Port;
-        OperationDispatcher dispatcher = new OperationDispatcher(NullLogger.Instance)
+        OperationDispatcher dispatcher = new OperationDispatcher(NullLogger.Instance, BackOperations.LinkMaxPayloadLength)
             .Register<PingRequest, PingResponse>(BackOperations.Ping, (_, _) => Task.FromResult(new PingResponse(PingTime)));
-        RequestServer server = new RequestServer(new FrameCodec(), dispatcher.HandleAsync);
+        RequestServer server = new RequestServer(new FrameCodec(BackOperations.LinkMaxPayloadLength), dispatcher.HandleAsync);
         LinkServer link = new LinkServer(
             listener, server, "the fake Back", new ConnectionSignalLogger(() => _connectionClosed.TrySetResult()), LinkServer.DefaultAcceptFailurePause);
         _stopping = new CancellationTokenSource();

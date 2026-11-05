@@ -159,7 +159,8 @@ public sealed class BackTlsTests
         try
         {
             // Check: the Gateway opens a session and its request is served (the Very Back is down: the answer is a code)
-            await using (RequestClient gateway = await TestRequestClients.ConnectAsync("127.0.0.1", port, TestTlsFiles.Shared.CreateConnector(PlatformRole.Gateway, PlatformRole.Back), token))
+            await using (RequestClient gateway = await TestRequestClients.ConnectAsync("127.0.0.1", port, TestTlsFiles.Shared.CreateConnector(PlatformRole.Gateway, PlatformRole.Back),
+                BackOperations.LinkMaxPayloadLength, token))
             {
                 RemoteErrorException answer = await Should.ThrowAsync<RemoteErrorException>(() => gateway.SendAsync<PingRequest, PingResponse>(BackOperations.Ping, new PingRequest(), token));
                 answer.Code.ShouldBe(ErrorCodes.LinkUnavailable);
@@ -169,7 +170,7 @@ public sealed class BackTlsTests
             ITransportConnector notTheGateway = TestTlsFiles.Shared.CreateConnector(PlatformRole.Back, PlatformRole.Back);
             Exception refused = await Should.ThrowAsync<Exception>(async () =>
             {
-                await using RequestClient client = await TestRequestClients.ConnectAsync("127.0.0.1", port, notTheGateway, token);
+                await using RequestClient client = await TestRequestClients.ConnectAsync("127.0.0.1", port, notTheGateway, BackOperations.LinkMaxPayloadLength, token);
             });
             (refused is AuthenticationException or IOException).ShouldBeTrue(refused.ToString());
         }
