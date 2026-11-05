@@ -1,0 +1,4 @@
+### Added
+
+- Socket protocol, heartbeat: the request client sends `{"control":"ping"}` every 10 seconds, and the request server answers `{"control":"pong"}`. The client closes the connection when it has received no frame at all for 30 seconds (its pending requests fail with a `TimeoutException` as the cause). The server ends the service of a connection on which it has received nothing for 45 seconds. Any frame counts. No read is ever canceled without closing the connection, and the write of a ping is bounded by the client timeout. A ping sent by the server is a protocol violation.
+- `HeartbeatSettings`: the three timings, validated (both timeouts longer than the interval). The request client and the request server take them, with a clock (`TimeProvider`), so that the tests run on a fake clock.

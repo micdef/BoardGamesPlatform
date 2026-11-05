@@ -49,6 +49,16 @@ public static class ControlKinds
     /// </summary>
     public const string Cancel = "cancel";
 
+    /// <summary>
+    /// Heartbeat of the client, after the handshake (<see cref="HeartbeatMessage"/>)
+    /// </summary>
+    public const string Ping = "ping";
+
+    /// <summary>
+    /// Answer of the server to a ping (<see cref="HeartbeatMessage"/>)
+    /// </summary>
+    public const string Pong = "pong";
+
     #endregion
 
     #region Variables

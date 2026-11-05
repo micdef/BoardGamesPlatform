@@ -37,7 +37,9 @@ namespace BoardGamesPlatform.Protocol.Correlation;
 /// is closed. The check compares with the last identifier given to a request, not with the last one written: a peer that guesses the
 /// identifier of a request still waiting for the write lock could answer it early. The links join tiers of the platform only, and mutual
 /// TLS authenticates the peer from 0.5.0.</description></item>
-/// <item><description>When the connection closes (peer, failure, violation or disposal), the client closes for good: every pending and later
+/// <item><description>The client pings the server at a fixed interval (<see cref="HeartbeatSettings"/>) and closes when no frame at all
+/// came back within its timeout: a dead server or a broken path is found even when no request flows.</description></item>
+/// <item><description>When the connection closes (peer, failure, violation, heartbeat or disposal), the client closes for good: every pending and later
 /// request fails. A new connection needs a new client (reconnection comes with 0.4.0).</description></item>
 /// </list>
 /// </remarks>
@@ -94,6 +96,26 @@ public sealed class RequestClient : IAsyncDisposable
     /// Read loop, started by the constructor
     /// </summary>
     private readonly Task _readLoop;
+
+    /// <summary>
+    /// Timings of the heartbeat
+    /// </summary>
+    private readonly HeartbeatSettings _heartbeat;
+
+    /// <summary>
+    /// Clock of the heartbeat (the system clock outside the tests)
+    /// </summary>
+    private readonly TimeProvider _timeProvider;
+
+    /// <summary>
+    /// Heartbeat loop, started by the constructor: pings the server and closes the client when nothing comes back
+    /// </summary>
+    private readonly Task _heartbeatLoop;
+
+    /// <summary>
+    /// Time stamp of the clock when the last frame was received (the opening of the client before the first one)
+    /// </summary>
+    private long _lastReceived;
 
     /// <summary>
     /// Completed once the client is closed for good: connection disposed and every pending request failed
@@ -166,9 +188,12 @@ public sealed class RequestClient : IAsyncDisposable
     /// <param name="codec">[Cannot be null] Codec of the link; both ends use the same maximum length</param>
     /// <param name="maxConcurrentRequests">Number of requests in progress at the same time, at most: the limit the server announced in the
     /// handshake (beyond it, the server would answer "busy"); 1 or more</param>
+    /// <param name="heartbeat">[Can be null] Timings of the heartbeat; null for <see cref="HeartbeatSettings.Default"/></param>
+    /// <param name="timeProvider">[Can be null] Clock of the heartbeat; null for the system clock</param>
     /// <exception cref="ArgumentNullException">If the connection or the codec is null</exception>
     /// <exception cref="ArgumentOutOfRangeException">If the maximum number of requests is zero or negative</exception>
-    public RequestClient(ITransportConnection connection, FrameCodec codec, int maxConcurrentRequests = RequestServer.DefaultMaxConcurrentRequests)
+    public RequestClient(ITransportConnection connection, FrameCodec codec, int maxConcurrentRequests = RequestServer.DefaultMaxConcurrentRequests,
+        HeartbeatSettings? heartbeat = null, TimeProvider? timeProvider = null)
     {
         // Checks
         if (connection is null)
@@ -187,9 +212,13 @@ public sealed class RequestClient : IAsyncDisposable
         _requestSlots = new SemaphoreSlim(maxConcurrentRequests, maxConcurrentRequests);
         _lifetime = new CancellationTokenSource();
         _closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _heartbeat = heartbeat ?? HeartbeatSettings.Default;
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        _lastReceived = _timeProvider.GetTimestamp();
 
-        // Starting the read loop
+        // Starting the read loop and the heartbeat
         _readLoop = ReadResponsesAsync();
+        _heartbeatLoop = HeartbeatAsync();
     }
 
     #endregion
@@ -232,8 +261,19 @@ public sealed class RequestClient : IAsyncDisposable
                     break;
                 }
 
-                // Refusing the reserved identifier and the identifiers never sent
-                if (frame.CorrelationId == Frame.NoCorrelation || frame.CorrelationId > (ulong)Interlocked.Read(ref _lastCorrelationId))
+                // Any frame proves that the server is there
+                Interlocked.Exchange(ref _lastReceived, _timeProvider.GetTimestamp());
+
+                // A control message from the server can only be a pong, which needs nothing more
+                if (frame.CorrelationId == Frame.NoCorrelation)
+                {
+                    if (MessageSerializer.ReadControl(frame.Payload.Span) is not HeartbeatMessage { Control: ControlKinds.Pong })
+                        throw new InvalidDataException("The peer sent a control message that is not expected after the handshake");
+                    continue;
+                }
+
+                // Refusing the identifiers never sent
+                if (frame.CorrelationId > (ulong)Interlocked.Read(ref _lastCorrelationId))
                     throw new InvalidDataException($"The peer answered the correlation identifier {frame.CorrelationId}, which was never sent");
 
                 // Completing the request; a response to a canceled request finds nobody and is ignored
@@ -248,6 +288,72 @@ public sealed class RequestClient : IAsyncDisposable
 
         // Closing the client for good
         await CloseAsync(reason).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Method used to ping the server at each interval, and to close the client when no frame came back in time
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> at each tick, the client first checks the time since the last frame received: beyond the client timeout, the
+    /// server is taken as dead and the client closes with a <see cref="TimeoutException"/>. Otherwise it writes a ping, like any frame, under
+    /// the write lock; that write is bounded by the client timeout too, so that a peer that no longer reads cannot block the heartbeat. A read
+    /// is never canceled here: closing the client ends the read loop, following the connection rule of the codec. The task only fails when
+    /// disposing the connection throws; that error is then thrown by <see cref="DisposeAsync"/>.</para>
+    /// </remarks>
+    /// <returns>
+    /// A task that completes when the client is closed
+    /// </returns>
+    private async Task HeartbeatAsync()
+    {
+        Exception? reason = null;
+        try
+        {
+            using PeriodicTimer timer = new PeriodicTimer(_heartbeat.PingInterval, _timeProvider);
+            while (await timer.WaitForNextTickAsync(_lifetime.Token).ConfigureAwait(false))
+            {
+                // Giving up on a server that sent nothing for too long
+                if (_timeProvider.GetElapsedTime(Interlocked.Read(ref _lastReceived)) > _heartbeat.ClientTimeout)
+                {
+                    reason = new TimeoutException($"The server sent no frame for more than {_heartbeat.ClientTimeout}");
+                    break;
+                }
+
+                // Pinging, within the client timeout
+                using CancellationTokenSource deadline = new CancellationTokenSource(_heartbeat.ClientTimeout, _timeProvider);
+                using CancellationTokenSource writing = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token, deadline.Token);
+                try
+                {
+                    await _writeLock.WaitAsync(writing.Token).ConfigureAwait(false);
+                    try
+                    {
+                        await _codec.WriteAsync(_connection.Stream, new Frame(Frame.NoCorrelation, MessageSerializer.WriteControl(HeartbeatMessage.Ping)), writing.Token)
+                            .ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        _writeLock.Release();
+                    }
+                }
+                catch (OperationCanceledException exception) when (deadline.IsCancellationRequested && !_lifetime.IsCancellationRequested)
+                {
+                    reason = new TimeoutException($"The ping could not be written within {_heartbeat.ClientTimeout}", exception);
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+            // The client closes for another reason
+        }
+        catch (Exception exception)
+        {
+            // A failed write leaves the stream in an unknown state
+            reason = exception;
+        }
+
+        // Closing the client when the heartbeat found it broken
+        if (reason is not null)
+            await CloseAsync(reason).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -494,12 +600,14 @@ public sealed class RequestClient : IAsyncDisposable
         if (Interlocked.Exchange(ref _isDisposed, 1) == 1)
         {
             await _readLoop.ConfigureAwait(false);
+            await _heartbeatLoop.ConfigureAwait(false);
             return;
         }
 
-        // Closing, then waiting for the read loop
+        // Closing, then waiting for the read loop and the heartbeat
         await CloseAsync(new ObjectDisposedException(nameof(RequestClient), "The request client has been disposed")).ConfigureAwait(false);
         await _readLoop.ConfigureAwait(false);
+        await _heartbeatLoop.ConfigureAwait(false);
     }
 
     #endregion

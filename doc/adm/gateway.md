@@ -24,6 +24,7 @@ Section `Back` (environment variable form: `Back__Host`, `Back__Port`, `Back__Co
 
 - The settings are checked at startup: an invalid value stops the Gateway, and the message names the setting, never its value.
 - The connection opens on the first `Ping`, with a handshake that checks that the Back speaks the same protocol version and uses the same largest frame (a refusal gives the code `protocol.versionUnsupported` or `protocol.limitsMismatch` in the logs); it is shared by all the fronts, and is opened again on the next call when it is lost. A failed request is not retried (retries come with 0.4.0).
+- **Heartbeat**: the connection pings every 10 seconds; when nothing at all comes back for 30 seconds, it is taken as lost and closed, and the requests in progress fail. The next call opens a new connection.
 - A front that disconnects while its call is in progress cancels it: the Back and the Very Back stop its work, down to the call to the database.
 - The reconnection and the connect timeout are behaviors of the shared `LinkClient` of the protocol: they are proven by the tests of the `LinkClient` and of the Very Back client, not again by the Gateway tests.
 - **Plain TCP until 0.5.0**: the link is not encrypted nor authenticated. For development only: keep the Gateway and the Back on the same machine or on a trusted network. TLS comes in 0.5.0.

@@ -61,6 +61,11 @@ internal sealed class ServedConnectionState : IDisposable
     /// </summary>
     private Exception? _failure;
 
+    /// <summary>
+    /// Time stamp of the clock of the server when the last frame was received (the start of the service before the first one)
+    /// </summary>
+    private long _lastReceived;
+
     #endregion
 
     #region Delegates
@@ -102,6 +107,11 @@ internal sealed class ServedConnectionState : IDisposable
     /// </summary>
     public CancellationToken Token => _cancellation.Token;
 
+    /// <summary>
+    /// Time stamp of the clock of the server when the last frame was received
+    /// </summary>
+    public long LastReceived => Interlocked.Read(ref _lastReceived);
+
     #endregion
 
     #region Delegates
@@ -118,10 +128,12 @@ internal sealed class ServedConnectionState : IDisposable
     /// Constructor
     /// </summary>
     /// <param name="maxConcurrentRequests">Number of requests handled at the same time, at most</param>
+    /// <param name="startTimestamp">Time stamp of the clock of the server at the start of the service</param>
     /// <param name="cancellationToken">Token of the caller, which also ends the service</param>
-    public ServedConnectionState(int maxConcurrentRequests, CancellationToken cancellationToken)
+    public ServedConnectionState(int maxConcurrentRequests, long startTimestamp, CancellationToken cancellationToken)
     {
         // Setting
+        _lastReceived = startTimestamp;
         _cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _requests = new Dictionary<ulong, RequestInProgress>();
         _requestsLock = new Lock();
@@ -156,6 +168,16 @@ internal sealed class ServedConnectionState : IDisposable
         // Keeping the first failure, then canceling the requests in progress and the read loop
         Interlocked.CompareExchange(ref _failure, exception, null);
         _cancellation.Cancel();
+    }
+
+    /// <summary>
+    /// Method used to record that a frame was received
+    /// </summary>
+    /// <param name="timestamp">Time stamp of the clock of the server</param>
+    public void MarkReceived(long timestamp)
+    {
+        // Setting
+        Interlocked.Exchange(ref _lastReceived, timestamp);
     }
 
     /// <summary>
