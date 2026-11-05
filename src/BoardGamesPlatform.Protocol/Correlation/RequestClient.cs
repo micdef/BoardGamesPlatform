@@ -40,7 +40,7 @@ namespace BoardGamesPlatform.Protocol.Correlation;
 /// <item><description>The client pings the server at a fixed interval (<see cref="HeartbeatSettings"/>) and closes when no frame at all
 /// came back within its timeout: a dead server or a broken path is found even when no request flows.</description></item>
 /// <item><description>When the connection closes (peer, failure, violation, heartbeat or disposal), the client closes for good: every pending and later
-/// request fails. A new connection needs a new client (reconnection comes with 0.4.0).</description></item>
+/// request fails. A new connection needs a new client: the link client opens one on the next call.</description></item>
 /// </list>
 /// </remarks>
 public sealed class RequestClient : IAsyncDisposable
@@ -168,6 +168,12 @@ public sealed class RequestClient : IAsyncDisposable
     /// it never fails, so that it can be awaited safely
     /// </summary>
     public Task Completion => _closed.Task;
+
+    /// <summary>
+    /// Whether the client is still open: false from the very start of its close, before its pending requests fail and before
+    /// <see cref="Completion"/> completes, so that a caller never picks a client that is closing
+    /// </summary>
+    public bool IsOpen => Volatile.Read(ref _closeReason) is null;
 
     #endregion
 
