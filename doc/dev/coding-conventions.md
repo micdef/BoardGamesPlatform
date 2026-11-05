@@ -137,7 +137,7 @@ public bool AddShip(string shipName)
 | Private fields `_camelCase`; injected services `_svcName`, with the parameter `svcName`; the logger is the exception: `_logger`, with the parameter `logger` | `_svcMailing`, `svcMailing`, `_logger` | Build (fields) / review (services) |
 | Interfaces `IName`, services `NameService`, asynchronous methods suffixed `Async` | `IMailingService`, `SendAsync` | Build |
 | Access modifiers always explicit, no `this.` | — | Build |
-| Logs through `[LoggerMessage]` source generation, with an `EventId` unique within the logger category. A library class that logs through the logger of the tier that uses it reserves a range of its own: `Protocol.Links` uses 9001-9006 (`LinkClient`) and 9011-9019 (`LinkServer`), `Protocol.Messages` uses 9021-9026 (`OperationDispatcher`), `Protocol.Transport.Tls` uses 9031-9033 (`TlsTransportListener`), 9034-9035 (`TlsTransportConnector`) and 9036-9039 (`TlsCredentials`); the events of a tier stay below 9000 | `[LoggerMessage(EventId = 100, …)]` | Review |
+| Logs through `[LoggerMessage]` source generation, with an `EventId` unique within the logger category. A library class that logs through the logger of the tier that uses it reserves a range of its own: `Protocol.Links` uses 9001-9006 (`LinkClient`) and 9011-9019 and 9041-9043 (`LinkServer`), `Protocol.Messages` uses 9021-9026 (`OperationDispatcher`), `Protocol.Transport.Tls` uses 9031-9033 (`TlsTransportListener`), 9034-9035 (`TlsTransportConnector`) and 9036-9039 (`TlsCredentials`); the events of a tier stay below 9000 | `[LoggerMessage(EventId = 100, …)]` | Review |
 
 Build-enforced rules are configured in [.editorconfig](../../.editorconfig): a violation fails the build.
 

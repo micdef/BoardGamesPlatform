@@ -327,13 +327,33 @@ public sealed class TestPortBlock : IDisposable
     /// <exception cref="InvalidOperationException">If the block is used up, or if the port cannot be bound</exception>
     public int Next()
     {
-        // Taking the next offset of the block
-        int offset = Interlocked.Increment(ref _lastOffset);
-        if (offset >= BlockSize)
+        // Taking the next port, the block being used up
+        if (!TryNext(out int port))
             throw new InvalidOperationException($"The {BlockSize} test ports from {First} are all used by this test project: give it a second block in TestPortBlocks");
 
+        // Function's return
+        return port;
+    }
+
+    /// <summary>
+    /// Method used to get the next port of the block, checked to be free, or to learn that the block is used up
+    /// </summary>
+    /// <param name="port">A port of the block that no other test of the run has had, and that could be bound on the loopback address and on
+    /// all the addresses; zero when the block is used up</param>
+    /// <returns>
+    /// True when a port is given, false when the block is used up
+    /// </returns>
+    /// <exception cref="InvalidOperationException">If the port cannot be bound</exception>
+    public bool TryNext(out int port)
+    {
+        // Taking the next offset of the block
+        port = 0;
+        int offset = Interlocked.Increment(ref _lastOffset);
+        if (offset >= BlockSize)
+            return false;
+
         // Checking the port, then giving it
-        int port = First + offset;
+        port = First + offset;
         SocketException? holder = FindHolder(port);
         if (holder is not null)
         {
@@ -342,7 +362,7 @@ public sealed class TestPortBlock : IDisposable
         }
 
         // Function's return
-        return port;
+        return true;
     }
 
     /// <summary>
