@@ -1,4 +1,0 @@
-### Added
-
-- Links, reconnection with back-off: a lost connection is opened again by the next call, at once. When opening fails, the next attempt waits 0.5 second, doubled after each failure up to 30 seconds, spread at random by 20 % either way. Until then, calls fail at once with `link.unavailable` without touching the network (event id 9006 tells when the next attempt is due). The first connection that opens resets the delay. A failed request is never retried automatically. Done criterion of 0.4.0, proven by a test peer that goes down in the middle of a session and comes back on the same port: the request in flight fails with the code, the calls while it is down fail at once, and the first call once it is back succeeds.
-- Request client, `IsOpen`: false from the very start of the close, so that the link client never picks a connection that is closing.
