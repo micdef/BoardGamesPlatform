@@ -273,11 +273,12 @@ public sealed class HeartbeatTests
         FrameCodec codec = new FrameCodec();
         (ITransportConnection clientEnd, ITransportConnection serverEnd) = await ConnectAsync(token);
         await using ITransportConnection raw = clientEnd;
-        await using ITransportConnection served = serverEnd;
+        await using ObservedConnection served = new ObservedConnection(serverEnd);
         Task serving = new RequestServer(new FrameCodec(), (request, requestToken) => Task.FromResult(request), heartbeat: _timings, timeProvider: clock)
             .ServeAsync(served, token);
 
-        // Sending a request in 10 pieces, one per ping interval: the whole frame takes twice the idle timeout to arrive
+        // Sending a request in 10 pieces, one per ping interval, each one read by the server before the clock moves: the whole frame takes
+        // twice the idle timeout to arrive
         byte[] payload = Enumerable.Range(0, 10000).Select(value => (byte)value).ToArray();
         using MemoryStream framed = new MemoryStream();
         await codec.WriteAsync(framed, new Frame(1, payload), token);
@@ -285,8 +286,10 @@ public sealed class HeartbeatTests
         int pieceLength = (bytes.Length / 10) + 1;
         for (int offset = 0; offset < bytes.Length; offset += pieceLength)
         {
-            await raw.Stream.WriteAsync(bytes.AsMemory(offset, Math.Min(pieceLength, bytes.Length - offset)), token);
+            int length = Math.Min(pieceLength, bytes.Length - offset);
+            await raw.Stream.WriteAsync(bytes.AsMemory(offset, length), token);
             await raw.Stream.FlushAsync(token);
+            await served.WaitForReadAsync(offset + length, token);
             clock.Advance(_timings.PingInterval);
         }
 
@@ -310,11 +313,13 @@ public sealed class HeartbeatTests
         FrameCodec codec = new FrameCodec();
         (ITransportConnection clientEnd, ITransportConnection serverEnd) = await ConnectAsync(token);
         await using ITransportConnection raw = serverEnd;
-        await using RequestClient client = new RequestClient(clientEnd, codec, heartbeat: _timings, timeProvider: clock);
+        ObservedConnection observed = new ObservedConnection(clientEnd);
+        await using RequestClient client = new RequestClient(observed, codec, heartbeat: _timings, timeProvider: clock);
         Task<ReadOnlyMemory<byte>> pending = client.SendAsync(new byte[] { 1 }, token);
         Frame request = (await codec.ReadAsync(raw.Stream, token)).ShouldNotBeNull();
 
-        // Answering in 10 pieces, one per ping interval: the whole frame takes more than three times the client timeout to arrive
+        // Answering in 10 pieces, one per ping interval, each one read by the client before the clock moves: the whole frame takes more than
+        // three times the client timeout to arrive
         byte[] payload = Enumerable.Range(0, 10000).Select(value => (byte)value).ToArray();
         using MemoryStream framed = new MemoryStream();
         await codec.WriteAsync(framed, new Frame(request.CorrelationId, payload), token);
@@ -322,8 +327,10 @@ public sealed class HeartbeatTests
         int pieceLength = (bytes.Length / 10) + 1;
         for (int offset = 0; offset < bytes.Length; offset += pieceLength)
         {
-            await raw.Stream.WriteAsync(bytes.AsMemory(offset, Math.Min(pieceLength, bytes.Length - offset)), token);
+            int length = Math.Min(pieceLength, bytes.Length - offset);
+            await raw.Stream.WriteAsync(bytes.AsMemory(offset, length), token);
             await raw.Stream.FlushAsync(token);
+            await observed.WaitForReadAsync(offset + length, token);
             clock.Advance(_timings.PingInterval);
         }
 
