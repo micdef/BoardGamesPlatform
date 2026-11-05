@@ -142,10 +142,11 @@ Any byte received counts, not only a whole frame: a large frame on a slow link i
 | Connections in their handshake (TLS, then protocol), not yet served | 4, of which 2 at most from one source (an IP address) | a new connection is closed at once, before any byte: a silent or unknown peer never takes the place of a served connection |
 | Logs of the refused connections | one every 10 seconds at most; the next log gives the number of refusals in between | the refusals are counted, not logged one by one |
 | Handshake | 5 seconds | the connection is closed |
+| Write of a frame by the server | no progress for the idle timeout (45 seconds) | the connection is closed (`TimeoutException`, logged by the link server) |
 | Request timeout, the wait for the connection included | `Back:RequestTimeout` (Gateway, 8 s) and `VeryBack:RequestTimeout` (Back, 5 s), at most 5 minutes | `link.timeout`, the request is canceled on the peer |
 | Response of an operation | the largest payload of the link | `internal`, logged; the connection stays open |
 
-The server never waits for a place to read, so that a cancellation or a ping is received at once, even when every place is taken; only a client that stops reading the answers written from the read loop (a pong, a `server.busy`) can stall it, until the idle timeout closes the connection. It gives the place of a request back just before writing its response, so that the next request of the client always finds it free.
+The server never waits for a place to read, so that a cancellation or a ping is received at once, even when every place is taken; only a client that stops reading the answers written from the read loop (a pong, a `server.busy`) can stall it, until the idle timeout closes the connection. A write of the server that makes no progress (no piece of 64 KiB written) for the idle timeout closes the connection too, so that a client that stops reading while it sends frames that need no answer (cancellations) cannot hold the writes, the places and the responses of its connection; the deadline moves with each piece, so a large frame read slowly is not cut. It gives the place of a request back just before writing its response, so that the next request of the client always finds it free.
 
 The request timeouts decrease along the chain (website 10 s > Gateway 8 s > Back 5 s), so that each tier still answers a code before its caller gives up.
 

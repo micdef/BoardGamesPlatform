@@ -30,7 +30,8 @@ namespace BoardGamesPlatform.Protocol.Correlation;
 /// <para><b>Behavior:</b> the connection has already passed its handshake (<see cref="ProtocolHandshake"/>). The server reads the frames one
 /// after the other and never waits for a slot to read, so that a control message (a cancellation, a ping) is received at once, even when every
 /// slot is busy; only a client that stops reading the answers written from the read loop (a pong, a "busy") can stall it, until the idle
-/// timeout ends the connection. Each request is handed to the handler without waiting for the previous one, up to a maximum number handled at
+/// timeout ends the connection. A write that makes no progress for the idle timeout ends the connection too, so that a client that stops
+/// reading cannot hold the write lock. Each request is handed to the handler without waiting for the previous one, up to a maximum number handled at
 /// the same time; beyond it, the request is answered at once with the code <see cref="ErrorCodes.ServerBusy"/>, without being started, so that
 /// a peer cannot make the server start an unbounded amount of work. The frames are written one at a time.</para>
 /// <list type="bullet">
@@ -189,6 +190,39 @@ public sealed class RequestServer
     #region Privates
 
     /// <summary>
+    /// Method used to write one frame within the write deadline, the write lock being held
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> a write that makes no progress (no piece of the frame written) for the idle timeout of the heartbeat fails with
+    /// a <see cref="TimeoutException"/>, which ends the service of the connection: a client that stops reading, while it keeps the connection
+    /// alive with frames that need no answer (cancellations), cannot hold the write lock, its slots and its responses for ever. The end of the
+    /// service stops the write too.</para>
+    /// </remarks>
+    /// <param name="connection">[Cannot be null] Connection to write on</param>
+    /// <param name="frame">[Cannot be null] Frame to write</param>
+    /// <param name="service">[Cannot be null] State shared by the requests of the connection</param>
+    /// <returns>
+    /// A task that completes once the frame is written
+    /// </returns>
+    /// <exception cref="TimeoutException">If the write makes no progress for the idle timeout</exception>
+    private async Task WriteFrameAsync(ITransportConnection connection, Frame frame, ServedConnectionState service)
+    {
+        // A deadline moved after each piece written, linked to the end of the service
+        TimeSpan timeout = _heartbeat.ServerIdleTimeout;
+        using CancellationTokenSource deadline = new CancellationTokenSource(timeout, _timeProvider);
+        using CancellationTokenSource writing = CancellationTokenSource.CreateLinkedTokenSource(service.Token, deadline.Token);
+        try
+        {
+            await _codec.WriteAsync(connection.Stream, frame, () => deadline.CancelAfter(timeout), writing.Token).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (deadline.IsCancellationRequested && !service.Token.IsCancellationRequested)
+        {
+            // The deadline expired, whatever the stream threw when its write was canceled
+            throw new TimeoutException($"The client read nothing of a frame for more than {timeout}", exception);
+        }
+    }
+
+    /// <summary>
     /// Method used to write one frame, when no other frame of the connection is being written
     /// </summary>
     /// <param name="connection">[Cannot be null] Connection to write on</param>
@@ -203,7 +237,7 @@ public sealed class RequestServer
         await service.WriteLock.WaitAsync(service.Token).ConfigureAwait(false);
         try
         {
-            await _codec.WriteAsync(connection.Stream, frame, service.Token).ConfigureAwait(false);
+            await WriteFrameAsync(connection, frame, service).ConfigureAwait(false);
         }
         finally
         {
@@ -255,7 +289,7 @@ public sealed class RequestServer
                 service.EndRequest(request.CorrelationId);
                 service.Slots.Release();
                 isEnded = true;
-                await _codec.WriteAsync(connection.Stream, new Frame(request.CorrelationId, response), service.Token).ConfigureAwait(false);
+                await WriteFrameAsync(connection, new Frame(request.CorrelationId, response), service).ConfigureAwait(false);
             }
             catch (Exception exception)
             {
