@@ -204,6 +204,33 @@ public sealed class LinkServerTests
     }
 
     /// <summary>
+    /// A listener lost while a connection is served ends the service of that connection, so that the run fails instead of waiting for ever
+    /// </summary>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    [Fact(Timeout = TestTimeout)]
+    public async Task AListenerLostWhileAConnectionIsServedEndsItsServiceAsync()
+    {
+        // Running a server on a real listener, with a client connected
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next()));
+        CapturingLogger<LinkServerTests> logger = new CapturingLogger<LinkServerTests>();
+        Task running = new LinkServer(listener, CreatePingServer(), TierName, logger, TimeSpan.Zero).RunAsync(cancellationToken);
+        await using RequestClient client = await TestRequestClients.ConnectAsync("127.0.0.1", listener.LocalEndPoint.Port, cancellationToken);
+        PingResponse response = await client.SendAsync<PingRequest, PingResponse>(BackOperations.Ping, new PingRequest(), cancellationToken);
+        response.ServerTime.ShouldBe(_pingTime);
+
+        // Losing the listener without a stop request
+        await listener.DisposeAsync();
+
+        // Checks: the run fails, and the connection of the client is closed by the server
+        InvalidOperationException exception = await Should.ThrowAsync<InvalidOperationException>(() => running.WaitAsync(cancellationToken));
+        exception.InnerException.ShouldBeOfType<ObjectDisposedException>();
+        await Should.ThrowAsync<Exception>(() => client.SendAsync<PingRequest, PingResponse>(BackOperations.Ping, new PingRequest(), cancellationToken));
+    }
+
+    /// <summary>
     /// Accept failures that repeat fail the run after the maximum number in a row, under the name of the tier
     /// </summary>
     /// <returns>
