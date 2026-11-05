@@ -150,7 +150,8 @@ public sealed class RequestServer
     /// <param name="codec">[Cannot be null] Codec of the link; both ends use the same maximum length</param>
     /// <param name="handler">[Cannot be null] Handler of the requests: receives the content of a request and the token of that request,
     /// canceled when the client cancels it or when the service of the connection ends, and returns the content of the response. It may be
-    /// called for several requests at the same time. It must observe the token: the service of a connection only ends once every handler has
+    /// called for several requests at the same time. It must observe the token, and the callbacks it registers on the token must not block: the
+    /// service of a connection only ends once every handler, and every cancellation callback, has
     /// returned. Its response must not exceed the maximum length of the codec; a larger one is a handler failure.</param>
     /// <param name="maxConcurrentRequests">Number of requests of one connection handled at the same time, at most; 1 or more</param>
     /// <param name="heartbeat">[Can be null] Timings of the heartbeat; null for <see cref="HeartbeatSettings.Default"/></param>
