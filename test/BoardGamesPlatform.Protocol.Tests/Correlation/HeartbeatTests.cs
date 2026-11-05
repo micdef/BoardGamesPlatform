@@ -262,6 +262,109 @@ public sealed class HeartbeatTests
     }
 
     /// <summary>
+    /// A large request arriving slowly keeps the server serving: any byte received counts, not only a whole frame
+    /// </summary>
+    [Fact(Timeout = TestTimeout)]
+    public async Task ALargeFrameArrivingSlowlyKeepsTheServerServingAsync()
+    {
+        // Serving a connection on a fake clock with an echo handler, played by a raw client
+        CancellationToken token = TestContext.Current.CancellationToken;
+        FakeTimeProvider clock = new FakeTimeProvider();
+        FrameCodec codec = new FrameCodec();
+        (ITransportConnection clientEnd, ITransportConnection serverEnd) = await ConnectAsync(token);
+        await using ITransportConnection raw = clientEnd;
+        await using ITransportConnection served = serverEnd;
+        Task serving = new RequestServer(new FrameCodec(), (request, requestToken) => Task.FromResult(request), heartbeat: _timings, timeProvider: clock)
+            .ServeAsync(served, token);
+
+        // Sending a request in 10 pieces, one per ping interval: the whole frame takes twice the idle timeout to arrive
+        byte[] payload = Enumerable.Range(0, 10000).Select(value => (byte)value).ToArray();
+        using MemoryStream framed = new MemoryStream();
+        await codec.WriteAsync(framed, new Frame(1, payload), token);
+        byte[] bytes = framed.ToArray();
+        int pieceLength = (bytes.Length / 10) + 1;
+        for (int offset = 0; offset < bytes.Length; offset += pieceLength)
+        {
+            await raw.Stream.WriteAsync(bytes.AsMemory(offset, Math.Min(pieceLength, bytes.Length - offset)), token);
+            await raw.Stream.FlushAsync(token);
+            clock.Advance(_timings.PingInterval);
+        }
+
+        // Checks: the request is answered, the service goes on, and closing ends it cleanly
+        Frame answered = (await codec.ReadAsync(raw.Stream, token)).ShouldNotBeNull();
+        answered.Payload.ToArray().ShouldBe(payload);
+        serving.IsCompleted.ShouldBeFalse();
+        raw.Stream.Close();
+        await serving;
+    }
+
+    /// <summary>
+    /// A large response arriving slowly keeps the client open: any byte received counts, not only a whole frame
+    /// </summary>
+    [Fact(Timeout = TestTimeout)]
+    public async Task ALargeFrameArrivingSlowlyKeepsTheClientOpenAsync()
+    {
+        // Opening a client on a fake clock, in front of a raw server
+        CancellationToken token = TestContext.Current.CancellationToken;
+        FakeTimeProvider clock = new FakeTimeProvider();
+        FrameCodec codec = new FrameCodec();
+        (ITransportConnection clientEnd, ITransportConnection serverEnd) = await ConnectAsync(token);
+        await using ITransportConnection raw = serverEnd;
+        await using RequestClient client = new RequestClient(clientEnd, codec, heartbeat: _timings, timeProvider: clock);
+        Task<ReadOnlyMemory<byte>> pending = client.SendAsync(new byte[] { 1 }, token);
+        Frame request = (await codec.ReadAsync(raw.Stream, token)).ShouldNotBeNull();
+
+        // Answering in 10 pieces, one per ping interval: the whole frame takes more than three times the client timeout to arrive
+        byte[] payload = Enumerable.Range(0, 10000).Select(value => (byte)value).ToArray();
+        using MemoryStream framed = new MemoryStream();
+        await codec.WriteAsync(framed, new Frame(request.CorrelationId, payload), token);
+        byte[] bytes = framed.ToArray();
+        int pieceLength = (bytes.Length / 10) + 1;
+        for (int offset = 0; offset < bytes.Length; offset += pieceLength)
+        {
+            await raw.Stream.WriteAsync(bytes.AsMemory(offset, Math.Min(pieceLength, bytes.Length - offset)), token);
+            await raw.Stream.FlushAsync(token);
+            clock.Advance(_timings.PingInterval);
+        }
+
+        // Checks: the response arrives whole and the client is still open
+        (await pending).ToArray().ShouldBe(payload);
+        client.Completion.IsCompleted.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// A large request written slowly keeps the client open: each piece that leaves counts, and the ping waits for its turn instead of failing
+    /// </summary>
+    [Fact(Timeout = TestTimeout)]
+    public async Task ALargeFrameWrittenSlowlyKeepsTheClientOpenAsync()
+    {
+        // Opening a client on a fake clock, in front of a raw server that does not read yet; the request (16 MiB) fills the buffers of the
+        // system, so that its write stalls until the server reads
+        CancellationToken token = TestContext.Current.CancellationToken;
+        FakeTimeProvider clock = new FakeTimeProvider();
+        FrameCodec codec = new FrameCodec(FrameCodec.HighestMaxPayloadLength);
+        (ITransportConnection clientEnd, ITransportConnection serverEnd) = await ConnectAsync(token);
+        await using ITransportConnection raw = serverEnd;
+        await using RequestClient client = new RequestClient(clientEnd, codec, heartbeat: _timings, timeProvider: clock);
+        byte[] payload = new byte[FrameCodec.HighestMaxPayloadLength];
+        Task<ReadOnlyMemory<byte>> pending = client.SendAsync(payload, token);
+
+        // Reading the request 1 MiB per ping interval: the whole write takes more than five times the client timeout
+        byte[] piece = new byte[1024 * 1024];
+        int received = 0;
+        while (received < FrameCodec.HeaderLength + payload.Length)
+        {
+            received += await raw.Stream.ReadAtLeastAsync(piece, 1, throwOnEndOfStream: true, token);
+            clock.Advance(_timings.PingInterval);
+        }
+
+        // Checks: the client is still open, and the answer reaches the request
+        client.Completion.IsCompleted.ShouldBeFalse();
+        await codec.WriteAsync(raw.Stream, new Frame(1, new byte[] { 7 }), token);
+        (await pending).ToArray().ShouldBe(new byte[] { 7 });
+    }
+
+    /// <summary>
     /// A ping sent by the server is a protocol violation: only the client pings
     /// </summary>
     [Fact(Timeout = TestTimeout)]

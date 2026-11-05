@@ -319,7 +319,7 @@ public sealed class RequestServer
     /// Method used to end the service of a connection on which nothing was received for too long
     /// </summary>
     /// <remarks>
-    /// <para><b>Behavior:</b> checks at each ping interval the time since the last frame received; beyond the server idle timeout, the service
+    /// <para><b>Behavior:</b> checks at each ping interval the time since the last bytes received; beyond the server idle timeout, the service
     /// fails with a <see cref="TimeoutException"/>, which cancels the read and the requests in progress (the caller then closes the connection,
     /// following the connection rule of the codec). Never throws.</para>
     /// </remarks>
@@ -337,7 +337,7 @@ public sealed class RequestServer
             {
                 if (_timeProvider.GetElapsedTime(service.LastReceived) > _heartbeat.ServerIdleTimeout)
                 {
-                    service.Fail(new TimeoutException($"The client sent no frame for more than {_heartbeat.ServerIdleTimeout}"));
+                    service.Fail(new TimeoutException($"The client sent nothing for more than {_heartbeat.ServerIdleTimeout}"));
 
                     // Function's return: the service ends
                     return;
@@ -371,7 +371,7 @@ public sealed class RequestServer
     /// <exception cref="ArgumentNullException">If the connection is null</exception>
     /// <exception cref="InvalidDataException">If the peer breaks the protocol (a malformed frame or control message, an identifier in progress)</exception>
     /// <exception cref="IOException">If the stream fails</exception>
-    /// <exception cref="TimeoutException">If the client sent no frame for the idle timeout of the heartbeat</exception>
+    /// <exception cref="TimeoutException">If the client sent nothing for the idle timeout of the heartbeat</exception>
     /// <exception cref="OperationCanceledException">If the service is canceled</exception>
     /// <exception cref="Exception">Whatever a handler throws</exception>
     public async Task ServeAsync(ITransportConnection connection, CancellationToken cancellationToken = default)
@@ -384,11 +384,14 @@ public sealed class RequestServer
         using ServedConnectionState service = new ServedConnectionState(_maxConcurrentRequests, _timeProvider.GetTimestamp(), cancellationToken);
         using CancellationTokenSource watching = CancellationTokenSource.CreateLinkedTokenSource(service.Token);
         Task watchdog = WatchIdleAsync(service, watching.Token);
+
+        // Any byte received proves that the client is there, even inside a large frame on a slow link
+        Action markReceived = () => service.MarkReceived(_timeProvider.GetTimestamp());
         try
         {
             while (true)
             {
-                Frame? frame = await _codec.ReadAsync(connection.Stream, service.Token).ConfigureAwait(false);
+                Frame? frame = await _codec.ReadAsync(connection.Stream, markReceived, service.Token).ConfigureAwait(false);
                 if (frame is null)
                 {
                     // The client sends nothing more: the requests in progress may still be answered (a client that closed only its sending
@@ -396,7 +399,6 @@ public sealed class RequestServer
                     service.EndOnPeerClose(_heartbeat.ServerIdleTimeout, _timeProvider);
                     break;
                 }
-                service.MarkReceived(_timeProvider.GetTimestamp());
 
                 // A control message is handled at once, in the read loop
                 if (frame.CorrelationId == Frame.NoCorrelation)
