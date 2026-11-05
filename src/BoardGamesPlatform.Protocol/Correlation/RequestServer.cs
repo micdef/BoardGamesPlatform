@@ -300,9 +300,9 @@ public sealed class RequestServer
         ControlMessage message = MessageSerializer.ReadControl(frame.Payload.Span);
         switch (message)
         {
-            // Canceling the request, if it is still in progress
+            // Canceling the request, if it is still in progress, outside the read loop: the callbacks of the handler may block
             case CancelMessage cancel:
-                service.CancelRequest(cancel.CorrelationId);
+                service.StartCancelRequest(cancel.CorrelationId);
                 break;
 
             // Answering the ping, like any frame
@@ -426,9 +426,10 @@ public sealed class RequestServer
             service.Fail(exception);
         }
 
-        // Stopping the idle watch: the read loop has ended
+        // Stopping the idle watch, then waiting for the cancellations asked by the client: the read loop has ended and starts none any more
         await watching.CancelAsync().ConfigureAwait(false);
         await watchdog.ConfigureAwait(false);
+        await service.WhenCancellationsEndedAsync().ConfigureAwait(false);
 
         // Waiting for the requests in progress (each one gives its slot back), then for the last response being written, which holds the
         // write lock without a slot: once both are taken, nothing of this connection runs any more
