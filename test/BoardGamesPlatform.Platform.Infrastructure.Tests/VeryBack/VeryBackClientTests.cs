@@ -8,6 +8,7 @@
 // Using
 using System.Net.Sockets;
 using BoardGamesPlatform.Platform.Infrastructure.VeryBack;
+using BoardGamesPlatform.Protocol.Errors;
 using BoardGamesPlatform.Protocol.Transport;
 
 // Static using
@@ -233,7 +234,7 @@ public sealed class VeryBackClientTests
         await using VeryBackClient client = CreateClient(fake.Port, new SignalingLogger<VeryBackClient>());
 
         // Pinging: the failing handler ends the service of the connection, so the connection closes before any response
-        await Should.ThrowAsync<IOException>(() => client.PingAsync(token));
+        (await Should.ThrowAsync<LinkFailureException>(() => client.PingAsync(token))).Code.ShouldBe(ErrorCodes.LinkUnavailable);
 
         // Checks
         fake.ReceivedRequests.ShouldBe(1);
@@ -245,7 +246,7 @@ public sealed class VeryBackClientTests
     #region Connecting
 
     /// <summary>
-    /// When nothing listens, the call fails with a socket error instead of hanging
+    /// When nothing listens, the call fails with a link failure ("link.unavailable", the socket error inside) instead of hanging
     /// </summary>
     /// <remarks>
     /// <para><b>Behavior:</b> the port is a test port of the block of this project, where nothing listens.</para>
@@ -257,8 +258,10 @@ public sealed class VeryBackClientTests
         CancellationToken token = TestContext.Current.CancellationToken;
         await using VeryBackClient client = CreateClient(TestPorts.Block.Next(), new SignalingLogger<VeryBackClient>());
 
-        // Check
-        await Should.ThrowAsync<SocketException>(() => client.PingAsync(token));
+        // Checks
+        LinkFailureException failure = await Should.ThrowAsync<LinkFailureException>(() => client.PingAsync(token));
+        failure.Code.ShouldBe(ErrorCodes.LinkUnavailable);
+        failure.InnerException.ShouldBeOfType<SocketException>();
     }
 
     /// <summary>
@@ -267,7 +270,7 @@ public sealed class VeryBackClientTests
     /// <remarks>
     /// <para><b>Behavior:</b> a peer that never completes the TCP handshake cannot be built on loopback (the system completes it for any
     /// listening port), so the connector is replaced by one that waits for its token: this proves that the client gives the deadline to the
-    /// connector and turns its expiry into a <see cref="TimeoutException"/>.</para>
+    /// connector and turns its expiry into a <see cref="TimeoutException"/>, given to the caller inside a link failure.</para>
     /// </remarks>
     [Fact(Timeout = TestTimeout)]
     public async Task TheConnectTimeoutIsHonouredAsync()
@@ -277,8 +280,10 @@ public sealed class VeryBackClientTests
         VeryBackClientOptions options = new VeryBackClientOptions { ConnectTimeout = TimeSpan.FromMilliseconds(200) };
         await using VeryBackClient client = new VeryBackClient(options, new HangingConnector(), new SignalingLogger<VeryBackClient>());
 
-        // Check
-        await Should.ThrowAsync<TimeoutException>(() => client.PingAsync(token));
+        // Checks
+        LinkFailureException failure = await Should.ThrowAsync<LinkFailureException>(() => client.PingAsync(token));
+        failure.Code.ShouldBe(ErrorCodes.LinkUnavailable);
+        failure.InnerException.ShouldBeOfType<TimeoutException>();
     }
 
     /// <summary>

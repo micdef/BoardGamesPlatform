@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-05
+
+Robust socket protocol, specified in `doc/dev/protocol.md`. Every connection opens with a version handshake. A failed request is answered with an error code, and the connection that every caller shares stays open. A cancellation crosses the tiers, down to the database call. A heartbeat detects a silent peer. Requests are bounded in time and connections in number. The links reconnect with back-off. Development only: the links are still plain TCP, and mutual TLS 1.3 comes in 0.5.0.
+
+### Added
+
+- Developer documentation, `doc/dev/protocol.md`: the specification of version 1 of the socket protocol (frames, handshake, control messages, envelopes, error codes and what closes a connection, cancellation, heartbeat, limits, reconnection, reserved log event ids).
+- Socket protocol, heartbeat: the request client sends `{"control":"ping"}` every 10 seconds, and the request server answers `{"control":"pong"}`. The client closes the connection when it has received no frame at all for 30 seconds (its pending requests fail with a `TimeoutException` as the cause). The server ends the service of a connection on which it has received nothing for 45 seconds. Any frame counts. No read is ever canceled without closing the connection, and the write of a ping is bounded by the client timeout. A ping sent by the server is a protocol violation.
+- `HeartbeatSettings`: the three timings, validated (both timeouts longer than the interval). The request client and the request server take them, with a clock (`TimeProvider`), so that the tests run on a fake clock.
+- Socket protocol, error codes: a response holds either its body or an error, `{"error":{"code":"…"}}`, never both. The codes are short dotted names, never display texts and never internal details (`ErrorCodes`: `request.unknownOperation`, `request.invalid`, `internal`, `link.unavailable`). The caller receives a `RemoteErrorException` holding the code, and the connection stays open.
+- Socket protocol, `LinkFailureException`: thrown by the client of a link when the peer cannot be reached or the connection is lost before the response, with the code `link.unavailable`. The cause is kept as the inner exception, for the logs of the tier.
+- Links, request timeout: a request that gets no response within the request timeout fails with a `LinkFailureException` whose code is `link.timeout`, and it is canceled on the peer. The setting is `Back:RequestTimeout` in the Gateway (8 seconds by default) and `VeryBack:RequestTimeout` in the Back (5 seconds by default), greater than zero and at most 5 minutes, checked at startup. The timeouts decrease along the chain (website 10 s > Gateway 8 s > Back 5 s), so that each tier still answers a code before its caller gives up.
+- Links, maximum of connections: a link server serves at most 8 connections at the same time. A new one beyond that is closed at once and logged as a warning (event id 9019).
+- Socket protocol, control messages: frames on the reserved correlation identifier 0 carry control messages, JSON objects whose first property `control` names their kind. They are read strictly, and an unknown kind closes the connection.
+- Socket protocol, handshake (`ProtocolHandshake`): every connection opens with a `hello` from the client (the range of protocol versions it speaks and its largest payload). The server answers `helloAck`, with the newest common version (1 for now) and its limit of requests handled at the same time, or `helloRefused`, with the code `protocol.versionUnsupported` or `protocol.limitsMismatch`, and closes. A request before the hello is a protocol violation. A server allows 5 seconds for the handshake. A client bounds it with its connect timeout and checks the answer again.
+- Test kit: `TestRequestClients.ConnectAsync` opens a request client on a listening tier with the handshake, as a real client does.
+- Links, reconnection with back-off: a lost connection is opened again by the next call, at once. When opening fails, the next attempt waits 0.5 second, doubled after each failure up to 30 seconds, spread at random by 20 % either way. Until then, calls fail at once with `link.unavailable` without touching the network (event id 9006 tells when the next attempt is due). The first connection that opens resets the delay. A failed request is never retried automatically. Done criterion of 0.4.0, proven by a test peer that goes down in the middle of a session and comes back on the same port: the request in flight fails with the code, the calls while it is down fail at once, and the first call once it is back succeeds.
+- Request client, `IsOpen`: false from the very start of the close, so that the link client never picks a connection that is closing.
+- Socket protocol, request cancellation: when the caller of a request gives up, the request client sends the control message `{"control":"cancel","correlationId":N}` once the request is written. The request server cancels the token of that request only, and answers nothing. A cancellation of a request that already ended, or never existed, is ignored. Through the tiers, a front that disconnects stops the work of its call in the Back and in the Very Back, down to the call to the database (end-to-end test).
+- Socket protocol, error code `server.busy`: a request beyond the limit of requests in progress of the connection is answered at once with this code, without being started.
+- Socket protocol, request client: it never has more requests in progress than the limit the server announced in the handshake. Extra calls wait for a place.
+- Socket protocol, framing: property-based and fuzz tests of the frame codec (random round trips in random chunks, random bytes, truncation at every offset, oversized lengths), run with fixed seeds so that every failure can be replayed.
+
+### Changed
+
+- Roadmap: the done criterion of 0.4.0 is rewritten to what a test can prove (in-flight requests fail with a code, calls fail at once while the Very Back is down, the first call once it is back succeeds), the branches of 0.4.0 are listed as delivered, and the decisions on the protocol version, the error responses and the robustness of the protocol are recorded.
+- Socket protocol, operation dispatcher: an unknown operation, a body that does not match its operation, or a failing handler is answered with an error code instead of closing the connection that every caller shares. A tier behind that cannot be reached is answered `link.unavailable`, any other failure `internal`. The details go to the log of the tier only (event ids 9021-9024). A malformed envelope still closes the connection. The dispatcher now takes the logger of the tier.
+- Back: when the Very Back cannot be reached, a `Ping` of the Gateway is answered `link.unavailable`, and the connection of the Gateway stays open.
+- Links: the link server runs the handshake on each accepted connection before serving it. The link client runs it after connecting, within the connect timeout. A refusal reaches the caller as a `LinkFailureException` that keeps the code of the refusal; any other failure of the handshake gives `link.unavailable`.
+- Socket protocol, request server: it never stops reading while the connection lives, so that a cancellation is received even when every slot is busy (until now it stopped reading when its slots were full). A request whose identifier is still in progress, or a control message other than a cancellation, is a protocol violation. The slot of a request is given back just before its response is written, so that the next request of the client always finds it free.
+
+### Fixed
+
+- Socket protocol, operation dispatcher: a response larger than the link can carry, or that cannot be written, is answered `internal` and logged (event id 9025). It no longer closes the connection that every caller shares, which then failed them all with `link.unavailable`.
+- Socket protocol, operation dispatcher: a code answered by a tier behind is no longer logged as a handler failure. It is logged as a warning (event id 9026), `server.busy` is passed on, and any other code becomes `internal`. A handler that fails with any exception once its request is canceled is no longer answered.
+- Socket protocol, serializer: a request whose operation name or body the reader would refuse is refused before it is written, with an `ArgumentException` to the caller, instead of closing the shared connection. The errors of a malformed message no longer copy any text of the peer (property names, values), nor keep an inner exception that could, so that a peer cannot write fake lines or control characters into the logs.
+- Socket protocol, request server: the failure of a response write is recorded while the write lock is still held, so that the end of the service always reports it. After a client closes its sending side, the requests still running are canceled once the idle timeout has passed, instead of holding the connection for ever.
+- Socket protocol, request client: a failure to close the connection met while sending a cancellation is thrown by `DisposeAsync` instead of being lost. The reason of a close is exposed (`CloseReason`) and logged with the loss of the connection (event id 9002).
+- Links: the request timeout now covers the whole call, the wait for the connection included, so that the timeouts of the tiers add up. The back-off counts on a monotonic clock, never waits more than 30 seconds, the random spread included, and counts an opening cut by the request timeout as a failure. Requests canceled at the end of the drain after a client closed are reported as a failure of the service, logged by the link server. The client never keeps more than 64 requests in progress, whatever the server announces. A connection that cannot be closed is logged (event id 9016) instead of stopping the accept loop, and a failure to close after a failed handshake no longer hides the failure of the handshake.
+
 ## [0.3.0] - 2026-10-30
 
 Walking skeleton: a button on a Blazor page shows the time of SQL Server, obtained through the five tiers, and an end-to-end test proves it. Development only: the links between the tiers are plain TCP and nothing is authenticated yet.
@@ -126,7 +166,8 @@ Repository bootstrap: no game code yet.
 - Contribution guide describing the branching model, commit and pull request conventions, versioning and releases.
 - Continuous integration workflow building and testing every pull request.
 
-[Unreleased]: https://github.com/micdef/BoardGamesPlatform/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/micdef/BoardGamesPlatform/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/micdef/BoardGamesPlatform/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/micdef/BoardGamesPlatform/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/micdef/BoardGamesPlatform/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/micdef/BoardGamesPlatform/releases/tag/v0.1.0

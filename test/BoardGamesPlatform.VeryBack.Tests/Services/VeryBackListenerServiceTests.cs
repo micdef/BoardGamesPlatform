@@ -8,9 +8,10 @@
 // Using
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using BoardGamesPlatform.Observability;
 using BoardGamesPlatform.Protocol.Correlation;
-using BoardGamesPlatform.Protocol.Framing;
+using BoardGamesPlatform.Protocol.Errors;
 using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
 using BoardGamesPlatform.TestKit;
@@ -151,11 +152,8 @@ public sealed class VeryBackListenerServiceTests
     /// </returns>
     private static async Task<RequestClient> ConnectAsync(VeryBackListenerService service, CancellationToken cancellationToken)
     {
-        // Connecting
-        ITransportConnection connection = await new TcpTransportConnector().ConnectAsync(LoopbackHost, service.LocalEndPoint.Port, cancellationToken);
-
-        // Function's return
-        return new RequestClient(connection, new FrameCodec());
+        // Function's return: connected and agreed on the protocol, like the Back
+        return await TestRequestClients.ConnectAsync(LoopbackHost, service.LocalEndPoint.Port, cancellationToken);
     }
 
     /// <summary>
@@ -207,25 +205,32 @@ public sealed class VeryBackListenerServiceTests
     }
 
     /// <summary>
-    /// A failing procedure ends the service of that connection: the request fails instead of hanging
+    /// A failing procedure is answered with the code "internal", without its message, and the connection stays open for the next requests
     /// </summary>
     /// <returns>
     /// A task that completes when the check is done
     /// </returns>
     [Fact(Timeout = TestTimeout)]
-    public async Task AFailingProcedureEndsTheConnectionAndTheRequestFailsAsync()
+    public async Task AFailingProcedureIsAnsweredInternalAndTheConnectionStaysOpenAsync()
     {
-        // Starting the service with a procedure that fails
+        // Starting the service with a procedure that fails on its first call only
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
-        FakePingProcedure procedure = new FakePingProcedure(_ => throw new InvalidDataException("The database answered nonsense"));
+        FakePingProcedure procedure = new FakePingProcedure(call => call == 1 ? throw new InvalidDataException("The database answered nonsense") : _fakeTime);
         VeryBackListenerService service = await StartServiceAsync(procedure, cancellationToken);
         try
         {
             await using RequestClient client = await ConnectAsync(service, cancellationToken);
 
-            // The request fails because the server closes the connection, and the client sees the close
-            await Should.ThrowAsync<IOException>(() => client.SendAsync<PingRequest, PingResponse>(VeryBackOperations.Ping, new PingRequest(), cancellationToken));
-            await client.Completion;
+            // The first request is answered with the code only
+            RemoteErrorException error = await Should.ThrowAsync<RemoteErrorException>(
+                () => client.SendAsync<PingRequest, PingResponse>(VeryBackOperations.Ping, new PingRequest(), cancellationToken));
+            error.Code.ShouldBe(ErrorCodes.Internal);
+            error.Message.ShouldNotContain("nonsense");
+
+            // The same connection answers the next request
+            PingResponse response = await client.SendAsync<PingRequest, PingResponse>(VeryBackOperations.Ping, new PingRequest(), cancellationToken);
+            response.ServerTime.ShouldBe(_fakeTime);
+            client.Completion.IsCompleted.ShouldBeFalse();
         }
         finally
         {
@@ -242,16 +247,15 @@ public sealed class VeryBackListenerServiceTests
     [Fact(Timeout = TestTimeout)]
     public async Task TheServiceKeepsAcceptingAfterAConnectionFailedAsync()
     {
-        // Starting the service with a procedure that fails on its first call only
+        // Starting the service
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
-        FakePingProcedure procedure = new FakePingProcedure(call => call == 1 ? throw new InvalidDataException("First call fails") : _fakeTime);
-        VeryBackListenerService service = await StartServiceAsync(procedure, cancellationToken);
+        VeryBackListenerService service = await StartServiceAsync(new FakePingProcedure(_ => _fakeTime), cancellationToken);
         try
         {
-            // The first connection fails
+            // The first connection fails: its request is not even a JSON envelope, and the server closes it
             await using (RequestClient failing = await ConnectAsync(service, cancellationToken))
             {
-                await Should.ThrowAsync<IOException>(() => failing.SendAsync<PingRequest, PingResponse>(VeryBackOperations.Ping, new PingRequest(), cancellationToken));
+                await Should.ThrowAsync<IOException>(() => failing.SendAsync(Encoding.UTF8.GetBytes("not json"), cancellationToken));
             }
 
             // A new connection is accepted and answered
@@ -281,11 +285,16 @@ public sealed class VeryBackListenerServiceTests
         {
             await using RequestClient healthy = await ConnectAsync(service, cancellationToken);
 
-            // A second client sends a request for an operation that does not exist: its connection is closed
+            // A second client sends a request that is not a JSON envelope: its connection is closed
             await using (RequestClient breaking = await ConnectAsync(service, cancellationToken))
             {
-                await Should.ThrowAsync<IOException>(() => breaking.SendAsync<PingRequest, PingResponse>("Unknown", new PingRequest(), cancellationToken));
+                await Should.ThrowAsync<IOException>(() => breaking.SendAsync(Encoding.UTF8.GetBytes("not json"), cancellationToken));
             }
+
+            // An operation that does not exist is answered with its code, on a connection that stays open
+            RemoteErrorException unknown = await Should.ThrowAsync<RemoteErrorException>(
+                () => healthy.SendAsync<PingRequest, PingResponse>("Unknown", new PingRequest(), cancellationToken));
+            unknown.Code.ShouldBe(ErrorCodes.RequestUnknownOperation);
 
             // The healthy client is still answered
             PingResponse response = await healthy.SendAsync<PingRequest, PingResponse>(VeryBackOperations.Ping, new PingRequest(), cancellationToken);

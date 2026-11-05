@@ -9,9 +9,13 @@
 using System.Net;
 using System.Text;
 using BoardGamesPlatform.Protocol.Correlation;
+using BoardGamesPlatform.Protocol.Errors;
 using BoardGamesPlatform.Protocol.Framing;
 using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
+using BoardGamesPlatform.TestKit;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 // Static using
 // #N/A
@@ -111,7 +115,7 @@ public sealed class MessageTests
     private static OperationDispatcher CreateDispatcher()
     {
         // Function's return
-        return new OperationDispatcher()
+        return new OperationDispatcher(NullLogger.Instance)
             .Register<NumberBody, NumberBody>("Add", (request, cancellationToken) => Task.FromResult(new NumberBody(request.Value + 1)));
     }
 
@@ -165,6 +169,82 @@ public sealed class MessageTests
         emptyJson.ShouldBe("{\"body\":{}}");
     }
 
+    /// <summary>
+    /// An error response is written as an envelope holding the code only, without a body
+    /// </summary>
+    [Fact]
+    public void AnErrorResponseFollowsTheWireFormat()
+    {
+        // Check
+        Encoding.UTF8.GetString(MessageSerializer.WriteError(ErrorCodes.RequestUnknownOperation)).ShouldBe("{\"error\":{\"code\":\"request.unknownOperation\"}}");
+    }
+
+    /// <summary>
+    /// Only a well-formed code can be written: a text, an empty or a too long code is refused before anything is written
+    /// </summary>
+    /// <param name="code">Malformed code</param>
+    [Theory]
+    [InlineData("")]
+    [InlineData("The Very Back is down")]
+    [InlineData("Internal")]
+    [InlineData("link.")]
+    [InlineData(".link")]
+    [InlineData("a.b.c.d.e")]
+    [InlineData("link.unavailable\n")]
+    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    public void AMalformedCodeIsNeverWritten(string code)
+    {
+        // Checks
+        ErrorCodes.IsWellFormed(code).ShouldBeFalse();
+        Should.Throw<ArgumentException>(() => MessageSerializer.WriteError(code));
+    }
+
+    /// <summary>
+    /// The codes of the catalogue are well-formed
+    /// </summary>
+    [Fact]
+    public void TheCodesOfTheCatalogueAreWellFormed()
+    {
+        // Checks
+        ErrorCodes.IsWellFormed(ErrorCodes.RequestUnknownOperation).ShouldBeTrue();
+        ErrorCodes.IsWellFormed(ErrorCodes.RequestInvalid).ShouldBeTrue();
+        ErrorCodes.IsWellFormed(ErrorCodes.Internal).ShouldBeTrue();
+        ErrorCodes.IsWellFormed(ErrorCodes.LinkUnavailable).ShouldBeTrue();
+        ErrorCodes.IsWellFormed(null).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// Reading an error response gives the caller the code answered by the peer, in a remote error
+    /// </summary>
+    [Fact]
+    public void ReadingAnErrorResponseThrowsTheCode()
+    {
+        // Reading an error response
+        RemoteErrorException error = Should.Throw<RemoteErrorException>(() => MessageSerializer.ReadResponse<NumberBody>(MessageSerializer.WriteError(ErrorCodes.Internal)));
+
+        // Check
+        error.Code.ShouldBe(ErrorCodes.Internal);
+    }
+
+    /// <summary>
+    /// A response envelope must hold exactly one part, and an error a well-formed code
+    /// </summary>
+    /// <param name="json">Response that breaks these rules</param>
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"body\":null}")]
+    [InlineData("{\"body\":{\"value\":1},\"error\":{\"code\":\"internal\"}}")]
+    [InlineData("{\"error\":{}}")]
+    [InlineData("{\"error\":{\"code\":null}}")]
+    [InlineData("{\"error\":{\"code\":\"Not a code\"}}")]
+    [InlineData("{\"error\":{\"code\":\"internal\",\"message\":\"detail\"}}")]
+    [InlineData("{\"error\":\"internal\"}")]
+    public void AMalformedResponseEnvelopeIsRefused(string json)
+    {
+        // Check
+        Should.Throw<InvalidDataException>(() => MessageSerializer.ReadResponse<NumberBody>(Encoding.UTF8.GetBytes(json)));
+    }
+
     #endregion
 
     #region Dispatching
@@ -192,12 +272,7 @@ public sealed class MessageTests
     [InlineData("{\"operation\":\"Add\"}")]
     [InlineData("{\"operation\":\"\",\"body\":{\"value\":1}}")]
     [InlineData("{\"operation\":\"Add\",\"body\":null}")]
-    [InlineData("{\"operation\":\"Add\",\"body\":{}}")]
-    [InlineData("{\"operation\":\"Add\",\"body\":{\"value\":\"one\"}}")]
-    [InlineData("{\"operation\":\"Add\",\"body\":{\"value\":1,\"extra\":true}}")]
     [InlineData("{\"operation\":\"Add\",\"body\":{\"value\":1},\"extra\":true}")]
-    [InlineData("{\"operation\":\"Unknown\",\"body\":{\"value\":1}}")]
-    [InlineData("{\"operation\":\"add\",\"body\":{\"value\":1}}")]
     [InlineData("{\"operation\":\"Add \",\"body\":{\"value\":1}}")]
     [InlineData("{\"operation\":\"A\\nB\",\"body\":{\"value\":1}}")]
     [InlineData("{\"operation\":\"Add\\u0000\",\"body\":{\"value\":1}}")]
@@ -206,8 +281,6 @@ public sealed class MessageTests
     [InlineData("{\"operation\":\"Add\",\"body\":{\"value\":1,\"value\":2}}")]
     [InlineData("{\"Operation\":\"Add\",\"body\":{\"value\":1}}")]
     [InlineData("{\"operation\":\"Add\",\"BODY\":{\"value\":1}}")]
-    [InlineData("{\"operation\":\"Add\",\"body\":{\"Value\":1}}")]
-    [InlineData("{\"operation\":\"Add\",\"body\":{\"value\":\"1\"}}")]
     [InlineData("{\"operation\":\"Add\",\"body\":[]}")]
     [InlineData("{\"operation\":\"Add\",\"body\":\"x\"}")]
     [InlineData("{\"operation\":\"Add\",\"body\":1}")]
@@ -219,6 +292,102 @@ public sealed class MessageTests
     {
         // Check
         await Should.ThrowAsync<InvalidDataException>(() => DispatchAsync(json));
+    }
+
+    /// <summary>
+    /// A well-formed envelope whose operation is unknown is answered with a code, not refused: the connection is shared by every caller
+    /// </summary>
+    /// <param name="json">Request for an operation that is not registered (names are case-sensitive)</param>
+    [Theory]
+    [InlineData("{\"operation\":\"Unknown\",\"body\":{\"value\":1}}")]
+    [InlineData("{\"operation\":\"add\",\"body\":{\"value\":1}}")]
+    public async Task AnUnknownOperationIsAnsweredWithACodeAsync(string json)
+    {
+        // Check
+        (await DispatchAsync(json)).ShouldBe("{\"error\":{\"code\":\"request.unknownOperation\"}}");
+    }
+
+    /// <summary>
+    /// A well-formed envelope whose body does not match its operation is answered with a code, and the handler is not run
+    /// </summary>
+    /// <param name="json">Request with a body that does not match the operation "Add"</param>
+    [Theory]
+    [InlineData("{\"operation\":\"Add\",\"body\":{}}")]
+    [InlineData("{\"operation\":\"Add\",\"body\":{\"value\":\"one\"}}")]
+    [InlineData("{\"operation\":\"Add\",\"body\":{\"value\":1,\"extra\":true}}")]
+    [InlineData("{\"operation\":\"Add\",\"body\":{\"Value\":1}}")]
+    [InlineData("{\"operation\":\"Add\",\"body\":{\"value\":\"1\"}}")]
+    public async Task AnInvalidBodyIsAnsweredWithACodeAsync(string json)
+    {
+        // Check
+        (await DispatchAsync(json)).ShouldBe("{\"error\":{\"code\":\"request.invalid\"}}");
+    }
+
+    /// <summary>
+    /// A handler that fails is answered with a code: "internal" for any failure, the code of the link when a tier behind cannot be reached;
+    /// the details go to the log of the tier only
+    /// </summary>
+    [Fact]
+    public async Task AFailingHandlerIsAnsweredWithACodeAndLoggedAsync()
+    {
+        // Building a dispatcher whose handlers fail, with a logger that records
+        CancellationToken token = TestContext.Current.CancellationToken;
+        CapturingLogger<OperationDispatcher> logger = new CapturingLogger<OperationDispatcher>();
+        OperationDispatcher dispatcher = new OperationDispatcher(logger)
+            .Register<NumberBody, NumberBody>("Fail", (request, cancellationToken) => throw new InvalidOperationException("Secret detail"))
+            .Register<NumberBody, NumberBody>("Unreachable", (request, cancellationToken) =>
+                throw new LinkFailureException(ErrorCodes.LinkUnavailable, "The Very Back cannot be reached", null));
+
+        // Running both
+        ReadOnlyMemory<byte> failed = await dispatcher.HandleAsync(Encoding.UTF8.GetBytes("{\"operation\":\"Fail\",\"body\":{\"value\":1}}"), token);
+        ReadOnlyMemory<byte> unreachable = await dispatcher.HandleAsync(Encoding.UTF8.GetBytes("{\"operation\":\"Unreachable\",\"body\":{\"value\":1}}"), token);
+
+        // Checks: the code only on the wire, the exception in the log
+        Encoding.UTF8.GetString(failed.Span).ShouldBe("{\"error\":{\"code\":\"internal\"}}");
+        Encoding.UTF8.GetString(unreachable.Span).ShouldBe("{\"error\":{\"code\":\"link.unavailable\"}}");
+        logger.Entries.ShouldContain(entry => entry.Level == LogLevel.Error && entry.Message == "The handler of Fail failed; answered internal");
+        logger.Entries.ShouldContain(entry => entry.Level == LogLevel.Warning && entry.Message == "The handler of Unreachable could not reach a tier; answered link.unavailable");
+    }
+
+    /// <summary>
+    /// A handler stopped by the cancellation of its request is not answered: the cancellation reaches the request server
+    /// </summary>
+    [Fact]
+    public async Task ACanceledRequestIsNotAnsweredAsync()
+    {
+        // Building a dispatcher whose handler waits until its request is canceled
+        using CancellationTokenSource request = new CancellationTokenSource();
+        OperationDispatcher dispatcher = new OperationDispatcher(NullLogger.Instance)
+            .Register<NumberBody, NumberBody>("Wait", async (body, cancellationToken) =>
+            {
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+                return body;
+            });
+
+        // Canceling the request while the handler waits
+        Task<ReadOnlyMemory<byte>> handling = dispatcher.HandleAsync(Encoding.UTF8.GetBytes("{\"operation\":\"Wait\",\"body\":{\"value\":1}}"), request.Token);
+        await request.CancelAsync();
+
+        // Check
+        await Should.ThrowAsync<OperationCanceledException>(() => handling);
+    }
+
+    /// <summary>
+    /// A cancellation that the request did not ask for (a timeout inside the handler) is a failure like any other, answered "internal"
+    /// </summary>
+    [Fact]
+    public async Task ACancellationOfTheHandlerItselfIsAnsweredInternalAsync()
+    {
+        // Building a dispatcher whose handler is canceled by itself
+        OperationDispatcher dispatcher = new OperationDispatcher(NullLogger.Instance)
+            .Register<NumberBody, NumberBody>("Expire", (body, cancellationToken) => throw new OperationCanceledException("Inner deadline"));
+
+        // Running it
+        ReadOnlyMemory<byte> response = await dispatcher.HandleAsync(Encoding.UTF8.GetBytes("{\"operation\":\"Expire\",\"body\":{\"value\":1}}"),
+            TestContext.Current.CancellationToken);
+
+        // Check
+        Encoding.UTF8.GetString(response.Span).ShouldBe("{\"error\":{\"code\":\"internal\"}}");
     }
 
     /// <summary>
@@ -385,9 +554,9 @@ public sealed class MessageTests
         // Checks
         Should.Throw<ArgumentException>(() => CreateDispatcher()
             .Register<NumberBody, NumberBody>("Add", (request, cancellationToken) => Task.FromResult(request)));
-        Should.Throw<ArgumentNullException>(() => new OperationDispatcher()
+        Should.Throw<ArgumentNullException>(() => new OperationDispatcher(NullLogger.Instance)
             .Register<NumberBody, NumberBody>(" ", (request, cancellationToken) => Task.FromResult(request)));
-        Should.Throw<ArgumentNullException>(() => new OperationDispatcher().Register<NumberBody, NumberBody>("Add", null!));
+        Should.Throw<ArgumentNullException>(() => new OperationDispatcher(NullLogger.Instance).Register<NumberBody, NumberBody>("Add", null!));
     }
 
     #endregion

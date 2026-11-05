@@ -9,6 +9,8 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using BoardGamesPlatform.Protocol.Control;
+using BoardGamesPlatform.Protocol.Errors;
 
 // Static using
 // #N/A
@@ -25,11 +27,14 @@ namespace BoardGamesPlatform.Protocol.Messages;
 /// <remarks>
 /// <para><b>Purpose:</b> one single place that decides the JSON format of every message between the tiers, so that both ends of a link always
 /// agree, and that a malformed message is refused the same way everywhere.</para>
-/// <para><b>Behavior:</b> a request is <c>{"operation":"&lt;name&gt;","body":{…}}</c>, a response is <c>{"body":{…}}</c>, in UTF-8, with camelCase
+/// <para><b>Behavior:</b> the error messages never copy a text of the peer (a property name, a value): they reach the logs, where a peer
+/// could otherwise write fake lines or control characters. A request is <c>{"operation":"&lt;name&gt;","body":{…}}</c>, a response is <c>{"body":{…}}</c>, in UTF-8, with camelCase
 /// property names. Reading is strict and refuses with an <see cref="InvalidDataException"/>, which the request client and the request server
 /// treat as a protocol violation: malformed JSON, an unknown property, a property written twice or in another case, a missing envelope part
 /// or constructor parameter, a null body, a number written as a string, a date without its offset, and a JSON nested deeper than
-/// <see cref="MaxDepth"/> levels (the envelope counts as one level). Version and error code fields come with 0.4.0.</para>
+/// <see cref="MaxDepth"/> levels (the envelope counts as one level). A response holds either its body or an error,
+/// <c>{"error":{"code":"…"}}</c>, never both: the error becomes a <see cref="RemoteErrorException"/> for the caller. The protocol version
+/// is agreed once per connection, never written in each message.</para>
 /// <para>Known limits, for the bodies that come later: a lone UTF-16 surrogate in a string is replaced by U+FFFD instead of refused, and the
 /// nullable annotations are not checked on the elements of a collection nor on enumeration values; a body with such members checks them itself.</para>
 /// </remarks>
@@ -156,7 +161,7 @@ public static partial class MessageSerializer
         }
         catch (Exception exception) when (exception is JsonException or InvalidOperationException)
         {
-            throw new InvalidDataException($"The {what} is not valid: {exception.Message}", exception);
+            throw new InvalidDataException($"The {what} is not valid JSON for its type");
         }
 
         // Check
@@ -180,7 +185,13 @@ public static partial class MessageSerializer
     /// <returns>
     /// The UTF-8 JSON of the envelope
     /// </returns>
+    /// <remarks>
+    /// <para><b>Behavior:</b> the request is checked against the rules of the reader before anything is written: a name that is not a valid
+    /// operation name, or a body that is not written as a JSON object, is a bug of the caller, refused here with an
+    /// <see cref="ArgumentException"/>. Sent as it is, it would be a protocol violation that closes the connection of every caller.</para>
+    /// </remarks>
     /// <exception cref="ArgumentNullException">If the operation is null, empty or white spaces, or if the body is null</exception>
+    /// <exception cref="ArgumentException">If the operation is not a valid name, or the body is not written as a JSON object</exception>
     public static byte[] WriteRequest<TRequest>(string operation, TRequest body)
         where TRequest : class
     {
@@ -189,9 +200,16 @@ public static partial class MessageSerializer
             throw new ArgumentNullException(nameof(operation), $"The value of the parameter: {nameof(operation)} cannot be null or empty");
         if (body is null)
             throw new ArgumentNullException(nameof(body), $"The value of the parameter: {nameof(body)} cannot be null");
+        if (!OperationNamePattern().IsMatch(operation))
+            throw new ArgumentException($"The value of the parameter: {nameof(operation)} is not a valid operation name (1 to {MaxOperationNameLength} characters among A-Z, a-z, 0-9, '.', '_', '-')", nameof(operation));
+
+        // Transforming data: the body first, which must be a JSON object
+        JsonElement element = JsonSerializer.SerializeToElement(body, _options);
+        if (element.ValueKind != JsonValueKind.Object)
+            throw new ArgumentException($"The value of the parameter: {nameof(body)} is not written as a JSON object", nameof(body));
 
         // Function's return
-        return JsonSerializer.SerializeToUtf8Bytes(new RequestEnvelope<TRequest>(operation, body), _options);
+        return JsonSerializer.SerializeToUtf8Bytes(new RequestEnvelope<JsonElement>(operation, element), _options);
     }
 
     /// <summary>
@@ -218,9 +236,9 @@ public static partial class MessageSerializer
         {
             _ = envelope.Body.GetRawText();
         }
-        catch (InvalidOperationException exception)
+        catch (InvalidOperationException)
         {
-            throw new InvalidDataException("The body of the request envelope is not valid UTF-8", exception);
+            throw new InvalidDataException("The body of the request envelope is not valid UTF-8");
         }
 
         // Function's return
@@ -247,7 +265,7 @@ public static partial class MessageSerializer
         }
         catch (Exception exception) when (exception is JsonException or InvalidOperationException)
         {
-            throw new InvalidDataException($"The message body is not valid: {exception.Message}", exception);
+            throw new InvalidDataException("The message body is not valid JSON for its type");
         }
 
         // Check
@@ -279,24 +297,123 @@ public static partial class MessageSerializer
     }
 
     /// <summary>
+    /// Method used to write a response envelope that answers an error code instead of a body
+    /// </summary>
+    /// <param name="code">[Cannot be null] Well-formed error code (see <see cref="ErrorCodes"/>)</param>
+    /// <returns>
+    /// The UTF-8 JSON of the envelope
+    /// </returns>
+    /// <exception cref="ArgumentException">If the code is null or not well-formed</exception>
+    public static byte[] WriteError(string code)
+    {
+        // Check
+        if (!ErrorCodes.IsWellFormed(code))
+            throw new ArgumentException($"The value of the parameter: {nameof(code)} is not a well-formed error code", nameof(code));
+
+        // Function's return
+        return JsonSerializer.SerializeToUtf8Bytes(new ResponseEnvelope<object>(null, new ResponseError(code)), _options);
+    }
+
+    /// <summary>
     /// Method used to read a response envelope and its body
     /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> the envelope must hold exactly one part, the body or the error; a body written as the JSON value null counts as
+    /// absent, since the nullable annotations are not checked on a generic body. An error with a well-formed code is the answer of the peer,
+    /// thrown as a <see cref="RemoteErrorException"/>; the connection is sound.</para>
+    /// </remarks>
     /// <typeparam name="TResponse">Type of the response body</typeparam>
     /// <param name="response">UTF-8 JSON of the response envelope</param>
     /// <returns>
     /// The body of the response
     /// </returns>
-    /// <exception cref="InvalidDataException">If the envelope or its body is malformed</exception>
+    /// <exception cref="InvalidDataException">If the envelope or its body is malformed, holds both parts or none, or has a malformed code</exception>
+    /// <exception cref="RemoteErrorException">If the peer answered an error code</exception>
     public static TResponse ReadResponse<TResponse>(ReadOnlySpan<byte> response)
         where TResponse : class
     {
-        // Reading the envelope; a null body is refused explicitly, since the nullable annotations are not checked on a generic body
-        TResponse? body = Read<ResponseEnvelope<TResponse?>>(response, "response envelope").Body;
-        if (body is null)
-            throw new InvalidDataException("The body of the response envelope is the JSON value null");
+        // Reading the envelope, which holds exactly one part
+        ResponseEnvelope<TResponse?> envelope = Read<ResponseEnvelope<TResponse?>>(response, "response envelope");
+        if (envelope.Body is null && envelope.Error is null)
+            throw new InvalidDataException("The response envelope holds neither a body nor an error");
+        if (envelope.Body is not null && envelope.Error is not null)
+            throw new InvalidDataException("The response envelope holds both a body and an error");
+
+        // Throwing the error answered by the peer, after checking its shape (the code may be logged)
+        if (envelope.Error is not null)
+        {
+            if (!ErrorCodes.IsWellFormed(envelope.Error.Code))
+                throw new InvalidDataException("The error code of the response envelope is not a well-formed code");
+            throw new RemoteErrorException(envelope.Error.Code);
+        }
 
         // Function's return
-        return body;
+        return envelope.Body!;
+    }
+
+    /// <summary>
+    /// Method used to write a control message, the payload of a frame with the reserved correlation identifier
+    /// </summary>
+    /// <typeparam name="TMessage">Type of the control message</typeparam>
+    /// <param name="message">[Cannot be null] Control message</param>
+    /// <returns>
+    /// The UTF-8 JSON of the message, its kind first
+    /// </returns>
+    /// <exception cref="ArgumentNullException">If the message is null</exception>
+    public static byte[] WriteControl<TMessage>(TMessage message)
+        where TMessage : ControlMessage
+    {
+        // Check
+        if (message is null)
+            throw new ArgumentNullException(nameof(message), $"The value of the parameter: {nameof(message)} cannot be null");
+
+        // Function's return
+        return JsonSerializer.SerializeToUtf8Bytes(message, _options);
+    }
+
+    /// <summary>
+    /// Method used to read a control message, whatever its kind
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> the kind is read first: the first property of the object must be <c>control</c>, a string naming a known kind;
+    /// the whole message is then read strictly with the type of that kind. The kind read is never copied into an error message, since it
+    /// comes from the peer.</para>
+    /// </remarks>
+    /// <param name="payload">UTF-8 JSON of the message</param>
+    /// <returns>
+    /// The message, of the type of its kind (see <see cref="ControlKinds"/>)
+    /// </returns>
+    /// <exception cref="InvalidDataException">If the message is malformed, does not start with its kind, or has an unknown kind</exception>
+    public static ControlMessage ReadControl(ReadOnlySpan<byte> payload)
+    {
+        // Reading the kind: the first property, a string
+        string? kind;
+        try
+        {
+            Utf8JsonReader reader = new Utf8JsonReader(payload, new JsonReaderOptions { MaxDepth = MaxDepth });
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject
+                || !reader.Read() || reader.TokenType != JsonTokenType.PropertyName || !reader.ValueTextEquals("control"u8)
+                || !reader.Read() || reader.TokenType != JsonTokenType.String)
+            {
+                throw new InvalidDataException("A control message must start with its kind, the string property control");
+            }
+            kind = reader.GetString();
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+        {
+            throw new InvalidDataException("The control message is not valid JSON");
+        }
+
+        // Function's return: the whole message, read with the type of its kind
+        return kind switch
+        {
+            ControlKinds.Hello => Read<HelloMessage>(payload, "hello message"),
+            ControlKinds.HelloAck => Read<HelloAckMessage>(payload, "hello acknowledgement"),
+            ControlKinds.HelloRefused => Read<HelloRefusedMessage>(payload, "hello refusal"),
+            ControlKinds.Cancel => Read<CancelMessage>(payload, "cancellation"),
+            ControlKinds.Ping or ControlKinds.Pong => Read<HeartbeatMessage>(payload, "heartbeat"),
+            _ => throw new InvalidDataException("The kind of the control message is unknown")
+        };
     }
 
     #endregion

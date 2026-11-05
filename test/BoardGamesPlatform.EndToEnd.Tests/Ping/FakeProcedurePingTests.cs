@@ -6,6 +6,7 @@
  */
 
 // Using
+using System.Diagnostics;
 using BoardGamesPlatform.EndToEnd.Tests.Support;
 using BoardGamesPlatform.Gateway.Contracts;
 using BoardGamesPlatform.Gateway.Contracts.Ping;
@@ -151,6 +152,36 @@ public sealed class FakeProcedurePingTests
         response.ServerTime.Offset.ShouldBe(TimeSpan.FromMinutes(330));
         response.ServerTime.Ticks.ShouldBe(_fakeTime.Ticks);
         procedure.Calls.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// A front that leaves while its Ping waits for the database stops the call in progress in the Very Back: the cancellation crosses the
+    /// Gateway, the Back and the Very Back (done criterion of 0.4.0)
+    /// </summary>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    [Fact(Timeout = TestTimeout)]
+    public async Task AFrontThatLeavesStopsTheCallInTheVeryBackAsync()
+    {
+        // Starting the five tiers with a procedure that never answers on its own, and a front that calls Ping
+        CancellationToken token = TestContext.Current.CancellationToken;
+        BlockingPingProcedure procedure = new BlockingPingProcedure();
+        await using TierChain chain = await TierChain.StartAsync(procedure, null, token);
+        HubConnection front = chain.CreateFront();
+        await front.StartAsync(token);
+        Task<PingResponse> ping = front.InvokeAsync<PingResponse>(PlatformHubContract.Ping, token);
+        await procedure.Entered.WaitAsync(token);
+
+        // The player closes the tab: the front disconnects while the call runs
+        Stopwatch elapsed = Stopwatch.StartNew();
+        await front.DisposeAsync();
+
+        // Checks: the call in the Very Back is canceled by the propagation, well before the request timeout of the Back (5 seconds) would
+        // cancel it anyway, and the Ping of the front ends instead of hanging
+        await procedure.Canceled.WaitAsync(token);
+        elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(3));
+        await Should.ThrowAsync<Exception>(async () => await ping);
     }
 
     /// <summary>

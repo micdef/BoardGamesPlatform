@@ -6,6 +6,7 @@
  */
 
 // Using
+using BoardGamesPlatform.Protocol.Control;
 using BoardGamesPlatform.Protocol.Correlation;
 using BoardGamesPlatform.Protocol.Transport;
 using Microsoft.Extensions.Logging;
@@ -24,8 +25,8 @@ namespace BoardGamesPlatform.Protocol.Links;
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> one hardened accept loop for every tier that listens, instead of a copy per tier that could drift.</para>
-/// <para><b>Behavior:</b> accepts the connections of a started listener until the stop is requested, and serves each one in its own task with
-/// the request server. The loop follows the rule of <see cref="ITransportListener"/>, and never ends silently:</para>
+/// <para><b>Behavior:</b> accepts the connections of a started listener until the stop is requested, and serves each one in its own task: the
+/// handshake first (<see cref="ProtocolHandshake"/>, within its timeout), then the request server. The loop follows the rule of <see cref="ITransportListener"/>, and never ends silently:</para>
 /// <list type="bullet">
 /// <item><description>A disposed listener or a cancellation ends it when the stop is requested.</description></item>
 /// <item><description>The same exceptions without a stop request mean the listener is lost: <see cref="RunAsync"/> fails, so that the tier
@@ -35,8 +36,9 @@ namespace BoardGamesPlatform.Protocol.Links;
 /// </list>
 /// <para>A connection is disposed when its service ends, whatever the reason; a failure of one connection never reaches the others. Any end
 /// once the stop is requested is a close, not a failure. When the loop ends, the listener is disposed and the service of every connection is
-/// awaited: the stopping token ends them. The logs hold the remote end point and the exception; they go through the logger of the tier, with
-/// the event ids 9011 to 9018, reserved for this class (see the coding conventions).</para>
+/// awaited: the stopping token ends them. Beyond <see cref="DefaultMaxConnections"/> connections served at the same time (or the maximum
+/// given), a new connection is closed at once and logged. The logs hold the remote end point and the exception; they go through the logger of the tier, with
+/// the event ids 9011 to 9019, reserved for this class (see the coding conventions).</para>
 /// </remarks>
 public sealed partial class LinkServer
 {
@@ -48,6 +50,12 @@ public sealed partial class LinkServer
     /// Number of accept failures in a row after which the listener is considered broken
     /// </summary>
     public const int MaxConsecutiveAcceptFailures = 50;
+
+    /// <summary>
+    /// Number of connections served at the same time when none is given: a link has one client tier, which shares one connection, so a few
+    /// places cover a reconnection that overlaps the end of the lost connection
+    /// </summary>
+    public const int DefaultMaxConnections = 8;
 
     /// <summary>
     /// Pause after an accept failure used by the tiers, so that a failure that repeats cannot make the loop spin and flood the logs
@@ -82,6 +90,16 @@ public sealed partial class LinkServer
     /// Pause after an accept failure
     /// </summary>
     private readonly TimeSpan _acceptFailurePause;
+
+    /// <summary>
+    /// Time allowed to a client for the handshake that opens its connection
+    /// </summary>
+    private readonly TimeSpan _handshakeTimeout;
+
+    /// <summary>
+    /// Number of connections served at the same time, at most
+    /// </summary>
+    private readonly int _maxConnections;
 
     /// <summary>
     /// Services of the connections accepted and not yet swept; only the accept loop reads and writes it
@@ -146,6 +164,28 @@ public sealed partial class LinkServer
     /// <exception cref="ArgumentException">If the name is blank</exception>
     /// <exception cref="ArgumentOutOfRangeException">If the pause is negative</exception>
     public LinkServer(ITransportListener listener, RequestServer server, string name, ILogger logger, TimeSpan acceptFailurePause)
+        : this(listener, server, name, logger, acceptFailurePause, ProtocolHandshake.DefaultServerTimeout, DefaultMaxConnections)
+    {
+    }
+
+    /// <summary>
+    /// Constructor with the time allowed for the handshake (the tests shorten it)
+    /// </summary>
+    /// <param name="listener">[Cannot be null] Listener of the link, already started; the server disposes it when the loop ends</param>
+    /// <param name="server">[Cannot be null] Server that answers the requests</param>
+    /// <param name="name">[Cannot be null or blank] Name of the tier in the logs, for example "the Very Back"</param>
+    /// <param name="logger">[Cannot be null] Logger of the tier</param>
+    /// <param name="acceptFailurePause">Pause after an accept failure; zero or more</param>
+    /// <param name="handshakeTimeout">Time allowed to a client for the handshake of its connection; greater than zero
+    /// (<see cref="ProtocolHandshake.DefaultServerTimeout"/> outside the tests)</param>
+    /// <exception cref="ArgumentNullException">If a parameter is null</exception>
+    /// <exception cref="ArgumentException">If the name is blank</exception>
+    /// <param name="maxConnections">Number of connections served at the same time, at most; 1 or more (<see cref="DefaultMaxConnections"/>
+    /// outside the tests)</param>
+    /// <exception cref="ArgumentOutOfRangeException">If the pause is negative, the handshake timeout not greater than zero, or the maximum of
+    /// connections below one</exception>
+    public LinkServer(ITransportListener listener, RequestServer server, string name, ILogger logger, TimeSpan acceptFailurePause, TimeSpan handshakeTimeout,
+        int maxConnections)
     {
         // Checks
         if (listener is null)
@@ -160,6 +200,10 @@ public sealed partial class LinkServer
             throw new ArgumentNullException(nameof(logger), $"The value of the parameter: {nameof(logger)} cannot be null");
         if (acceptFailurePause < TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(acceptFailurePause), $"The value of the parameter: {nameof(acceptFailurePause)} cannot be negative");
+        if (maxConnections < 1)
+            throw new ArgumentOutOfRangeException(nameof(maxConnections), $"The value of the parameter: {nameof(maxConnections)} must be greater than zero");
+        if (handshakeTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(handshakeTimeout), $"The value of the parameter: {nameof(handshakeTimeout)} must be greater than zero");
 
         // Setting
         _listener = listener;
@@ -167,6 +211,8 @@ public sealed partial class LinkServer
         _name = name;
         _logger = logger;
         _acceptFailurePause = acceptFailurePause;
+        _handshakeTimeout = handshakeTimeout;
+        _maxConnections = maxConnections;
     }
 
     #endregion
@@ -218,6 +264,35 @@ public sealed partial class LinkServer
     private partial void LogStoppedListening(string name);
 
     /// <summary>
+    /// Method used to log that closing a connection failed
+    /// </summary>
+    /// <param name="exception">Why the closing failed</param>
+    /// <param name="remoteEndPoint">Address and port of the peer</param>
+    [LoggerMessage(EventId = 9016, Level = LogLevel.Warning, Message = "Closing the connection from {RemoteEndPoint} failed")]
+    private partial void LogCloseFailed(Exception exception, string remoteEndPoint);
+
+    /// <summary>
+    /// Method used to close a connection, logging a failure instead of throwing it
+    /// </summary>
+    /// <param name="connection">[Cannot be null] Connection to close</param>
+    /// <param name="remoteEndPoint">[Cannot be null] Address and port of the peer, for the log</param>
+    /// <returns>
+    /// A task that completes once the connection is closed, or its failure logged
+    /// </returns>
+    private async Task CloseAsync(ITransportConnection connection, string remoteEndPoint)
+    {
+        // Closing; a failure concerns this connection only, and must neither stop the tier nor be lost
+        try
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            LogCloseFailed(exception, remoteEndPoint);
+        }
+    }
+
+    /// <summary>
     /// Method used to log that the listener was lost without a stop request
     /// </summary>
     /// <param name="exception">How the loss showed</param>
@@ -233,6 +308,14 @@ public sealed partial class LinkServer
     /// <param name="name">Name of the tier</param>
     [LoggerMessage(EventId = 9018, Level = LogLevel.Critical, Message = "{Failures} accept failures in a row: the listener of {Name} is broken; {Name} stops")]
     private partial void LogAcceptFailuresRepeated(Exception exception, int failures, string name);
+
+    /// <summary>
+    /// Method used to log a connection refused because the maximum of connections is reached
+    /// </summary>
+    /// <param name="remoteEndPoint">Address and port of the peer</param>
+    /// <param name="maxConnections">Maximum of connections served at the same time</param>
+    [LoggerMessage(EventId = 9019, Level = LogLevel.Warning, Message = "Connection from {RemoteEndPoint} refused: {MaxConnections} connections are already served")]
+    private partial void LogConnectionRefused(string remoteEndPoint, int maxConnections);
 
     /// <summary>
     /// Method used to serve one accepted connection until its service ends, then dispose it
@@ -254,7 +337,8 @@ public sealed partial class LinkServer
         LogAccepted(remoteEndPoint);
         try
         {
-            // Serving the connection to its end
+            // Agreeing on the protocol with the client, then serving the connection to its end
+            await ProtocolHandshake.RunServerAsync(connection, _server.Codec, _server.MaxConcurrentRequests, _handshakeTimeout, cancellationToken).ConfigureAwait(false);
             await _server.ServeAsync(connection, cancellationToken).ConfigureAwait(false);
             LogClosed(remoteEndPoint);
         }
@@ -270,7 +354,7 @@ public sealed partial class LinkServer
         }
         finally
         {
-            await connection.DisposeAsync().ConfigureAwait(false);
+            await CloseAsync(connection, remoteEndPoint).ConfigureAwait(false);
         }
     }
 
@@ -328,9 +412,19 @@ public sealed partial class LinkServer
                     continue;
                 }
 
-                // Serving the connection in its own task, after forgetting the services that ended
+                // Refusing the connection when the maximum is reached: closed at once, so that a peer cannot make the tier hold an unbounded
+                // number of connections (each one can hold its requests in progress)
                 consecutiveFailures = 0;
                 _connectionTasks.RemoveAll(task => task.IsCompleted);
+                if (_connectionTasks.Count >= _maxConnections)
+                {
+                    string refused = connection.RemoteEndPoint.ToString() ?? "unknown";
+                    LogConnectionRefused(refused, _maxConnections);
+                    await CloseAsync(connection, refused).ConfigureAwait(false);
+                    continue;
+                }
+
+                // Serving the connection in its own task, the services that ended being forgotten
                 _connectionTasks.Add(Task.Run(() => ServeConnectionAsync(connection, stoppingToken), CancellationToken.None));
             }
         }

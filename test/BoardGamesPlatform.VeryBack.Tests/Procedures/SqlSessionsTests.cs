@@ -9,9 +9,7 @@
 using System.Data;
 using System.Globalization;
 using BoardGamesPlatform.Protocol.Correlation;
-using BoardGamesPlatform.Protocol.Framing;
 using BoardGamesPlatform.Protocol.Messages;
-using BoardGamesPlatform.Protocol.Transport;
 using BoardGamesPlatform.TestKit;
 using BoardGamesPlatform.VeryBack.Contracts;
 using BoardGamesPlatform.VeryBack.Contracts.Ping;
@@ -203,8 +201,7 @@ public sealed class SqlSessionsTests
             await host.StartAsync(cancellationToken);
 
             // Pinging, then counting while the host still runs: the pool keeps at least one session open
-            ITransportConnection connection = await new TcpTransportConnector().ConnectAsync(LoopbackHost, port, cancellationToken);
-            await using (RequestClient client = new RequestClient(connection, new FrameCodec()))
+            await using (RequestClient client = await TestRequestClients.ConnectAsync(LoopbackHost, port, cancellationToken))
             {
                 await client.SendAsync<PingRequest, PingResponse>(VeryBackOperations.Ping, new PingRequest(), cancellationToken);
             }
