@@ -356,12 +356,14 @@ public sealed class HeartbeatTests
         byte[] payload = new byte[FrameCodec.HighestMaxPayloadLength];
         Task<ReadOnlyMemory<byte>> pending = client.SendAsync(payload, token);
 
-        // Reading the request 1 MiB per ping interval: the whole write takes more than five times the client timeout
+        // Reading the request 1 MiB per ping interval: the whole write takes more than five times the client timeout. The clock moves only
+        // once a whole MiB is read, so that the client has written pieces since the last move (a read of a few bytes must not move it)
         byte[] piece = new byte[1024 * 1024];
+        int total = FrameCodec.HeaderLength + payload.Length;
         int received = 0;
-        while (received < FrameCodec.HeaderLength + payload.Length)
+        while (received < total)
         {
-            received += await raw.Stream.ReadAtLeastAsync(piece, 1, throwOnEndOfStream: true, token);
+            received += await raw.Stream.ReadAtLeastAsync(piece, Math.Min(piece.Length, total - received), throwOnEndOfStream: true, token);
             clock.Advance(_timings.PingInterval);
         }
 
