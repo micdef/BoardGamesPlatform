@@ -154,6 +154,33 @@ public sealed class FakeProcedurePingTests
     }
 
     /// <summary>
+    /// A front that leaves while its Ping waits for the database stops the call in progress in the Very Back: the cancellation crosses the
+    /// Gateway, the Back and the Very Back (done criterion of 0.4.0)
+    /// </summary>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    [Fact(Timeout = TestTimeout)]
+    public async Task AFrontThatLeavesStopsTheCallInTheVeryBackAsync()
+    {
+        // Starting the five tiers with a procedure that never answers on its own, and a front that calls Ping
+        CancellationToken token = TestContext.Current.CancellationToken;
+        BlockingPingProcedure procedure = new BlockingPingProcedure();
+        await using TierChain chain = await TierChain.StartAsync(procedure, null, token);
+        HubConnection front = chain.CreateFront();
+        await front.StartAsync(token);
+        Task<PingResponse> ping = front.InvokeAsync<PingResponse>(PlatformHubContract.Ping, token);
+        await procedure.Entered.WaitAsync(token);
+
+        // The player closes the tab: the front disconnects while the call runs
+        await front.DisposeAsync();
+
+        // Checks: the call in the Very Back is canceled, and the Ping of the front ends instead of hanging
+        await procedure.Canceled.WaitAsync(token);
+        await Should.ThrowAsync<Exception>(async () => await ping);
+    }
+
+    /// <summary>
     /// A procedure that fails gives the front the generic error only, and the next Ping succeeds on the same chain
     /// </summary>
     /// <remarks>

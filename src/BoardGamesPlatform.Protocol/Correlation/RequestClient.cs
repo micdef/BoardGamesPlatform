@@ -7,7 +7,9 @@
 
 // Using
 using System.Collections.Concurrent;
+using BoardGamesPlatform.Protocol.Control;
 using BoardGamesPlatform.Protocol.Framing;
+using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
 
 // Static using
@@ -28,8 +30,9 @@ namespace BoardGamesPlatform.Protocol.Correlation;
 /// <para><b>Behavior:</b> each request gets a new correlation identifier (1, 2, 3…; never <see cref="Frame.NoCorrelation"/>). One read loop
 /// receives the responses and completes the matching request. The writes are serialized, since the frame codec allows one writer at a time.</para>
 /// <list type="bullet">
-/// <item><description>Canceling a request stops the wait only: a frame being written is always finished, so that the stream stays intact;
-/// a response that arrives after the cancellation is ignored.</description></item>
+/// <item><description>Canceling a request stops the wait at once, and, once its frame is written, sends the server a
+/// <see cref="CancelMessage"/>, so that the work of the request stops in the next tiers too. A frame being written is always finished, so
+/// that the stream stays intact; a response that arrives after the cancellation is ignored.</description></item>
 /// <item><description>A response to an identifier never sent, or a frame with the reserved identifier, is a protocol violation: the connection
 /// is closed. The check compares with the last identifier given to a request, not with the last one written: a peer that guesses the
 /// identifier of a request still waiting for the write lock could answer it early. The links join tiers of the platform only, and mutual
@@ -74,6 +77,12 @@ public sealed class RequestClient : IAsyncDisposable
     /// Lock that lets one request at a time write its frame
     /// </summary>
     private readonly SemaphoreSlim _writeLock;
+
+    /// <summary>
+    /// Places of the requests in progress, as many as the server handles at the same time; it is never disposed, for the same reason as the
+    /// write lock (a caller may still wait for it while the client closes)
+    /// </summary>
+    private readonly SemaphoreSlim _requestSlots;
 
     /// <summary>
     /// Source canceled when the client closes, which stops the read loop and any write in progress; it is never disposed, since a request may
@@ -155,14 +164,19 @@ public sealed class RequestClient : IAsyncDisposable
     /// </summary>
     /// <param name="connection">[Cannot be null] Open connection; the client takes ownership of it and disposes it when it closes</param>
     /// <param name="codec">[Cannot be null] Codec of the link; both ends use the same maximum length</param>
+    /// <param name="maxConcurrentRequests">Number of requests in progress at the same time, at most: the limit the server announced in the
+    /// handshake (beyond it, the server would answer "busy"); 1 or more</param>
     /// <exception cref="ArgumentNullException">If the connection or the codec is null</exception>
-    public RequestClient(ITransportConnection connection, FrameCodec codec)
+    /// <exception cref="ArgumentOutOfRangeException">If the maximum number of requests is zero or negative</exception>
+    public RequestClient(ITransportConnection connection, FrameCodec codec, int maxConcurrentRequests = RequestServer.DefaultMaxConcurrentRequests)
     {
         // Checks
         if (connection is null)
             throw new ArgumentNullException(nameof(connection), $"The value of the parameter: {nameof(connection)} cannot be null");
         if (codec is null)
             throw new ArgumentNullException(nameof(codec), $"The value of the parameter: {nameof(codec)} cannot be null");
+        if (maxConcurrentRequests <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxConcurrentRequests), maxConcurrentRequests, $"The value of the parameter: {nameof(maxConcurrentRequests)} must be greater than zero");
 
         // Setting
         _connection = connection;
@@ -170,6 +184,7 @@ public sealed class RequestClient : IAsyncDisposable
         _pendingRequests = new ConcurrentDictionary<ulong, TaskCompletionSource<ReadOnlyMemory<byte>>>();
         _stateLock = new Lock();
         _writeLock = new SemaphoreSlim(1, 1);
+        _requestSlots = new SemaphoreSlim(maxConcurrentRequests, maxConcurrentRequests);
         _lifetime = new CancellationTokenSource();
         _closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -289,6 +304,46 @@ public sealed class RequestClient : IAsyncDisposable
     }
 
     /// <summary>
+    /// Method used to tell the server that a request was abandoned, so that it stops its work
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> best effort, run apart from the caller who canceled: the message waits for the write lock like any frame. When
+    /// the client closes meanwhile, nothing is sent (the server then cancels every request of the connection anyway). A failed write closes the
+    /// client, following the connection rule of the codec; the task itself never fails.</para>
+    /// </remarks>
+    /// <param name="correlationId">Correlation identifier of the abandoned request</param>
+    /// <returns>
+    /// A task that completes once the message is written, or the client closed
+    /// </returns>
+    private async Task SendCancelAsync(ulong correlationId)
+    {
+        try
+        {
+            // Writing the cancellation under the write lock, as long as the client is open
+            await _writeLock.WaitAsync(_lifetime.Token).ConfigureAwait(false);
+            try
+            {
+                byte[] cancel = MessageSerializer.WriteControl(new CancelMessage(correlationId));
+                await _codec.WriteAsync(_connection.Stream, new Frame(Frame.NoCorrelation, cancel), _lifetime.Token).ConfigureAwait(false);
+            }
+            finally
+            {
+                _writeLock.Release();
+            }
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+            // The client closes: the server sees the connection end and cancels every request of it
+        }
+        catch (Exception exception)
+        {
+            // A failed write leaves the stream in an unknown state: the client closes; a failure of that close is kept by the close itself
+            // (it completes the client in every case) and is thrown to the caller of DisposeAsync
+            await CloseAsync(exception).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
     /// Method used to build the exception given to a request when the client is closed
     /// </summary>
     /// <remarks>
@@ -306,32 +361,16 @@ public sealed class RequestClient : IAsyncDisposable
             : new IOException("The connection of the request client is closed", _closeReason);
     }
 
-    #endregion
-
-    #region Publics
-
     /// <summary>
-    /// Method used to send a request and wait for its response
+    /// Method used to send a request that holds a place, and wait for its response
     /// </summary>
-    /// <remarks>
-    /// <para><b>Behavior:</b> gives the request a new correlation identifier, writes it when no other request is writing, then waits for the
-    /// response. Several calls may run at the same time.</para>
-    /// </remarks>
-    /// <param name="payload">Content of the request; it must not be modified until the method returns</param>
-    /// <param name="cancellationToken">Token used to stop waiting; it never interrupts a frame being written</param>
+    /// <param name="payload">Content of the request</param>
+    /// <param name="cancellationToken">Token used to stop waiting</param>
     /// <returns>
     /// The content of the response
     /// </returns>
-    /// <exception cref="ObjectDisposedException">If the client is disposed</exception>
-    /// <exception cref="IOException">If the connection is closed, or closes before the response arrives</exception>
-    /// <exception cref="ArgumentException">If the payload is larger than the maximum length of the codec</exception>
-    /// <exception cref="OperationCanceledException">If the wait is canceled</exception>
-    public async Task<ReadOnlyMemory<byte>> SendAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken = default)
+    private async Task<ReadOnlyMemory<byte>> SendInPlaceAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
     {
-        // Check
-        if (payload.Length > _codec.MaxPayloadLength)
-            throw new ArgumentException($"The payload of the request ({payload.Length} bytes) is larger than the maximum length ({_codec.MaxPayloadLength} bytes)", nameof(payload));
-
         // Registering the request under a new identifier, unless the client is closed
         TaskCompletionSource<ReadOnlyMemory<byte>> request = new TaskCompletionSource<ReadOnlyMemory<byte>>(TaskCreationOptions.RunContinuationsAsynchronously);
         ulong correlationId;
@@ -343,11 +382,15 @@ public sealed class RequestClient : IAsyncDisposable
             _pendingRequests[correlationId] = request;
         }
 
-        // Stopping the wait on cancellation; the request is forgotten, so that a late response is ignored
+        // Stopping the wait on cancellation; the request is forgotten, so that a late response is ignored, and the server is told to stop
+        // once the request is written (0: not written, 1: written, 2: cancellation sent; the cancellation is sent once, by whoever comes last)
+        int cancelState = 0;
         using CancellationTokenRegistration cancellation = cancellationToken.Register(() =>
         {
             if (_pendingRequests.TryRemove(correlationId, out TaskCompletionSource<ReadOnlyMemory<byte>>? canceled))
                 canceled.TrySetCanceled(cancellationToken);
+            if (Interlocked.CompareExchange(ref cancelState, 2, 1) == 1)
+                _ = SendCancelAsync(correlationId);
         });
 
         // Waiting for the write lock; this wait can be canceled, since nothing is written yet
@@ -367,10 +410,14 @@ public sealed class RequestClient : IAsyncDisposable
 
         // Writing the request, unless it already ended (canceled, or failed by a close) while waiting for the lock;
         // the write itself only stops when the client closes
+        bool isWritten = false;
         try
         {
             if (!request.Task.IsCompleted)
+            {
                 await _codec.WriteAsync(_connection.Stream, new Frame(correlationId, payload), _lifetime.Token).ConfigureAwait(false);
+                isWritten = true;
+            }
         }
         catch (Exception exception)
         {
@@ -382,9 +429,58 @@ public sealed class RequestClient : IAsyncDisposable
             _writeLock.Release();
         }
 
+        // Telling the server to stop when the caller canceled while the request was being written
+        if (isWritten && Interlocked.CompareExchange(ref cancelState, 1, 0) == 0 && request.Task.IsCanceled
+            && Interlocked.CompareExchange(ref cancelState, 2, 1) == 1)
+        {
+            _ = SendCancelAsync(correlationId);
+        }
+
         // Function's return
         return await request.Task.ConfigureAwait(false);
     }
+
+    #endregion
+
+    #region Publics
+
+    /// <summary>
+    /// Method used to send a request and wait for its response
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> waits for a place among the requests in progress (the limit of the server), gives the request a new correlation
+    /// identifier, writes it when no other frame is being written, then waits for the response. Several calls may run at the same time. A
+    /// canceled request gives its place back at once, while the server may still take a moment to see its cancellation: a request sent just
+    /// then can be answered "busy".</para>
+    /// </remarks>
+    /// <param name="payload">Content of the request; it must not be modified until the method returns</param>
+    /// <param name="cancellationToken">Token used to stop waiting, for a place as for the response; it never interrupts a frame being written</param>
+    /// <returns>
+    /// The content of the response
+    /// </returns>
+    /// <exception cref="ObjectDisposedException">If the client is disposed</exception>
+    /// <exception cref="IOException">If the connection is closed, or closes before the response arrives</exception>
+    /// <exception cref="ArgumentException">If the payload is larger than the maximum length of the codec</exception>
+    /// <exception cref="OperationCanceledException">If the wait is canceled</exception>
+    public async Task<ReadOnlyMemory<byte>> SendAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken = default)
+    {
+        // Check
+        if (payload.Length > _codec.MaxPayloadLength)
+            throw new ArgumentException($"The payload of the request ({payload.Length} bytes) is larger than the maximum length ({_codec.MaxPayloadLength} bytes)", nameof(payload));
+
+        // Holding a place for the whole request
+        await _requestSlots.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // Function's return
+            return await SendInPlaceAsync(payload, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _requestSlots.Release();
+        }
+    }
+
 
     /// <summary>
     /// Method used to close the client and its connection; the pending requests fail with an <see cref="ObjectDisposedException"/>

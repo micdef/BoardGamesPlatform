@@ -368,16 +368,17 @@ public sealed partial class LinkClient : IAsyncDisposable
 
             // Opening the new connection
             ITransportConnection connection;
+            HandshakeResult handshake;
             try
             {
-                (connection, _) = await ConnectAsync(cancellationToken).ConfigureAwait(false);
+                (connection, handshake) = await ConnectAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 LogConnectionFailed(exception, _peerName, _host, _port);
                 throw;
             }
-            client = new RequestClient(connection, _codec);
+            client = new RequestClient(connection, _codec, handshake.MaxConcurrentRequests);
             _current = client;
             LogConnectionOpened(_peerName, _host, _port);
             _ = WatchConnectionAsync(client);

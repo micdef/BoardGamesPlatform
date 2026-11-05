@@ -7,8 +7,12 @@
 
 // Using
 using System.Net;
+using System.Text;
+using BoardGamesPlatform.Protocol.Control;
 using BoardGamesPlatform.Protocol.Correlation;
+using BoardGamesPlatform.Protocol.Errors;
 using BoardGamesPlatform.Protocol.Framing;
+using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
 
 // Static using
@@ -281,22 +285,28 @@ public sealed class RequestCorrelationTests
     }
 
     /// <summary>
-    /// A canceled request stops waiting; its late response is ignored and the next request still works
+    /// A canceled request stops waiting and the server is told to stop; its late response is ignored and the next request still works
     /// </summary>
     [Fact(Timeout = TestTimeout)]
     public async Task ACanceledRequestIgnoresItsLateResponseAsync()
     {
-        // Playing a server that answers the first request only after the test lets it, then echoes the second
+        // Playing a server that receives the cancellation of the first request, answers it late anyway, then echoes the second
         CancellationToken token = TestContext.Current.CancellationToken;
         FrameCodec codec = new FrameCodec();
         TaskCompletionSource firstRead = new TaskCompletionSource();
         TaskCompletionSource answerLate = new TaskCompletionSource();
+        CancelMessage? received = null;
+        ulong firstIdentifier = 0;
         (ITransportConnection clientEnd, ITransportConnection serverEnd) = await ConnectAsync(token);
         await using ITransportConnection raw = serverEnd;
         Task server = Task.Run(async () =>
         {
             Frame first = (await codec.ReadAsync(raw.Stream, token))!;
+            firstIdentifier = first.CorrelationId;
             firstRead.SetResult();
+            Frame cancel = (await codec.ReadAsync(raw.Stream, token))!;
+            cancel.CorrelationId.ShouldBe(Frame.NoCorrelation);
+            received = MessageSerializer.ReadControl(cancel.Payload.Span).ShouldBeOfType<CancelMessage>();
             await answerLate.Task.WaitAsync(token);
             await codec.WriteAsync(raw.Stream, new Frame(first.CorrelationId, new byte[] { 99 }), token);
             Frame second = (await codec.ReadAsync(raw.Stream, token))!;
@@ -316,6 +326,7 @@ public sealed class RequestCorrelationTests
 
         // Checks
         canceled.ShouldBeAssignableTo<OperationCanceledException>();
+        received.ShouldNotBeNull().CorrelationId.ShouldBe(firstIdentifier);
         secondResponse.ToArray().ShouldBe(new byte[] { 2 });
         client.Completion.IsCompleted.ShouldBeFalse();
     }
@@ -639,12 +650,13 @@ public sealed class RequestCorrelationTests
     }
 
     /// <summary>
-    /// The server never handles more requests of one connection at the same time than its maximum
+    /// The server never handles more requests of one connection at the same time than its maximum: the others are answered "busy" at once,
+    /// without being started, and the server keeps reading
     /// </summary>
     /// <remarks>
-    /// <para><b>Behavior:</b> with a maximum of 2 and 4 requests sent at once, the test waits until 2 handlers have started, then checks that
-    /// no third one starts within 300 milliseconds: proving that something does not happen needs a bounded wait, the only one of this class.
-    /// Releasing the handlers then lets the 4 requests complete, never more than 2 at a time.</para>
+    /// <para><b>Behavior:</b> with a maximum of 2 on the server, a client allowed 4 requests sends 4 at once. The test waits until 2 handlers
+    /// have started and 2 requests are answered "busy", which proves the server still reads while its slots are busy; releasing the handlers
+    /// then completes the 2 others.</para>
     /// </remarks>
     [Fact(Timeout = TestTimeout)]
     public async Task TheServerHandlesAtMostItsMaximumOfRequestsAsync()
@@ -660,12 +672,12 @@ public sealed class RequestCorrelationTests
         async Task<ReadOnlyMemory<byte>> CountingAsync(ReadOnlyMemory<byte> request, CancellationToken serviceToken)
         {
             int count = Interlocked.Increment(ref started);
-            if (count == 2)
-                twoStarted.TrySetResult();
             if (count == 3)
                 thirdStarted.TrySetResult();
             int now = Interlocked.Increment(ref inProgress);
             InterlockedMax(ref mostInProgress, now);
+            if (now == 2)
+                twoStarted.TrySetResult();
             await release.Task.WaitAsync(serviceToken);
             Interlocked.Decrement(ref inProgress);
             return request;
@@ -673,20 +685,30 @@ public sealed class RequestCorrelationTests
         (ITransportConnection clientEnd, ITransportConnection serverEnd) = await ConnectAsync(token);
         await using ITransportConnection served = serverEnd;
         Task serving = new RequestServer(new FrameCodec(), CountingAsync, maxConcurrentRequests: 2).ServeAsync(served, token);
-        await using RequestClient client = new RequestClient(clientEnd, new FrameCodec());
+        await using RequestClient client = new RequestClient(clientEnd, new FrameCodec(), maxConcurrentRequests: 4);
 
-        // Sending 4 requests at once, then checking that a third handler does not start while two are busy
+        // Sending 4 requests at once: two are answered "busy" while the two others are still in progress
         Task<ReadOnlyMemory<byte>>[] requests = Enumerable.Range(0, 4).Select(value => client.SendAsync(new byte[] { (byte)value }, token)).ToArray();
         await twoStarted.Task.WaitAsync(token);
-        Task first = await Task.WhenAny(thirdStarted.Task, Task.Delay(300, token));
-        bool thirdStartedTooEarly = first == thirdStarted.Task;
+        string busy = Encoding.UTF8.GetString(MessageSerializer.WriteError(ErrorCodes.ServerBusy));
+        List<Task<ReadOnlyMemory<byte>>> pending = new List<Task<ReadOnlyMemory<byte>>>(requests);
+        int busyAnswers = 0;
+        while (busyAnswers < 2)
+        {
+            Task<ReadOnlyMemory<byte>> answered = await Task.WhenAny(pending);
+            Encoding.UTF8.GetString((await answered).Span).ShouldBe(busy);
+            pending.Remove(answered);
+            busyAnswers++;
+        }
         release.SetResult();
-        ReadOnlyMemory<byte>[] responses = await Task.WhenAll(requests);
+        ReadOnlyMemory<byte>[] handled = await Task.WhenAll(pending);
 
-        // Checks
-        thirdStartedTooEarly.ShouldBeFalse();
+        // Checks: the two busy requests were never started
+        thirdStarted.Task.IsCompleted.ShouldBeFalse();
         mostInProgress.ShouldBe(2);
-        responses.Select(response => response.Span[0]).ShouldBe(new byte[] { 0, 1, 2, 3 });
+        handled.Length.ShouldBe(2);
+        await client.DisposeAsync();
+        await serving;
     }
 
     /// <summary>
