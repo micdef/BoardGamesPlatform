@@ -7,6 +7,7 @@
 
 // Using
 using BoardGamesPlatform.Protocol.Correlation;
+using BoardGamesPlatform.Protocol.Errors;
 using BoardGamesPlatform.Protocol.Framing;
 using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
@@ -31,10 +32,12 @@ namespace BoardGamesPlatform.Protocol.Links;
 /// share that one connection; a lock guards only its opening. When the connection has closed (the peer, a failure), the next call opens a new
 /// one.</para>
 /// <list type="bullet">
-/// <item><description>A request that fails is never retried here: the caller sees the error. Retries, back-off, heartbeat and request
-/// timeouts come with 0.4.0.</description></item>
+/// <item><description>A request that fails is never retried here: the caller sees the error. A peer that cannot be reached, or a connection
+/// lost before the response, is a <see cref="LinkFailureException"/> with the code <see cref="ErrorCodes.LinkUnavailable"/>, which a tier
+/// answers in turn to its own caller; an error code answered by the peer is a <see cref="RemoteErrorException"/>, the connection staying
+/// open.</description></item>
 /// <item><description>A connection may close between the moment a call finds it open and the moment its request is sent: that call fails
-/// with an <see cref="IOException"/>, like any request on a lost connection, and the next call opens a new connection.</description></item>
+/// like any request on a lost connection, and the next call opens a new connection.</description></item>
 /// <item><description>A call that waits for a response is stopped only by the token of its caller.</description></item>
 /// <item><description>After <see cref="DisposeAsync"/>, every call throws an <see cref="ObjectDisposedException"/>.</description></item>
 /// <item><description>The logs tell when a connection opens, is lost or is closed by the disposal, with the address of the peer only; they
@@ -395,9 +398,9 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// The body of the response
     /// </returns>
     /// <exception cref="ObjectDisposedException">If the client is disposed</exception>
-    /// <exception cref="System.Net.Sockets.SocketException">If the peer cannot be reached</exception>
-    /// <exception cref="TimeoutException">If the connection is not open within the connect timeout</exception>
-    /// <exception cref="IOException">If the connection closes before the response arrives</exception>
+    /// <exception cref="LinkFailureException">If the peer cannot be reached (the connection is not open within the connect timeout, or is
+    /// refused), or if the connection closes before the response arrives; its code is <see cref="ErrorCodes.LinkUnavailable"/></exception>
+    /// <exception cref="RemoteErrorException">If the peer answers an error code</exception>
     /// <exception cref="InvalidDataException">If the response is malformed</exception>
     /// <exception cref="OperationCanceledException">If the caller cancels</exception>
     public async Task<TResponse> SendAsync<TRequest, TResponse>(string operation, TRequest request, CancellationToken cancellationToken = default)
@@ -407,11 +410,27 @@ public sealed partial class LinkClient : IAsyncDisposable
         // Check
         ThrowIfDisposed();
 
-        // Getting the connection, then sending the request
-        RequestClient client = await GetRequestClientAsync(cancellationToken).ConfigureAwait(false);
+        // Getting the connection; a peer that cannot be reached is a failure of the link
+        RequestClient client;
+        try
+        {
+            client = await GetRequestClientAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is System.Net.Sockets.SocketException or TimeoutException)
+        {
+            throw new LinkFailureException(ErrorCodes.LinkUnavailable, $"{_peerName} cannot be reached", exception);
+        }
 
-        // Function's return
-        return await client.SendAsync<TRequest, TResponse>(operation, request, cancellationToken).ConfigureAwait(false);
+        // Sending the request; a connection lost before the response is a failure of the link (the disposal of this client is not)
+        try
+        {
+            // Function's return
+            return await client.SendAsync<TRequest, TResponse>(operation, request, cancellationToken).ConfigureAwait(false);
+        }
+        catch (IOException exception) when (Volatile.Read(ref _isDisposed) == 0)
+        {
+            throw new LinkFailureException(ErrorCodes.LinkUnavailable, $"The connection to {_peerName} was lost before the response", exception);
+        }
     }
 
     /// <summary>

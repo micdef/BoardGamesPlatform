@@ -125,7 +125,7 @@ public sealed class LinkServerTests
     private static RequestServer CreatePingServer()
     {
         // Routing the Ping operation
-        OperationDispatcher dispatcher = new OperationDispatcher().Register<PingRequest, PingResponse>(BackOperations.Ping,
+        OperationDispatcher dispatcher = new OperationDispatcher(NullLogger.Instance).Register<PingRequest, PingResponse>(BackOperations.Ping,
             (_, _) => Task.FromResult(new PingResponse(_pingTime)));
 
         // Function's return

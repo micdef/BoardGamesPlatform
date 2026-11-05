@@ -14,6 +14,7 @@ using BoardGamesPlatform.Back.Settings;
 using BoardGamesPlatform.Observability;
 using BoardGamesPlatform.Platform.Infrastructure.VeryBack;
 using BoardGamesPlatform.Protocol.Correlation;
+using BoardGamesPlatform.Protocol.Errors;
 using BoardGamesPlatform.Protocol.Framing;
 using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
@@ -220,7 +221,7 @@ public sealed class BackListenerServiceTests
     }
 
     /// <summary>
-    /// When the Very Back cannot be reached, the Ping fails instead of hanging, and the Back keeps serving new connections of the Gateway
+    /// When the Very Back cannot be reached, the Ping is answered "link.unavailable" instead of hanging, and the connection of the Gateway stays open
     /// </summary>
     /// <returns>
     /// A task that completes when the check is done
@@ -235,21 +236,23 @@ public sealed class BackListenerServiceTests
         BackListenerService service = await StartBackAsync(veryBackClient, logger, cancellationToken);
         try
         {
-            // Checks: each connection of the Gateway is served, and its Ping fails with the close of the connection
+            // Checks: each Ping of the Gateway is answered "link.unavailable", on a connection that stays open
+            await using RequestClient gateway = await ConnectAsGatewayAsync(service, cancellationToken);
             for (int attempt = 1; attempt <= 2; attempt++)
             {
-                await using RequestClient gateway = await ConnectAsGatewayAsync(service, cancellationToken);
-                await Should.ThrowAsync<IOException>(() => gateway.SendAsync<PingRequest, PingResponse>(BackOperations.Ping, new PingRequest(), cancellationToken));
-                await gateway.Completion;
+                RemoteErrorException error = await Should.ThrowAsync<RemoteErrorException>(
+                    () => gateway.SendAsync<PingRequest, PingResponse>(BackOperations.Ping, new PingRequest(), cancellationToken));
+                error.Code.ShouldBe(ErrorCodes.LinkUnavailable);
             }
+            gateway.Completion.IsCompleted.ShouldBeFalse();
         }
         finally
         {
             await service.StopAsync(CancellationToken.None);
         }
 
-        // Check: each failed connection is logged as a warning, for the operator who looks for the cause
-        logger.Entries.Count(entry => entry.Level == LogLevel.Warning && entry.Message.Contains("failed and the connection is closed")).ShouldBe(2);
+        // Check: each failure is logged as a warning, for the operator who looks for the cause
+        logger.Entries.Count(entry => entry.Level == LogLevel.Warning && entry.Message == "The handler of Ping could not reach a tier; answered link.unavailable").ShouldBe(2);
     }
 
     /// <summary>

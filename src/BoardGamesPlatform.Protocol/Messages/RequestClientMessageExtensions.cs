@@ -114,6 +114,7 @@ public static class RequestClientMessageExtensions
     /// </returns>
     /// <exception cref="ArgumentNullException">If the client, the operation or the request is null</exception>
     /// <exception cref="InvalidDataException">If the response is malformed</exception>
+    /// <exception cref="Errors.RemoteErrorException">If the peer answers an error code; the connection stays open</exception>
     /// <exception cref="IOException">If the connection is closed, or closes before the response arrives</exception>
     /// <exception cref="ObjectDisposedException">If the client is disposed</exception>
     /// <exception cref="OperationCanceledException">If the wait is canceled</exception>

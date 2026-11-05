@@ -14,6 +14,7 @@ using BoardGamesPlatform.Protocol.Framing;
 using BoardGamesPlatform.Protocol.Links;
 using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
+using Microsoft.Extensions.Logging.Abstractions;
 
 // Static using
 // #N/A
@@ -127,7 +128,7 @@ internal sealed class FakeBack : IAsyncDisposable
         // Listening, then serving with the real link server
         TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next()));
         Port = listener.LocalEndPoint.Port;
-        OperationDispatcher dispatcher = new OperationDispatcher()
+        OperationDispatcher dispatcher = new OperationDispatcher(NullLogger.Instance)
             .Register<PingRequest, PingResponse>(BackOperations.Ping, (_, _) => Task.FromResult(new PingResponse(PingTime)));
         RequestServer server = new RequestServer(new FrameCodec(), dispatcher.HandleAsync);
         LinkServer link = new LinkServer(
