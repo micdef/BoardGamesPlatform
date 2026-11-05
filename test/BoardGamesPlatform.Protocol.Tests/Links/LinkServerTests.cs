@@ -125,7 +125,7 @@ public sealed class LinkServerTests
     private static RequestServer CreatePingServer()
     {
         // Routing the Ping operation
-        OperationDispatcher dispatcher = new OperationDispatcher().Register<PingRequest, PingResponse>(BackOperations.Ping,
+        OperationDispatcher dispatcher = new OperationDispatcher(NullLogger.Instance).Register<PingRequest, PingResponse>(BackOperations.Ping,
             (_, _) => Task.FromResult(new PingResponse(_pingTime)));
 
         // Function's return
@@ -166,7 +166,7 @@ public sealed class LinkServerTests
         CapturingLogger<LinkServerTests> logger = new CapturingLogger<LinkServerTests>();
         using CancellationTokenSource stopping = new CancellationTokenSource();
         Task running = new LinkServer(listener, CreatePingServer(), TierName, logger, LinkServer.DefaultAcceptFailurePause).RunAsync(stopping.Token);
-        await using (RequestClient client = new RequestClient(await new TcpTransportConnector().ConnectAsync("127.0.0.1", port, cancellationToken), new FrameCodec()))
+        await using (RequestClient client = await TestRequestClients.ConnectAsync("127.0.0.1", port, cancellationToken))
         {
             PingResponse response = await client.SendAsync<PingRequest, PingResponse>(BackOperations.Ping, new PingRequest(), cancellationToken);
             response.ServerTime.ShouldBe(_pingTime);

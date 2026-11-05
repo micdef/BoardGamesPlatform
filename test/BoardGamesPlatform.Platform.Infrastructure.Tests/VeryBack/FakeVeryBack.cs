@@ -8,12 +8,14 @@
 // Using
 using System.Collections.Concurrent;
 using System.Net;
+using BoardGamesPlatform.Protocol.Control;
 using BoardGamesPlatform.Protocol.Correlation;
 using BoardGamesPlatform.Protocol.Framing;
 using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
 using BoardGamesPlatform.VeryBack.Contracts;
 using BoardGamesPlatform.VeryBack.Contracts.Ping;
+using Microsoft.Extensions.Logging.Abstractions;
 
 // Static using
 // #N/A
@@ -165,7 +167,7 @@ internal sealed class FakeVeryBack : IAsyncDisposable
         // Setting
         _listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next()));
         _stopping = new CancellationTokenSource();
-        _dispatcher = new OperationDispatcher()
+        _dispatcher = new OperationDispatcher(NullLogger.Instance)
             .Register<PingRequest, PingResponse>(VeryBackOperations.Ping, (request, cancellationToken) => Task.FromResult(new PingResponse(PingTime)));
         _connections = new ConcurrentDictionary<ITransportConnection, byte>();
         _serving = new ConcurrentBag<Task>();
@@ -220,6 +222,8 @@ internal sealed class FakeVeryBack : IAsyncDisposable
         try
         {
             RequestServer server = new RequestServer(new FrameCodec(), HandleAsync);
+            await ProtocolHandshake.RunServerAsync(connection, server.Codec, server.MaxConcurrentRequests, ProtocolHandshake.DefaultServerTimeout, _stopping.Token)
+                .ConfigureAwait(false);
             await server.ServeAsync(connection, _stopping.Token).ConfigureAwait(false);
         }
         catch (Exception exception)
