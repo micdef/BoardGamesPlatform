@@ -285,6 +285,7 @@ public sealed class SecureTransportListener : ITransportListener
             catch (Exception eraseFailure) when (eraseFailure is not OutOfMemoryException)
             {
                 // Erasing buffers does not fail in practice; the refusal is the failure to tell
+                SecureChannelLog.EraseFailed(_logger, eraseFailure);
             }
             try
             {

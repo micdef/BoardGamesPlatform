@@ -140,6 +140,11 @@ internal sealed class ObservedConnection : ITransportConnection
     }
 
     /// <summary>
+    /// Completed once the reader asked a first read, before it reads anything
+    /// </summary>
+    public Task ReadStarted => _stream.ReadStarted.Task;
+
+    /// <summary>
     /// Bytes written to the connection so far, once each write ended
     /// </summary>
     public long Written => _stream.Written;
@@ -214,6 +219,11 @@ internal sealed class ObservedConnection : ITransportConnection
         /// </summary>
         private readonly SemaphoreSlim _signal = new SemaphoreSlim(0);
 
+        /// <summary>
+        /// Completed once a first read is asked, before it reads anything
+        /// </summary>
+        public TaskCompletionSource ReadStarted { get; } = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
         /// <inheritdoc/>
         public override bool CanRead => inner.CanRead;
 
@@ -271,7 +281,8 @@ internal sealed class ObservedConnection : ITransportConnection
         /// <inheritdoc/>
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            // Reading, then counting and telling the waiters
+            // Telling that a read is waiting, reading, then counting and telling the waiters
+            ReadStarted.TrySetResult();
             int read = await inner.ReadAsync(buffer, cancellationToken);
             Interlocked.Add(ref _read, read);
             _signal.Release();

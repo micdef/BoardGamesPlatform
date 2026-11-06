@@ -536,6 +536,38 @@ public sealed class SigningKeysTests : IDisposable
     }
 
     /// <summary>
+    /// Refused files that could not be read for a while, then readable again unchanged, are still refused, and told again at their pace
+    /// </summary>
+    [Fact]
+    public void RefusedFilesStayRefusedAfterAPassingReadFailure()
+    {
+        // Arranging: loaded keys, then a broken list
+        DateTime before = DateTime.UtcNow.AddMinutes(-10);
+        WriteSigningKey(_ownKey, time: before);
+        WritePeerKeys(before, Line(_peerKey));
+        FakeTimeProvider clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        using SigningKeys keys = Load(clock);
+        DateTime broken = before.AddMinutes(1);
+        WritePeerKeys(broken, "broken");
+        keys.ReloadIfChanged();
+
+        // Acting: the broken list missing for a check, back unchanged, then a check after the pace of the refusals
+        File.Delete(PeerKeysPath);
+        keys.ReloadIfChanged();
+        WritePeerKeys(broken, "broken");
+        keys.ReloadIfChanged();
+        int beforePace = _logger.Entries.Count(entry => entry.Level == LogLevel.Error);
+        clock.Advance(SigningKeys.RefusalRepeat);
+        keys.ReloadIfChanged();
+        int afterPace = _logger.Entries.Count(entry => entry.Level == LogLevel.Error);
+
+        // Checks: told once, then again at the pace, the old keys kept
+        beforePace.ShouldBe(1);
+        afterPace.ShouldBe(2);
+        keys.IsPinned(SigningPublicKey.FromKey(_peerKey)).ShouldBeTrue();
+    }
+
+    /// <summary>
     /// A listener of the removed keys that fails is logged, and never keeps the next listeners from being told nor stops the reload
     /// </summary>
     [Fact]

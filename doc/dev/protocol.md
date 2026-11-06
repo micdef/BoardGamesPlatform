@@ -178,6 +178,6 @@ The protocol logs through the logger of the tier that uses it, with event ids re
 | `TlsTransportListener` | 9031-9033 |
 | `TlsTransportConnector` | 9034-9035 |
 | `TlsCredentials` | 9036-9039 |
-| Secure channel (`Protocol.Transport.Secure`) | 9051-9068, see [secure-channel.md](secure-channel.md#failures) |
+| Secure channel (`Protocol.Transport.Secure`) | 9051-9069, see [secure-channel.md](secure-channel.md#failures) |
 
 On the client, the loss of a connection is logged with its reason (heartbeat timeout, protocol violation, reset by the peer). On the server, the end of a connection that failed is logged with its exception, for example the `TimeoutException` of a drain cut after a client closed.

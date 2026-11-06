@@ -222,8 +222,7 @@ The events take the range 9051-9069 of `Protocol.Transport.Secure`:
 | 9057-9059 | Keys: loaded at startup (own `keyId` and the ones of the peer), list changed (added and removed), signing key taken |
 | 9060-9062 | Keys: changed files refused, connection closed for a removed key, connection closed for its age |
 | 9063-9065 | A removed key not told to the connections at once (the periodic check closes them), a close record that could not be sent, a connection not closed after a refused handshake |
-| 9066-9068 | A connection not closed cleanly (its socket released), a periodic check of the connections that failed, the close record of a normal close not sent on a broken connection (Debug) |
-| 9069 | Reserved |
+| 9066-9069 | A connection not closed cleanly (its socket released), a periodic check of the connections that failed, the close record of a normal close not sent (a broken connection, or a peer gone or that does not read; Debug), the keys of a refused handshake not erased (Debug) |
 
 ## Threat model
 

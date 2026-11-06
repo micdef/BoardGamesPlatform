@@ -18,7 +18,7 @@ using Microsoft.Extensions.Logging;
 namespace BoardGamesPlatform.Protocol.Transport.Secure;
 
 /// <summary>
-/// Log messages of the secure channel, event ids 9051 to 9055
+/// Log messages of the secure channel, event ids 9051 to 9055, 9065 and 9069
 /// </summary>
 /// <remarks>
 /// <para><b>Behavior:</b> a reason comes from the closed list of <see cref="SecureChannelFailure"/>, and the only values of the peer logged are
@@ -157,6 +157,15 @@ internal static partial class SecureChannelLog
     /// <param name="port">Port connected to</param>
     [LoggerMessage(EventId = 9065, Level = LogLevel.Warning, Message = "The connection to {Host}:{Port} could not be closed after its refused handshake")]
     public static partial void CloseFailed(ILogger logger, Exception exception, string host, int port);
+
+    /// <summary>
+    /// Method used to trace keys of a refused handshake that could not be erased; at the Debug level, since erasing buffers does not fail in
+    /// practice and the refusal is the failure to tell
+    /// </summary>
+    /// <param name="logger">[Cannot be null] Logger of the tier</param>
+    /// <param name="exception">Failure of the erasure</param>
+    [LoggerMessage(EventId = 9069, Level = LogLevel.Debug, Message = "The keys of a refused handshake of the secure channel could not be erased")]
+    public static partial void EraseFailed(ILogger logger, Exception exception);
 
     /// <summary>
     /// Method used to log a record refused, at the level of its reason

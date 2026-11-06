@@ -159,7 +159,7 @@ internal sealed class SecureRecordStream : Stream
     private bool _hasReceivedClose;
 
     /// <summary>
-    /// Whether the close record of this end was sent
+    /// Whether the close record of this end was started: true once it is being written, even when its write then failed
     /// </summary>
     private bool _hasSentClose;
 
@@ -229,7 +229,7 @@ internal sealed class SecureRecordStream : Stream
     public bool IsRenewalDue => Interlocked.Read(ref _sendSequence) >= _renewalThreshold || Interlocked.Read(ref _receiveSequence) >= _renewalThreshold;
 
     /// <summary>
-    /// Whether the close record of this end was sent
+    /// Whether the close record of this end was started: true once it is being written, even when its write then failed
     /// </summary>
     public bool HasSentClose => Volatile.Read(ref _hasSentClose);
 

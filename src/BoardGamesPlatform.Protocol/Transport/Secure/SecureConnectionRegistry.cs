@@ -205,25 +205,20 @@ internal sealed partial class SecureConnectionRegistry : IDisposable
         }
 
         // Closing the open ones, outside the lock
-        foreach (SecureTransportConnection connection in toClose)
-            CloseForRemovedKey(connection);
+        CloseForRemovedKey(toClose);
     }
 
     /// <summary>
-    /// Method used to close a connection whose key was removed; a failure of the log never keeps it open
+    /// Method used to close the connections whose key was removed, then log them: a failure of a log never keeps one of them open
     /// </summary>
-    /// <param name="connection">[Cannot be null] Connection to close</param>
-    private void CloseForRemovedKey(SecureTransportConnection connection)
+    /// <param name="connections">[Cannot be null] Connections to close</param>
+    private void CloseForRemovedKey(List<SecureTransportConnection> connections)
     {
-        // Logging, then closing in any case (the close never throws)
-        try
-        {
-            LogClosedForRemovedKey(connection.RemoteName, connection.PeerKey.KeyIdHex);
-        }
-        finally
-        {
+        // Closing them all first (the close never throws), then logging them
+        foreach (SecureTransportConnection connection in connections)
             _ = connection.CloseForAsync();
-        }
+        foreach (SecureTransportConnection connection in connections)
+            LogClosedForRemovedKey(connection.RemoteName, connection.PeerKey.KeyIdHex);
     }
 
     /// <summary>
@@ -237,22 +232,22 @@ internal sealed partial class SecureConnectionRegistry : IDisposable
     {
         try
         {
-            // Collecting the connections of a key no longer pinned, and the old ones, then closing them outside the lock
+            // Collecting the connections of a key no longer pinned, and the old ones, the ones already closing left out (their close is under
+            // way), then closing them all outside the lock before any log
             List<SecureTransportConnection> notPinned;
             List<SecureTransportConnection> tooOld;
             lock (_lock)
             {
-                List<SecureTransportConnection> open = _entries.Select(entry => entry.Connection).OfType<SecureTransportConnection>().ToList();
+                List<SecureTransportConnection> open = _entries.Select(entry => entry.Connection).OfType<SecureTransportConnection>()
+                    .Where(connection => !connection.IsClosing).ToList();
                 notPinned = open.Where(connection => !_keys.IsPinned(connection.PeerKey)).ToList();
                 tooOld = _maxAge is { } maxAge ? open.Where(connection => connection.IsTooOld(maxAge)).Except(notPinned).ToList() : new List<SecureTransportConnection>();
             }
-            foreach (SecureTransportConnection connection in notPinned)
-                CloseForRemovedKey(connection);
             foreach (SecureTransportConnection connection in tooOld)
-            {
-                LogClosedForAge(connection.RemoteName, _maxAge!.Value);
                 _ = connection.CloseForAsync();
-            }
+            CloseForRemovedKey(notPinned);
+            foreach (SecureTransportConnection connection in tooOld)
+                LogClosedForAge(connection.RemoteName, _maxAge!.Value);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {

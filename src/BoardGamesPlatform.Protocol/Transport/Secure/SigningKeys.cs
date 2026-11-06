@@ -439,9 +439,13 @@ public sealed partial class SigningKeys : IDisposable
     /// <param name="isRead">Whether the files could not be read (a passing state), rather than read and refused</param>
     private void RememberRefusal(Exception exception, bool isRead)
     {
-        // Remembering, then logging at the pace of the refusals, with the number held back since the last log
-        _lastRefusal = exception;
-        _isLastRefusalARead = isRead;
+        // Remembering, unless a read fails while a refusal of the content waits: the files may be the same once readable again, and their
+        // refusal must not be forgotten; then logging at the pace of the refusals, with the number held back since the last log
+        if (!isRead || _lastRefusal is null || _isLastRefusalARead)
+        {
+            _lastRefusal = exception;
+            _isLastRefusalARead = isRead;
+        }
         if (_refusalPace.TryEnter(out int heldBack))
             LogReloadFailed(exception, _timeProvider.GetElapsedTime(_lastTaken), heldBack);
     }

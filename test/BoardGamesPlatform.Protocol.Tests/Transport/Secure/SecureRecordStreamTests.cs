@@ -347,7 +347,7 @@ public sealed class SecureRecordStreamTests
     /// A task that completes once checked
     /// </returns>
     [Fact]
-    public async Task AFailureBreaksTheStreamForGoodAsync()
+    public async Task AFailedReadBreaksTheReadsButNotTheWritesAsync()
     {
         // Arranging a stream whose first record is broken
         byte[] written = await WriteAsClientAsync(SecureRecordStream.DefaultHardLimit, Bytes(Record0Plaintext));
@@ -367,6 +367,32 @@ public sealed class SecureRecordStreamTests
         server.IsSound.ShouldBeFalse();
         read.InnerException.ShouldBeOfType<SecureChannelException>();
         afterDispose.Message.ShouldContain("closed");
+    }
+
+    /// <summary>
+    /// A failed write breaks the writes for good: the stream is no longer sound, so that its connection skips the close record, and the next
+    /// writes and the close record fail as a lost connection
+    /// </summary>
+    /// <returns>
+    /// A task that completes once checked
+    /// </returns>
+    [Fact]
+    public async Task AFailedWriteBreaksTheWritesForGoodAsync()
+    {
+        // Arranging a stream whose stream below refuses every write
+        await using SecureRecordStream client = new SecureRecordStream(new MemoryStream(new byte[16], writable: false), CreateSecrets(), isClient: true);
+        CancellationToken token = TestContext.Current.CancellationToken;
+
+        // Acting
+        await Should.ThrowAsync<NotSupportedException>(client.WriteAsync(new byte[1], token).AsTask());
+        bool isSoundAfterWrite = client.IsSound;
+        IOException write = await Should.ThrowAsync<IOException>(client.WriteAsync(new byte[1], token).AsTask());
+        IOException close = await Should.ThrowAsync<IOException>(client.WriteCloseAsync(token));
+
+        // Checks
+        isSoundAfterWrite.ShouldBeFalse();
+        write.InnerException.ShouldBeOfType<NotSupportedException>();
+        close.InnerException.ShouldBeOfType<NotSupportedException>();
     }
 
     /// <summary>

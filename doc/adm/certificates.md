@@ -174,7 +174,8 @@ The tests generate their certificates at run time with the same code as the tool
 | 9065 | Warning | The Back could not close a connection after the Very Back was refused |
 | 9066 | Warning | A connection closed for a removed key or its age could not be closed cleanly; its socket is released |
 | 9067 | Error | The periodic check of the connections of the secure channel failed; it runs again in a minute |
-| 9068 | Debug | The close record of a normal close could not be sent (the connection was already broken); the peer may log a truncation |
+| 9068 | Debug | The close record of a normal close could not be sent: the connection broke meanwhile (its cause logged already), or the peer is gone or did not read within one second; the peer may log a truncation |
+| 9069 | Debug | The keys of a refused handshake could not be erased (does not happen in practice; the refusal itself is logged) |
 | 9020 | Debug | The Back sent a request again on its new connection, the replaced one having refused it before sending it |
 | 9009, 9010 | Warning, Error | The Back could not renew its connection to the Very Back: a failure of the network (9009), or a refusal by a key, a certificate or the protocol (9010) to fix before the current connection reaches its limit |
 

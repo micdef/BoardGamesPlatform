@@ -25,14 +25,15 @@ namespace BoardGamesPlatform.Protocol.Transport.Secure;
 /// <para><b>Behavior:</b> created by <see cref="SecureTransportConnector"/> or <see cref="SecureTransportListener"/>. It owns the TLS connection
 /// below it.</para>
 /// <list type="bullet">
-/// <item><description>Closing the sending side writes the close record, then closes the sending side of TLS, once: a second call waits for the same
-/// close.</description></item>
+/// <item><description>Closing the sending side writes the close record, then closes the sending side of TLS, once, within <see cref="CloseDelay"/>
+/// whatever the token of the first caller: a second call waits for the same close, within its own token.</description></item>
 /// <item><description>Disposing it ends it cleanly: the close record first, within <see cref="DisposeCloseDelay"/>, when the stream is still sound
 /// and the record was not sent, so that the peer reads a clean end and never takes a normal close for a truncation; then the keys are erased
-/// and the TLS connection closed, whatever the close record did. It can be called more than once.</description></item>
+/// and the TLS connection closed, whatever the close record did, a close still being written stopped first so that the keys are never erased
+/// under it; a close record of a normal close that cannot be sent is traced (event id 9068, Debug). It can be called more than once.</description></item>
 /// <item><description><see cref="CloseForAsync"/> ends it from another task (a revoked key, its age), once: the close record first, within
 /// <see cref="CloseDelay"/>, then the connection; a close record that cannot be sent is logged (event id 9064), and the connection is cut in
-/// any case.</description></item>
+/// any case (a failure of the close below logged as 9066).</description></item>
 /// </list>
 /// </remarks>
 internal sealed partial class SecureTransportConnection : ITransportConnection
@@ -91,6 +92,11 @@ internal sealed partial class SecureTransportConnection : ITransportConnection
     private Task? _closingSend;
 
     /// <summary>
+    /// Delay of the shared close (<see cref="CloseDelay"/>), canceled by the disposal before it erases the keys; null before the close starts
+    /// </summary>
+    private CancellationTokenSource? _closingDelay;
+
+    /// <summary>
     /// Lock of the start of the close of the sending side
     /// </summary>
     private readonly Lock _closeLock = new Lock();
@@ -142,6 +148,11 @@ internal sealed partial class SecureTransportConnection : ITransportConnection
 
     /// <inheritdoc/>
     public bool IsRenewalDue => _stream.IsRenewalDue || IsTooOld(RenewalAge);
+
+    /// <summary>
+    /// Whether the connection is being ended from another task (<see cref="CloseForAsync"/>), so that the register does not close it again
+    /// </summary>
+    public bool IsClosing => Volatile.Read(ref _isClosing) == 1;
 
     /// <summary>
     /// Address and port of the peer, written once for the logs
@@ -237,7 +248,8 @@ internal sealed partial class SecureTransportConnection : ITransportConnection
     private partial void LogCloseFailed(Exception exception, string remoteEndPoint);
 
     /// <summary>
-    /// Method used to trace a close record of a normal close that could not be sent (the peer is gone or does not read)
+    /// Method used to trace a close record of a normal close that could not be sent: the stream broke meanwhile (its cause already logged), or
+    /// the peer is gone or does not read within <see cref="DisposeCloseDelay"/>; at the Debug level, since a peer gone is a normal end
     /// </summary>
     /// <param name="exception">Why the close record failed</param>
     /// <param name="remoteEndPoint">Address and port of the peer</param>
@@ -271,35 +283,60 @@ internal sealed partial class SecureTransportConnection : ITransportConnection
     /// <exception cref="IOException">If the stream fails, or the channel is closed or broken</exception>
     public Task CloseSendAsync(CancellationToken cancellationToken = default)
     {
-        // Closing once: a second caller waits for the same close, within its own token, so that a disposal never erases the keys while the
-        // close record is being written
+        // Closing once, within a delay of its own, whatever the token of the caller who started it: every caller waits for the same close,
+        // within its own token, so that a disposal never erases the keys while the close record is being written
         Task closing;
         lock (_closeLock)
-            closing = _closingSend ??= CloseSendOnceAsync(cancellationToken);
+        {
+            if (_closingSend is null)
+            {
+                _closingDelay = new CancellationTokenSource(CloseDelay);
+                _closingSend = ObserveFailure(CloseSendOnceAsync(_closingDelay.Token));
+            }
+            closing = _closingSend;
+        }
 
         // Function's return
         return closing.WaitAsync(cancellationToken);
     }
 
     /// <summary>
-    /// Method used to write the close record of the channel, then close the sending side of TLS
+    /// Method used to write the close record of the channel, then close the sending side of TLS, within <see cref="CloseDelay"/>
     /// </summary>
-    /// <param name="cancellationToken">Token of the first caller</param>
+    /// <param name="cancellationToken">Token of the delay of the close, canceled by the disposal</param>
     /// <returns>
     /// A task that completes once both are sent
     /// </returns>
     private async Task CloseSendOnceAsync(CancellationToken cancellationToken)
     {
-        // The close record, then the end of TLS
+        // The close record, then the end of TLS, a peer that does not read stopping it at the delay
         await _stream.WriteCloseAsync(cancellationToken).ConfigureAwait(false);
         await _inner.CloseSendAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Method used to observe the failure of the shared close, so that it is never an unobserved task when every caller gave up waiting
+    /// </summary>
+    /// <param name="closing">[Cannot be null] Shared close</param>
+    /// <returns>
+    /// The same task
+    /// </returns>
+    private static Task ObserveFailure(Task closing)
+    {
+        // Reading its exception once it fails; each caller that waits for it still gets the failure
+        _ = closing.ContinueWith(static task => _ = task.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+        // Function's return
+        return closing;
     }
 
     /// <summary>
     /// Method used to end the connection from another task, once: the close record first, then the connection
     /// </summary>
     /// <returns>
-    /// A task that completes once the connection is closed; it never throws, since nobody waits for it but the logs
+    /// A task that completes once the connection is closed, or at once for a caller after the first one; it never throws, since nobody waits
+    /// for it but the logs
     /// </returns>
     public async Task CloseForAsync()
     {
@@ -343,7 +380,10 @@ internal sealed partial class SecureTransportConnection : ITransportConnection
 
         // Sending the close record when the writes are still sound, or waiting for the one being sent, so that the peer reads a clean end; a
         // peer that no longer reads only delays the close by the short delay
-        if (_stream.IsSound || _closingSend is not null)
+        bool isClosingSend;
+        lock (_closeLock)
+            isClosingSend = _closingSend is not null;
+        if (_stream.IsSound || isClosingSend)
         {
             try
             {
@@ -352,9 +392,26 @@ internal sealed partial class SecureTransportConnection : ITransportConnection
             }
             catch (Exception exception) when (exception is not OutOfMemoryException)
             {
-                // The peer is gone or does not read: told for the diagnosis (the peer may log a truncation), the connection closed below
-                LogDisposeCloseRecordFailed(exception, RemoteName);
+                // The peer is gone or does not read: told for the diagnosis (the peer may log a truncation), the connection closed below; a
+                // close from another task already logged its failure (9064)
+                if (!IsClosing)
+                    LogDisposeCloseRecordFailed(exception, RemoteName);
             }
+        }
+
+        // A close still being written is stopped, and its end awaited (its failure was told above), so that the keys are never erased under it
+        Task? closing;
+        CancellationTokenSource? closingDelay;
+        lock (_closeLock)
+        {
+            closing = _closingSend;
+            closingDelay = _closingDelay;
+        }
+        if (closing is not null && closingDelay is not null)
+        {
+            await closingDelay.CancelAsync().ConfigureAwait(false);
+            await closing.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            closingDelay.Dispose();
         }
 
         // Erasing the keys, then closing the TLS connection, then leaving the register, each step whatever the one before did

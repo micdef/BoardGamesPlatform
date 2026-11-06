@@ -859,7 +859,8 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// Method used to send a request of an operation and read its response, on the shared connection (Asynchronous)
     /// </summary>
     /// <remarks>
-    /// <para><b>Behavior:</b> opens the connection first when needed; the request is not retried when it fails. A request that gets no
+    /// <para><b>Behavior:</b> opens the connection first when needed; the request is not retried when it fails, except once on the new connection when a connection
+    /// being replaced refused it before sending anything of it (<see cref="RequestNotSentException"/>, event id 9020). A request that gets no
     /// connection, or no response, within the request timeout fails with a <see cref="LinkFailureException"/> whose code is <see cref="ErrorCodes.LinkTimeout"/>;
     /// it is canceled on the peer like any canceled request.</para>
     /// </remarks>
@@ -927,7 +928,7 @@ public sealed partial class LinkClient : IAsyncDisposable
             }
             catch (RequestNotSentException exception) when (Volatile.Read(ref _isDisposed) == 1)
             {
-                throw new ObjectDisposedException(nameof(LinkClient), $"The client of {_peerName} has been disposed: {exception.Message}");
+                throw new ObjectDisposedException($"The client of {_peerName} has been disposed", exception);
             }
             catch (RequestNotSentException exception) when (attempt == 1)
             {

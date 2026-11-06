@@ -15,6 +15,7 @@ using BoardGamesPlatform.Protocol.Errors;
 using BoardGamesPlatform.Protocol.Framing;
 using BoardGamesPlatform.Protocol.Links;
 using BoardGamesPlatform.Protocol.Messages;
+using BoardGamesPlatform.Protocol.Tests.Correlation;
 using BoardGamesPlatform.Protocol.Transport;
 using BoardGamesPlatform.Protocol.Transport.Secure;
 using BoardGamesPlatform.Protocol.Transport.Tls;
@@ -302,8 +303,9 @@ public sealed class SecureLinkTests : IDisposable
             }, token);
             ITransportConnection clientEnd = await BackConnector().ConnectAsync("127.0.0.1", listener.LocalEndPoint.Port, token);
             await using ITransportConnection server = await accepting;
-            RequestClient client = new RequestClient(clientEnd, new FrameCodec());
-            await Task.Delay(20, token);
+            ObservedConnection observed = new ObservedConnection(clientEnd);
+            RequestClient client = new RequestClient(observed, new FrameCodec());
+            await observed.ReadStarted.WaitAsync(token);
 
             // Acting
             await client.DisposeAsync();
