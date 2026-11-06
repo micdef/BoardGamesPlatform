@@ -186,6 +186,31 @@ public sealed class TestPortBlockTests
         again.First.ShouldBe(30600);
     }
 
+    /// <summary>
+    /// A set of blocks gives the ports of its first block, then of the next one, locked only when the first one is used up; past the last
+    /// block, it fails with an explicit message
+    /// </summary>
+    [Fact]
+    public void ASetOfBlocksMovesToTheNextBlockOnlyOnceTheFirstIsUsedUp()
+    {
+        // Taking the ports of the first block: the second one is still free for another run
+        using TestPortBlockSet set = new TestPortBlockSet("30800", 0, 1);
+        set.Next().ShouldBe(30800);
+        new TestPortBlock(1, "30800").Dispose();
+        for (int index = 1; index < TestPortBlock.BlockSize; index++)
+            set.Next();
+
+        // Checks: the next port comes from the second block, which is now locked
+        set.Next().ShouldBe(30900);
+        Should.Throw<InvalidOperationException>(() => new TestPortBlock(1, "30800"));
+
+        // Checks: a set of one block used up says so
+        using TestPortBlockSet single = new TestPortBlockSet("31000", 0);
+        for (int index = 0; index < TestPortBlock.BlockSize; index++)
+            single.Next();
+        Should.Throw<InvalidOperationException>(() => single.Next()).Message.ShouldContain("give it another block");
+    }
+
     #endregion
 
     #endregion
