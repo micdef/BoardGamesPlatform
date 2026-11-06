@@ -82,9 +82,19 @@ public sealed class TestPortBlock : IDisposable
     private const int MinBase = ((1024 + BlockSize - 1) / BlockSize) * BlockSize;
 
     /// <summary>
-    /// Win32 error ERROR_SHARING_VIOLATION, carried by the HResult of the IOException when another process holds the file
+    /// Win32 error ERROR_SHARING_VIOLATION, carried by the HResult of the IOException when another process holds the file (Windows)
     /// </summary>
     private const int SharingViolationCode = 32;
+
+    /// <summary>
+    /// Error EWOULDBLOCK of Linux, the HResult of the IOException when another process holds the lock of the file (measured on Fedora 44)
+    /// </summary>
+    private const int LinuxWouldBlockCode = 11;
+
+    /// <summary>
+    /// Error EWOULDBLOCK of macOS and the BSD systems, for the same case
+    /// </summary>
+    private const int BsdWouldBlockCode = 35;
 
     #endregion
 
@@ -216,12 +226,17 @@ public sealed class TestPortBlock : IDisposable
     /// </summary>
     /// <param name="exception">[Cannot be null] Exception thrown when opening the file</param>
     /// <returns>
-    /// True when the error is ERROR_SHARING_VIOLATION (32), found in the low 16 bits of the HResult
+    /// True when the error is ERROR_SHARING_VIOLATION (32) in the low 16 bits of the HResult on Windows, or EWOULDBLOCK, the HResult itself,
+    /// elsewhere (.NET locks the file there, and reports the lock of another process that way)
     /// </returns>
     private static bool IsSharingViolation(IOException exception)
     {
+        // Windows gives a Win32 error in an HResult, the other systems the error number of the system
+        if (OperatingSystem.IsWindows())
+            return (exception.HResult & 0xFFFF) == SharingViolationCode;
+
         // Function's return
-        return (exception.HResult & 0xFFFF) == SharingViolationCode;
+        return exception.HResult == (OperatingSystem.IsLinux() ? LinuxWouldBlockCode : BsdWouldBlockCode);
     }
 
     /// <summary>
