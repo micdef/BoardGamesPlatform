@@ -524,7 +524,7 @@ internal static class JsonFuzzKit
     /// </summary>
     /// <remarks>
     /// <para><b>Behavior:</b> the whole exception is searched (message, inner exception, stack trace), not only its message; the marker is
-    /// searched in pieces, split at the quote, the backslash and the control Characters, so that an escaped copy is found too.</para>
+    /// searched in pieces, split at the quote, the backslash and the control characters, so that an escaped copy is found too.</para>
     /// </remarks>
     /// <param name="read">[Cannot be null] Reader to run</param>
     /// <param name="marker">[Cannot be null] Text of the peer that must never be copied</param>
@@ -545,7 +545,9 @@ internal static class JsonFuzzKit
         // Check: no text of the peer anywhere in the exception
         if (exception is not null)
         {
-            string everything = exception.ToString();
+            // Its type and message only: the stack trace holds the paths of the machine, which may hold any text (a profile named with an
+            // accent, for example), and the inner exception is refused below
+            string everything = $"{exception.GetType().FullName}: {exception.Message}";
             foreach (string piece in marker.Split('\u0007', '\n', '"', '\\'))
             {
                 if (piece.Length >= 4)
