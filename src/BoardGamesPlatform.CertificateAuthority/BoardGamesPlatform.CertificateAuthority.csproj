@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Offline certificate authority of the platform: creates its root, and signs the certificate requests of the tiers. It opens no port: it runs by hand, on demand, on the machine that keeps the root key -->
+
+  <!-- A command-line tool -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <!-- The tests reach the commands with their own password source and output -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="BoardGamesPlatform.CertificateAuthority.Tests" />
+  </ItemGroup>
+
+  <!-- Projects: the socket protocol, which defines the identity a certificate carries for each role -->
+  <ItemGroup>
+    <ProjectReference Include="..\BoardGamesPlatform.Protocol\BoardGamesPlatform.Protocol.csproj" />
+  </ItemGroup>
+
+</Project>

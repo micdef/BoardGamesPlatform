@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Tests of the offline certificate authority: what its certificates hold, and its commands from the root to the PFX of a tier -->
+
+  <!-- Projects: the tool under test, and the protocol that defines the identity of the roles -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.CertificateAuthority\BoardGamesPlatform.CertificateAuthority.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Protocol\BoardGamesPlatform.Protocol.csproj" />
+  </ItemGroup>
+
+  <!-- Packages (versions in Directory.Packages.props): a fake clock, to sign at a chosen time -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+  </ItemGroup>
+
+</Project>

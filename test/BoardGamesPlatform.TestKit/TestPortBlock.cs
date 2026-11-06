@@ -82,9 +82,19 @@ public sealed class TestPortBlock : IDisposable
     private const int MinBase = ((1024 + BlockSize - 1) / BlockSize) * BlockSize;
 
     /// <summary>
-    /// Win32 error ERROR_SHARING_VIOLATION, carried by the HResult of the IOException when another process holds the file
+    /// Win32 error ERROR_SHARING_VIOLATION, carried by the HResult of the IOException when another process holds the file (Windows)
     /// </summary>
     private const int SharingViolationCode = 32;
+
+    /// <summary>
+    /// Error EWOULDBLOCK of Linux, the HResult of the IOException when another process holds the lock of the file (measured on Fedora 44)
+    /// </summary>
+    private const int LinuxWouldBlockCode = 11;
+
+    /// <summary>
+    /// Error EWOULDBLOCK of macOS and the BSD systems, for the same case
+    /// </summary>
+    private const int BsdWouldBlockCode = 35;
 
     #endregion
 
@@ -216,12 +226,17 @@ public sealed class TestPortBlock : IDisposable
     /// </summary>
     /// <param name="exception">[Cannot be null] Exception thrown when opening the file</param>
     /// <returns>
-    /// True when the error is ERROR_SHARING_VIOLATION (32), found in the low 16 bits of the HResult
+    /// True when the error is ERROR_SHARING_VIOLATION (32) in the low 16 bits of the HResult on Windows, or EWOULDBLOCK, the HResult itself,
+    /// elsewhere (.NET locks the file there, and reports the lock of another process that way)
     /// </returns>
     private static bool IsSharingViolation(IOException exception)
     {
+        // Windows gives a Win32 error in an HResult, the other systems the error number of the system
+        if (OperatingSystem.IsWindows())
+            return (exception.HResult & 0xFFFF) == SharingViolationCode;
+
         // Function's return
-        return (exception.HResult & 0xFFFF) == SharingViolationCode;
+        return exception.HResult == (OperatingSystem.IsLinux() ? LinuxWouldBlockCode : BsdWouldBlockCode);
     }
 
     /// <summary>
@@ -327,13 +342,33 @@ public sealed class TestPortBlock : IDisposable
     /// <exception cref="InvalidOperationException">If the block is used up, or if the port cannot be bound</exception>
     public int Next()
     {
-        // Taking the next offset of the block
-        int offset = Interlocked.Increment(ref _lastOffset);
-        if (offset >= BlockSize)
+        // Taking the next port, the block being used up
+        if (!TryNext(out int port))
             throw new InvalidOperationException($"The {BlockSize} test ports from {First} are all used by this test project: give it a second block in TestPortBlocks");
 
+        // Function's return
+        return port;
+    }
+
+    /// <summary>
+    /// Method used to get the next port of the block, checked to be free, or to learn that the block is used up
+    /// </summary>
+    /// <param name="port">A port of the block that no other test of the run has had, and that could be bound on the loopback address and on
+    /// all the addresses; zero when the block is used up</param>
+    /// <returns>
+    /// True when a port is given, false when the block is used up
+    /// </returns>
+    /// <exception cref="InvalidOperationException">If the port cannot be bound</exception>
+    public bool TryNext(out int port)
+    {
+        // Taking the next offset of the block
+        port = 0;
+        int offset = Interlocked.Increment(ref _lastOffset);
+        if (offset >= BlockSize)
+            return false;
+
         // Checking the port, then giving it
-        int port = First + offset;
+        port = First + offset;
         SocketException? holder = FindHolder(port);
         if (holder is not null)
         {
@@ -342,7 +377,7 @@ public sealed class TestPortBlock : IDisposable
         }
 
         // Function's return
-        return port;
+        return true;
     }
 
     /// <summary>

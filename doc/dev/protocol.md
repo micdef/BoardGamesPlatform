@@ -5,21 +5,38 @@ It describes version 1 of the protocol, delivered in 0.4.0. The code is in `src/
 
 **Security limits of this version**
 
-- Until 0.5.0 the links are plain TCP, for development only: nothing is encrypted nor authenticated.
-- Until then, any process that can reach the port can call every operation, and keep one of the 8 connections of the server open by pinging. Keep the listeners on the loopback address or on a trusted network (see `doc/adm/back.md` and `doc/adm/very-back.md`).
-- TLS 1.3 with mutual authentication comes in 0.5.0, and an authenticated ECDH handshake on the Back → Very Back link in 0.6.0. Both wrap the byte stream described here and change nothing above it. TLS identifies the tiers, not the players: the requests carry no session before 0.10.0.
+- From 0.5.0 both links run over mutual TLS 1.3 (see [Transport security](#transport-security-mutual-tls-13) and `doc/adm/certificates.md`): each end presents the certificate of its role, issued by the authority of the platform, and only the expected role is accepted. TLS wraps the byte stream described here and changes nothing above it.
+- TLS identifies the **tiers, not the players**: the requests carry no session before 0.10.0, so a tier that holds a valid certificate of its role can call every operation of its peer.
+- A process that can reach the port but holds no certificate can still open connections: it gets one of the 4 places of the handshakes (2 per IP address) for 5 seconds at most, never the place of a served connection, and a newer connection makes room by closing the oldest one. A peer that opens connections without pause, from 2 addresses or more, can still keep the client tier from connecting: keep the listeners on the loopback address or behind a firewall that admits the peer tier only. Behind a NAT or a published Docker port, all the peers may show the same address, which makes the part per address the whole of the places.
+- The largest payload (64 KiB) is part of the contract of each link, checked by the handshake: a change of it is deployed on both ends at the same time, since a client and a server that differ refuse each other (`protocol.limitsMismatch`).
+- A withdrawn certificate is refused through `Tls:RefusedThumbprints` only: there is no revocation list nor OCSP. The authenticated ECDH handshake on the Back → Very Back link comes in 0.6.0, the vault for the passwords of the certificates in 0.7.0.
 
 ## Layers
 
 | Layer | Namespace | Role |
 |-------|-----------|------|
-| Transport | `Protocol.Transport` | A connection hands over a byte stream (TCP today, TLS from 0.5.0) |
+| Transport | `Protocol.Transport` | A connection hands over a byte stream: plain TCP, or mutual TLS 1.3 over TCP (`Protocol.Transport.Tls`) |
 | Framing | `Protocol.Framing` | Cuts the stream into frames and refuses an oversized frame before reading it |
 | Control | `Protocol.Control` | Handshake, heartbeat and cancellation: the frames that manage the connection itself |
 | Correlation | `Protocol.Correlation` | Several requests in flight on one connection, each response paired with its request |
 | Messages | `Protocol.Messages` | JSON envelopes of the requests and the responses, routed by operation name |
 | Errors | `Protocol.Errors` | Error codes and the exceptions that carry them |
 | Links | `Protocol.Links` | What a tier uses: the link client (connection, reconnection, timeouts) and the link server (accept loop) |
+
+## Transport security: mutual TLS 1.3
+
+Every byte of a link travels in a TLS 1.3 session, and both ends prove who they are with a certificate of the platform authority (`src/BoardGamesPlatform.CertificateAuthority`).
+
+- **Trust**: a tier trusts the roots of the platform only, never the trust store of the system. Several roots may be trusted at the same time, during a change of root.
+- **Identity**: the certificate of a tier holds one DNS name, `<role>.<suffix>` (`gateway`, `back` or `veryback`, then the suffix of the deployment, for example `back.bgp.internal`), and the usages of its sides: TLS server for the Back and the Very Back, TLS client for the Gateway and the Back. The name never depends on the address connected to.
+- **Who accepts whom**: the Back accepts the Gateway only, the Very Back the Back only; the Gateway talks to the Back only, the Back to the Very Back only. A valid certificate of another role is refused: the key of one tier never opens a link meant for another one.
+- **Check of a certificate**: it chains to a trusted root, every certificate of the chain is valid now and allowed for the usage of its side, its only DNS name is the one of the role expected, and its SHA-256 thumbprint is not in the refused list. No revocation is checked and nothing is downloaded: the links run in a closed network, and a compromised certificate is refused by its thumbprint.
+- **Handshake**: TLS 1.3 only (an older version is refused), no renegotiation, and no session resumption, so that every connection checks the certificates again. On the server, the TLS handshake runs in the task of the connection, never in the accept loop, within the same handshake timeout as the protocol handshake below (5 seconds for both): a silent peer never holds the accept loop.
+- **Refusal**: a refused peer is logged with the reason and the thumbprint of its certificate, never with a text the peer chose; the failed handshakes are logged once every 10 seconds at most, the next entry giving the number held back, and the link server only traces them (Debug), so that a peer that fails handshakes in a loop cannot flood the logs. A connection is logged as accepted once it is established. For the caller of a link, a refused peer is `link.unavailable`, like a peer that cannot be reached. In TLS 1.3, the server may refuse the certificate of the client after the client ended its handshake: the client then sees the refusal at its first read, as a failure of the connection.
+- **Renewal**: before each new connection, and every hour, a tier checks whether its PFX or the file of its roots changed. If so, it loads and checks them again, and uses them for the new connections; files that fail the check are logged, and the current certificate is kept until the files change again (files that cannot be read yet, a copy in progress, are tried again at the next check). An established connection keeps the certificate it started with. The hourly check also warns, once a day at most, when the certificate expires within 30 days, and logs an error once it expired, so that a tier whose links stay open still warns.
+- **Prerequisite**: TLS 1.3 needs Windows Server 2022 or Windows 11 or later (Schannel; a tier refuses to start on an older Windows), or OpenSSL 3 on Linux (OpenSSL 1.1.1, the first with TLS 1.3, is no longer supported by its project).
+- **Usages**: a certificate must carry its extended usages; one without them is refused, though a chain alone would accept it for any usage.
+- **Closing the sending side** announces the end of the session (close_notify), then sends the end of the TCP stream; the other end reads a clean end and may still answer.
 
 ## Frames
 
@@ -31,7 +48,7 @@ Every message is a frame: a 12-byte header, then the payload. All numbers are bi
 | 4 to 11 | Correlation identifier, unsigned 64-bit integer |
 | 12 and after | Payload, exactly as many bytes as announced: UTF-8 JSON |
 
-- The largest payload is 1 MiB by default (16 MiB at most). A frame that announces more is refused before its payload is read.
+- The largest payload is 1 MiB by default (16 MiB at most); each link sets its own, used by both ends: 64 KiB for Gateway → Back (`BackOperations.LinkMaxPayloadLength`) and for Back → Very Back (`VeryBackOperations.LinkMaxPayloadLength`), sized to their operations of a few hundred bytes, so that the memory a peer can make a server hold stays small (connections × requests in progress × largest payload). A frame that announces more is refused before its payload is read.
 - Correlation identifier **0** is reserved for the control messages. A request uses 1, 2, 3… in the order the client gives them.
 - **Connection rule**: after any failure of a read or a write, cancellation included, the position in the stream is unknown, so the connection is closed, never reused.
 
@@ -114,23 +131,26 @@ Through the tiers, a front that disconnects stops the work of its call in the Ba
 | Timing | Value |
 |--------|-------|
 | The client sends a `ping` every | 10 seconds |
-| The client closes when it has received no frame at all for more than | 30 seconds, checked at each ping (so within 40 seconds) |
-| The server closes when it has received no frame at all for more than | 45 seconds, checked at every ping interval (so within 55 seconds) |
+| The client closes when the server has shown no sign of life for more than | 30 seconds, checked at each ping (so within 40 seconds) |
+| The server closes when it has received nothing at all for more than | 45 seconds, checked at every ping interval (so within 55 seconds) |
 
-Any frame counts, a request or a response as well as a ping or a pong. Each end watches with its own timer, and no read is ever canceled without closing the connection. The write of a ping, the wait for the write lock included, is bounded by the client heartbeat timeout (30 seconds), so that a peer that no longer reads cannot block the heartbeat.
+Any byte received counts, not only a whole frame: a large frame on a slow link is not taken for a silent peer. On the client, a piece of a large frame written counts too (a frame larger than 64 KiB is written in pieces of 64 KiB, which leave only when the server reads, once the buffers of the system are full): a large request on a slow link is not taken for a dead server. A short frame written is never a sign of life, since the system takes its bytes without the server reading them: short requests sent often never keep a silent server alive. While a frame is being written, the client skips its ping instead of waiting behind it; if that write stalls, no sign of life comes and the client closes after its timeout. Each end watches with its own timer, and no read is ever canceled without closing the connection. The write of a ping is bounded by the client heartbeat timeout (30 seconds), so that a peer that no longer reads cannot block the heartbeat.
 
 ## Limits
 
 | Limit | Value | When reached |
 |-------|-------|--------------|
-| Largest payload of a frame | 1 MiB (16 MiB at most) | the frame is refused, the connection closed |
+| Largest payload of a frame | 64 KiB on the links Gateway → Back and Back → Very Back (1 MiB by default, 16 MiB at most) | the frame is refused before its payload is read, the connection closed; a hello with another largest payload is refused (`protocol.limitsMismatch`) |
 | Requests in progress per connection | 64, announced in the handshake (the client never keeps more than 64, whatever the server announces) | the client waits for a free place; the server answers `server.busy` to a request that arrives anyway (for example just after a cancellation, before the server has seen it) |
-| Connections served by a link server | 8 | a new connection is closed at once, and a warning is logged |
+| Connections served by a link server | 8 | a new connection is closed at once, before any byte; a connection whose handshake ends then is closed too |
+| Connections in their handshake (TLS, then protocol), not yet served | 4, of which 2 at most from one source (an IP address) | the oldest connection in its handshake of the source (when it holds its 2), else of all, is closed to make room for the new one: a silent or unknown peer never takes the place of a served connection, and must open connections without pause to keep the client tier out (a port it reaches can still be saturated before authentication: the firewall stays the barrier) |
+| Logs of the refused connections | one every 10 seconds at most; the next log gives the number of refusals in between | the refusals are counted, not logged one by one |
 | Handshake | 5 seconds | the connection is closed |
+| Write of a frame by the server | no progress for the idle timeout (45 seconds) | the connection is closed (`TimeoutException`, logged by the link server) |
 | Request timeout, the wait for the connection included | `Back:RequestTimeout` (Gateway, 8 s) and `VeryBack:RequestTimeout` (Back, 5 s), at most 5 minutes | `link.timeout`, the request is canceled on the peer |
 | Response of an operation | the largest payload of the link | `internal`, logged; the connection stays open |
 
-The server never waits for a place to read, so that a cancellation or a ping is received at once, even when every place is taken; only a client that stops reading the answers written from the read loop (a pong, a `server.busy`) can stall it, until the idle timeout closes the connection. It gives the place of a request back just before writing its response, so that the next request of the client always finds it free.
+The server never waits for a place to read, so that a cancellation or a ping is received at once, even when every place is taken; only a client that stops reading the answers written from the read loop (a pong, a `server.busy`) can stall it, until the idle timeout closes the connection. A write of the server that makes no progress (no piece of 64 KiB written) for the idle timeout closes the connection too, so that a client that stops reading while it sends frames that need no answer (cancellations) cannot hold the writes, the places and the responses of its connection; the deadline moves with each piece, so a large frame read slowly is not cut. It gives the place of a request back just before writing its response, so that the next request of the client always finds it free.
 
 The request timeouts decrease along the chain (website 10 s > Gateway 8 s > Back 5 s), so that each tier still answers a code before its caller gives up.
 
@@ -141,7 +161,7 @@ The link client shares one connection between all its callers.
 - A lost connection is opened again by the next call, at once.
 - When opening fails (the peer is down, refuses, breaks the handshake, or the request timeout cuts the opening), the next attempt waits a back-off delay: 0.5 second, doubled after each failure, spread at random by 20 % either way, and never more than 30 seconds. It is counted on a monotonic clock, so that a change of the system time does not change it.
 - During the delay, calls fail at once with `link.unavailable`, without touching the network.
-- The first connection that opens resets the delay.
+- A connection that opens lets the next attempt go at once, but the failures in a row are only forgotten once it answers a request (an error code of the peer included). A connection lost before any response counts as a failure to open: a peer in a crash loop (it accepts the handshake, then dies at the first request) is reconnected with the back-off, not on every call.
 - A request in flight on a lost connection fails with `link.unavailable`. No request is ever retried automatically, since the peer may already have handled it (idempotency comes with 0.14.0).
 
 ## Logs
@@ -150,8 +170,11 @@ The protocol logs through the logger of the tier that uses it, with event ids re
 
 | Class | Event ids |
 |-------|-----------|
-| `LinkClient` | 9001-9006 |
-| `LinkServer` | 9011-9019 |
+| `LinkClient` | 9001-9007 |
+| `LinkServer` | 9011-9019, 9040-9043 |
 | `OperationDispatcher` | 9021-9026 |
+| `TlsTransportListener` | 9031-9033 |
+| `TlsTransportConnector` | 9034-9035 |
+| `TlsCredentials` | 9036-9039 |
 
 On the client, the loss of a connection is logged with its reason (heartbeat timeout, protocol violation, reset by the peer). On the server, the end of a connection that failed is logged with its exception, for example the `TimeoutException` of a drain cut after a client closed.

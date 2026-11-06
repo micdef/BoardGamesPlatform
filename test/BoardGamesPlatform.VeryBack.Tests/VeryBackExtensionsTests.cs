@@ -7,6 +7,8 @@
 
 // Using
 using BoardGamesPlatform.Observability;
+using BoardGamesPlatform.Protocol.Transport.Tls;
+using BoardGamesPlatform.TestKit;
 using BoardGamesPlatform.VeryBack.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -119,12 +121,12 @@ public sealed class VeryBackExtensionsTests
     {
         // Building the host with the same registrations as Program.cs
         HostApplicationBuilder builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings());
-        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        builder.Configuration.AddInMemoryCollection(TestTlsFiles.Shared.AddTo(new Dictionary<string, string?>
         {
             ["VeryBack:ListenAddress"] = "127.0.0.1",
             ["VeryBack:Port"] = "7822",
             ["ConnectionStrings:Main"] = connectionString,
-        });
+        }, PlatformRole.VeryBack));
         builder.Services.AddLogging();
         builder.AddPlatformVeryBack();
 

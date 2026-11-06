@@ -6,6 +6,8 @@
  */
 
 // Using
+using BoardGamesPlatform.Protocol.Transport.Tls;
+using BoardGamesPlatform.TestKit;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
@@ -150,6 +152,7 @@ internal static class GatewayStartup
         WebApplicationBuilder builder = WebApplication.CreateBuilder(
             new WebApplicationOptions { EnvironmentName = "Testing", ContentRootPath = AppContext.BaseDirectory });
         builder.WebHost.UseTestServer();
+        builder.Configuration.AddInMemoryCollection(TestTlsFiles.Shared.GetSettings(PlatformRole.Gateway));
         builder.Configuration.AddInMemoryCollection(settings);
         builder.AddPlatformGateway();
         await using WebApplication app = builder.Build();

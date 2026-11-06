@@ -167,6 +167,13 @@ public sealed class FailingTransportListener : ITransportListener
     }
 
     /// <inheritdoc/>
+    public Task<ITransportConnection> EstablishAsync(ITransportConnection accepted, CancellationToken cancellationToken = default)
+    {
+        // Function's return: never called, since the fake accepts no connection
+        return Task.FromResult(accepted);
+    }
+
+    /// <inheritdoc/>
     public ValueTask DisposeAsync()
     {
         // Counting the disposal

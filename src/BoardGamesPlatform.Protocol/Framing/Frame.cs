@@ -25,7 +25,7 @@ namespace BoardGamesPlatform.Protocol.Framing;
 /// <para><b>Behavior:</b> the correlation identifier pairs a response with its request, so that several requests can be in flight on the
 /// same connection. The payload is opaque at this level: the layers above decide what it holds (UTF-8 JSON on the links of the platform).
 /// An empty payload is allowed. The payload is not copied: a frame built from an array shares it, so the array must not be modified until
-/// the frame is written; a frame returned by <see cref="FrameCodec.ReadAsync"/> owns its array.</para>
+/// the frame is written; a frame returned by <see cref="FrameCodec.ReadAsync(Stream, CancellationToken)"/> owns its array.</para>
 /// </remarks>
 public sealed class Frame
 {

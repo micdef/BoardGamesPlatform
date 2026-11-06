@@ -12,6 +12,7 @@ using BoardGamesPlatform.Gateway.BackLink;
 using BoardGamesPlatform.Gateway.Tests.Support;
 using BoardGamesPlatform.Protocol.Errors;
 using BoardGamesPlatform.Protocol.Transport;
+using BoardGamesPlatform.Protocol.Transport.Tls;
 using BoardGamesPlatform.TestKit;
 
 // Static using
@@ -119,7 +120,7 @@ public sealed class BackClientTests
     private static BackClient CreateClient(int port)
     {
         // Function's return
-        return new BackClient(new BackClientOptions { Port = port }, new TcpTransportConnector(), new CapturingLogger<BackClient>());
+        return new BackClient(new BackClientOptions { Port = port }, TestTlsFiles.Shared.CreateConnector(PlatformRole.Gateway, PlatformRole.Back), new CapturingLogger<BackClient>());
     }
 
     #endregion

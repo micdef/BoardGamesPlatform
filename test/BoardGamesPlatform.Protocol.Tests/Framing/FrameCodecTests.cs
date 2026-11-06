@@ -491,6 +491,62 @@ public sealed class FrameCodecTests
 
     #endregion
 
+    #region Progress
+
+    /// <summary>
+    /// Reading a frame tells the progress after each read that returned bytes
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> the heartbeat counts any byte received, so that a large frame on a slow link is not taken for a silent peer.</para>
+    /// </remarks>
+    [Fact]
+    public async Task ReadingTellsTheProgressOfEachReadAsync()
+    {
+        // Writing a frame of 1000 bytes, read 100 bytes at a time
+        FrameCodec codec = new FrameCodec();
+        byte[] payload = Enumerable.Range(0, 1000).Select(value => (byte)value).ToArray();
+        byte[] bytes = await WriteFramesAsync(codec, new Frame(CorrelationId, payload));
+        using ChunkedReadStream stream = new ChunkedReadStream(bytes, 100);
+        int progress = 0;
+
+        // Reading it, counting the progress
+        Frame? frame = await codec.ReadAsync(stream, () => progress++, TestContext.Current.CancellationToken);
+
+        // Checks: the frame is whole, and each read that returned bytes was told
+        frame.ShouldNotBeNull();
+        frame.Payload.ToArray().ShouldBe(payload);
+        progress.ShouldBe(stream.ReadCount);
+        progress.ShouldBeGreaterThan(1);
+    }
+
+    /// <summary>
+    /// A small frame is written in a single call, a large one in pieces, the progress being told after each piece
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> a small frame leaves as one segment; a large one tells the writer that its bytes keep leaving, for the heartbeat.</para>
+    /// </remarks>
+    [Fact]
+    public async Task ALargeFrameIsWrittenInPiecesThatTellTheProgressAsync()
+    {
+        // Writing a small frame and a frame of three and a half pieces
+        FrameCodec codec = new FrameCodec();
+        byte[] large = Enumerable.Range(0, (FrameCodec.WriteChunkLength * 3) + (FrameCodec.WriteChunkLength / 2)).Select(value => (byte)value).ToArray();
+        using MemoryStream stream = new MemoryStream();
+        int smallProgress = 0;
+        int largeProgress = 0;
+        await codec.WriteAsync(stream, new Frame(1, new byte[] { 1, 2, 3 }), () => smallProgress++, TestContext.Current.CancellationToken);
+        await codec.WriteAsync(stream, new Frame(2, large), () => largeProgress++, TestContext.Current.CancellationToken);
+
+        // Checks: one piece for the small frame, four for the large one, and both frames read back whole
+        smallProgress.ShouldBe(1);
+        largeProgress.ShouldBe(4);
+        stream.Position = 0;
+        (await codec.ReadAsync(stream, TestContext.Current.CancellationToken)).ShouldNotBeNull().Payload.ToArray().ShouldBe(new byte[] { 1, 2, 3 });
+        (await codec.ReadAsync(stream, TestContext.Current.CancellationToken)).ShouldNotBeNull().Payload.ToArray().ShouldBe(large);
+    }
+
+    #endregion
+
     #endregion
 
     #endregion

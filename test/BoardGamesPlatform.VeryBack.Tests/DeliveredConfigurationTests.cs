@@ -8,6 +8,7 @@
 // Using
 using System.Net;
 using System.Net.Sockets;
+using BoardGamesPlatform.Protocol.Transport.Tls;
 using BoardGamesPlatform.TestKit;
 using BoardGamesPlatform.VeryBack.Services;
 using Microsoft.Extensions.Configuration;
@@ -137,8 +138,9 @@ public sealed class DeliveredConfigurationTests
         string? deliveredAddress = builder.Configuration["VeryBack:ListenAddress"];
         TestPortBlock.EnsureDeliveredPortFree(deliveredPort, "Very Back");
 
-        // Building the host as Program.cs does, with the secret that is not delivered
-        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:Main"] = ReadableConnectionString });
+        // Building the host as Program.cs does, with the secrets that are not delivered (the connection string and the certificate of the tests)
+        builder.Configuration.AddInMemoryCollection(TestTlsFiles.Shared.AddTo(new Dictionary<string, string?> { ["ConnectionStrings:Main"] = ReadableConnectionString },
+            PlatformRole.VeryBack));
         builder.Services.AddLogging();
         builder.AddPlatformVeryBack();
         using IHost host = builder.Build();

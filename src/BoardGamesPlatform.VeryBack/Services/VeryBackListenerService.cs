@@ -12,6 +12,7 @@ using BoardGamesPlatform.Protocol.Framing;
 using BoardGamesPlatform.Protocol.Links;
 using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
+using BoardGamesPlatform.Protocol.Transport.Tls;
 using BoardGamesPlatform.VeryBack.Contracts;
 using BoardGamesPlatform.VeryBack.Contracts.Ping;
 using BoardGamesPlatform.VeryBack.Procedures;
@@ -31,10 +32,12 @@ namespace BoardGamesPlatform.VeryBack.Services;
 /// Service used to accept the connections of the Back and answer their requests
 /// </summary>
 /// <remarks>
-/// <para><b>Purpose:</b> the server side of the link Back to Very Back (plain TCP in 0.3.0 and 0.4.0, development only).</para>
+/// <para><b>Purpose:</b> the server side of the link Back to Very Back, over mutual TLS 1.3 from 0.5.0: only the Back, with its certificate of the
+/// platform, is accepted.</para>
 /// <para><b>Behavior:</b> the listener is started when the host starts, so that a port already in use or an invalid endpoint stops the host
 /// at once, and <see cref="LocalEndPoint"/> is known as soon as the start has returned. A listen address other than loopback is accepted (the
-/// tiers may run on separate machines) but logged as a warning, since the link is neither encrypted nor authenticated yet.</para>
+/// tiers may run on separate machines) and logged, so that the operator sees who can reach the port: the firewall still restricts it to the
+/// expected tier.</para>
 /// <para>The connections are accepted and served by a <see cref="LinkServer"/>, which never ends silently: a listener lost without a stop
 /// request, or <see cref="MaxConsecutiveAcceptFailures"/> accept failures in a row, fail the service, so that the host stops instead of
 /// running without listening. Each connection is served on its own: a failure of one connection never reaches the others. When the host
@@ -133,14 +136,17 @@ public sealed partial class VeryBackListenerService : BackgroundService
     #region Constructors
 
     /// <summary>
-    /// Constructor, listening on plain TCP
+    /// Constructor, listening over mutual TLS 1.3
     /// </summary>
     /// <param name="options">[Cannot be null] Settings of the listener, validated at startup</param>
     /// <param name="svcPingProcedure">[Cannot be null] Call of the Ping procedure</param>
+    /// <param name="svcTlsCredentials">[Cannot be null] Certificate of the Very Back and roots of the platform</param>
     /// <param name="logger">[Cannot be null] Logger of the service</param>
-    /// <exception cref="ArgumentNullException">If a parameter is null</exception>
-    public VeryBackListenerService(IOptions<VeryBackOptions> options, IPingProcedure svcPingProcedure, ILogger<VeryBackListenerService> logger)
-        : this(options, svcPingProcedure, logger, endPoint => TcpTransportListener.Start(endPoint), LinkServer.DefaultAcceptFailurePause)
+    /// <exception cref="ArgumentNullException">If a parameter is null (the credentials when the listener starts)</exception>
+    public VeryBackListenerService(IOptions<VeryBackOptions> options, IPingProcedure svcPingProcedure, TlsCredentials svcTlsCredentials,
+        ILogger<VeryBackListenerService> logger)
+        : this(options, svcPingProcedure, logger, endPoint => new TlsTransportListener(TcpTransportListener.Start(endPoint), svcTlsCredentials, PlatformRole.Back, logger),
+            LinkServer.DefaultAcceptFailurePause)
     {
     }
 
@@ -198,11 +204,11 @@ public sealed partial class VeryBackListenerService : BackgroundService
     private partial void LogListening(IPEndPoint endPoint);
 
     /// <summary>
-    /// Method used to warn that the Very Back listens on an address that other machines can reach
+    /// Method used to tell that the Very Back listens on an address that other machines can reach
     /// </summary>
     /// <param name="endPoint">Address and port listened to</param>
-    [LoggerMessage(EventId = 16, Level = LogLevel.Warning,
-        Message = "Very Back listening on {EndPoint}, which is not a loopback address: the link is neither encrypted nor authenticated yet, restrict it with the firewall")]
+    [LoggerMessage(EventId = 16, Level = LogLevel.Information,
+        Message = "Very Back listening on {EndPoint}, which is not a loopback address: only the Back, with its certificate, is accepted; let the firewall restrict who can reach the port")]
     private partial void LogNotLoopback(IPEndPoint endPoint);
 
     /// <summary>
@@ -276,8 +282,8 @@ public sealed partial class VeryBackListenerService : BackgroundService
     {
         // Routing the operations of the Very Back, then serving the connections
         ITransportListener listener = _listener ?? throw new InvalidOperationException("The listener is not started");
-        OperationDispatcher dispatcher = new OperationDispatcher(_logger).Register<PingRequest, PingResponse>(VeryBackOperations.Ping, PingAsync);
-        RequestServer server = new RequestServer(new FrameCodec(), dispatcher.HandleAsync);
+        OperationDispatcher dispatcher = new OperationDispatcher(_logger, VeryBackOperations.LinkMaxPayloadLength).Register<PingRequest, PingResponse>(VeryBackOperations.Ping, PingAsync);
+        RequestServer server = new RequestServer(new FrameCodec(VeryBackOperations.LinkMaxPayloadLength), dispatcher.HandleAsync);
         LinkServer linkServer = new LinkServer(listener, server, TierName, _logger, _acceptFailurePause);
 
         await linkServer.RunAsync(stoppingToken).ConfigureAwait(false);

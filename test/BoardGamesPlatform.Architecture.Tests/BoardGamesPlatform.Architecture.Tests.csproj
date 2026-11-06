@@ -6,6 +6,7 @@
     <ProjectReference Include="..\BoardGamesPlatform.TestKit\BoardGamesPlatform.TestKit.csproj" />
     <ProjectReference Include="..\..\src\BoardGamesPlatform.Back\BoardGamesPlatform.Back.csproj" />
     <ProjectReference Include="..\..\src\BoardGamesPlatform.Back.Contracts\BoardGamesPlatform.Back.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.CertificateAuthority\BoardGamesPlatform.CertificateAuthority.csproj" />
     <ProjectReference Include="..\..\src\BoardGamesPlatform.Codes\BoardGamesPlatform.Codes.csproj" />
     <ProjectReference Include="..\..\src\BoardGamesPlatform.Games.Abstractions\BoardGamesPlatform.Games.Abstractions.csproj" />
     <ProjectReference Include="..\..\src\BoardGamesPlatform.Gateway\BoardGamesPlatform.Gateway.csproj" />

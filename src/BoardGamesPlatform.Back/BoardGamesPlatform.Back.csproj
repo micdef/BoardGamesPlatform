@@ -1,6 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk.Worker">
   <!-- Back host (a console process in 0.2.0, installed as a Windows service or a systemd daemon from 0.25.0): composition root and socket server for the Gateway -->
 
+  <!-- Secrets of a developer machine, stored outside the repository by "dotnet user-secrets" (see doc/adm/configuration.md) -->
+  <PropertyGroup>
+    <UserSecretsId>5ad685e6-39b5-45b7-b072-70183398ec20</UserSecretsId>
+  </PropertyGroup>
+
   <!-- The tests reach the internal constructor of the listener service, to make its accept loop fail -->
   <ItemGroup>
     <InternalsVisibleTo Include="BoardGamesPlatform.Back.Tests" />

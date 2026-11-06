@@ -204,6 +204,53 @@ public sealed class RequestCancellationTests
     }
 
     /// <summary>
+    /// A cancellation whose callback blocks never stalls the read loop: the next request of the client is answered while the callback still
+    /// runs, and the service ends cleanly once it returns
+    /// </summary>
+    [Fact(Timeout = TestTimeout)]
+    public async Task ABlockingCancellationCallbackDoesNotStallTheReadLoopAsync()
+    {
+        // Serving a connection whose first request registers a callback that blocks until the test releases it, the others being echoed
+        CancellationToken token = TestContext.Current.CancellationToken;
+        TaskCompletionSource started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource blocking = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using ManualResetEventSlim release = new ManualResetEventSlim(false);
+        async Task<ReadOnlyMemory<byte>> BlockingAsync(ReadOnlyMemory<byte> request, CancellationToken requestToken)
+        {
+            if (request.Span[0] != 1)
+                return request;
+            using CancellationTokenRegistration registration = requestToken.Register(() =>
+            {
+                blocking.TrySetResult();
+                release.Wait(TimeSpan.FromMilliseconds(TestTimeout));
+            });
+            started.TrySetResult();
+            await Task.Delay(Timeout.Infinite, requestToken);
+            return request;
+        }
+        FrameCodec codec = new FrameCodec();
+        (ITransportConnection clientEnd, ITransportConnection serverEnd) = await ConnectAsync(token);
+        await using ITransportConnection raw = clientEnd;
+        await using ITransportConnection served = serverEnd;
+        Task serving = new RequestServer(new FrameCodec(), BlockingAsync).ServeAsync(served, token);
+
+        // Canceling the first request, whose callback then blocks, and sending a second one
+        await codec.WriteAsync(raw.Stream, new Frame(1, new byte[] { 1 }), token);
+        await started.Task.WaitAsync(token);
+        await WriteCancelAsync(raw, 1, token);
+        await blocking.Task.WaitAsync(token);
+        await codec.WriteAsync(raw.Stream, new Frame(2, new byte[] { 2 }), token);
+
+        // Checks: the second request is answered while the callback blocks, and the service ends once it is released
+        Frame answered = (await codec.ReadAsync(raw.Stream, token))!;
+        answered.CorrelationId.ShouldBe(2UL);
+        answered.Payload.ToArray().ShouldBe(new byte[] { 2 });
+        release.Set();
+        raw.Stream.Close();
+        await serving;
+    }
+
+    /// <summary>
     /// A busy server still reads: a request beyond its maximum is answered "busy" at once, and the cancellation of a request in progress
     /// reaches its handler although every slot is taken
     /// </summary>

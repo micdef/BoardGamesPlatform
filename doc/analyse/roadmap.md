@@ -26,6 +26,7 @@ It records the scope, the order of the work, what each version must demonstrate,
 | Learning AI (expert level, trained on the match logs) | After 1.0.0 |
 | Moderation (the data model is prepared in 0.24, no moderation code before 1.0.0) | After 1.0.0 |
 | Kubernetes deployment | 1.1 |
+| Several instances of a tier (one instance of each tier until 1.0.0) | 1.1 |
 | Other games (checkers, connect four, ludo…) | After 1.0.0 |
 
 ## Principles
@@ -79,21 +80,22 @@ Other UIs   ┘
 
 #### 0.5.0 — Mutual TLS 1.3 [SEC]
 
-- **Content**: TLS 1.3 with mutual authentication (`SslStream`) on both socket links (Gateway ↔ Back, Back ↔ Very Back), certificate validation and pinning rules, PowerShell scripts that issue development certificates.
+- **Content**: TLS 1.3 with mutual authentication (`SslStream`) on both socket links (Gateway ↔ Back, Back ↔ Very Back), certificate validation rules (identity by role, no pinning of a leaf certificate, a refused list of thumbprints), the offline certificate authority of the platform, a PowerShell script that issues development certificates; the four limits deferred by the security review of 0.4.0 (places of the handshakes per source, largest frame per link, deadline of the server writes, back-off reset only after a response).
 - **Done**: a connection without a valid client certificate is refused.
 - **Tests**: valid, missing, wrong-authority and expired certificates. Test certificates are generated at run time; no private key is ever committed.
-- **Branches**: `feature/mtls-transport`, `chore/dev-certificate-scripts`, `docs/certificates-and-rotation`.
+- **Branches**: `fix/link-server-lost-listener`, `fix/cancellation-outside-read-loop`, `fix/heartbeat-large-frames`, `feature/certificate-authority`, `feature/mtls-transport`, `feature/tier-tls`, `feature/connection-slots-per-source`, `feature/frame-size-per-link`, `feature/server-write-deadline`, `fix/backoff-reset-after-response`, `docs/certificates-and-rotation`.
+- **Prerequisite**: Windows Server 2022 or Windows 11 or later (TLS 1.3 in Schannel), or Linux with OpenSSL 3.
 
 #### 0.6.0 — Authenticated ECDH handshake, Back ↔ Very Back [SEC]
 
-- **Content**: ephemeral ECDH keys signed with long-term ECDSA keys distinct from the TLS certificates, key derivation with HKDF, AES-GCM channel, protection against replay and downgrade. Standard .NET primitives only (`ECDiffieHellman`, `ECDsa`, `HKDF`, `AesGcm`).
+- **Content**: ephemeral ECDH keys signed with long-term ECDSA keys distinct from the TLS certificates, key derivation with HKDF, AES-GCM channel, protection against replay and downgrade. Standard .NET primitives only (`ECDiffieHellman`, `ECDsa`, `HKDF`, `AesGcm`). The public ECDSA key of each end is pinned in the settings of the other, as a list so that a key is rotated without a cut; no authority signs them (one link, two keys).
 - **Done**: a test intermediary that holds a valid TLS certificate but not the signing keys fails the handshake.
 - **Tests**: test vectors, man-in-the-middle proxy, replay, downgrade, tampered AES-GCM frames.
 - **Branches**: `feature/ecdh-handshake`, `feature/secure-channel`, `docs/handshake-threat-model`.
 
 #### 0.7.0 — Database foundation [SEC]
 
-- **Content**: schemas, filegroups, temporal tables, immutable audit, table-valued parameter and JSON-result patterns; `DEV_`, `ACC_` and `TEST_` databases; one application SQL user per database with a random password stored in a vault; the deployment script.
+- **Content**: schemas, filegroups, temporal tables, immutable audit, table-valued parameter and JSON-result patterns; `DEV_`, `ACC_` and `TEST_` databases; one application SQL user per database with a random password stored in a vault; the vault also holds the passwords of the PFX of the tiers (`Tls:CertificatePassword`, an environment variable of the service since 0.5.0); the deployment script.
 - **Deployment script**: it drops and recreates a `DEV_` or `TEST_` database, and refuses to drop any database without one of these prefixes.
 - **Done**: `DEV_` is deployed from scratch by one script; the application user can execute procedures but cannot read tables; an update of the audit is rejected.
 - **Tests**: the SQL test suite becomes the standard: one test class per procedure group, audit immutability, permission matrix, temporal history. A new procedure without a test fails the review.
@@ -132,9 +134,10 @@ Other UIs   ┘
   - the **design system** of the arcade neon mock-up: colors, typography (Orbitron for titles and buttons, Rajdhani for text), buttons, badges, form fields, glow rules, as one shared stylesheet of variables and Blazor components;
   - the **visual identity of a game** (icon and background watermark), provided by each game module, so that a player knows at a glance which game is on screen;
   - **internationalization**: English and French, in .NET `.resx` resource files (adding a language means adding one resource file per component); a language picker with flags from [flagcdn.com](https://flagcdn.com) (Flagpedia), copied into the site so that no player's browser calls a third party; the language changes **on the fly**, without reloading the page nor interrupting a match in progress; the player's preferred language; culture-aware dates and numbers; translation of the codes received from the other tiers;
-  - the Interactive Server layout, the registration and login forms with full validation, a minimal administration section (open or close registrations, user list).
+  - the Interactive Server layout, the registration and login forms with full validation, a minimal administration section (open or close registrations, user list);
+  - the **paging rule**: every list that crosses a socket link (the user list first) is answered in pages, and a response never goes above the largest payload of its link (64 KiB).
 - **Done**: a user registers and logs in from a browser, in English or in French, and the whole site switches language; the administrator closes the registrations and the registration form refuses new accounts.
-- **Tests**: every resource key exists in every supported language (a missing translation fails the build); component tests of the design system.
+- **Tests**: every resource key exists in every supported language (a missing translation fails the build); component tests of the design system; the largest page of the user list fits in 64 KiB.
 - **Branches**: `feature/design-system`, `feature/game-visual-identity`, `feature/localization`, `feature/site-layout`, `feature/login-registration-forms`, `feature/admin-registration-switch`.
 
 #### 0.12.0 — Lobby and chat
@@ -149,7 +152,7 @@ Other UIs   ┘
 
 - **Content**: the game contract (description including the game's visual identity — icon and background watermark, required for every game —, match creation, action handling, events, per-player view, public view for spectators, end of match); the Battleships rules as a pure domain.
 - **Done**: a complete scripted match passes the tests; the opponent's view and the public view never contain ship positions.
-- **Tests**: domain tests are the core deliverable, with a seeded random source added to the TestKit next to the injectable random source of the domain; property-based tests (any legal sequence of moves ends; no view contains hidden data); architecture rule: each game module is isolated.
+- **Tests**: domain tests are the core deliverable, with a seeded random source added to the TestKit next to the injectable random source of the domain; property-based tests (any legal sequence of moves ends; no view contains hidden data); the largest view of a match fits in the largest payload of its links (64 KiB, raised on both ends of a link if a game needs more); architecture rule: each game module is isolated.
 - **Branches**: `feature/game-contract`, `feature/battleships-rules`, `feature/battleships-views`.
 
 #### 0.14.0 — Move log and match recovery [SEC]
@@ -310,6 +313,10 @@ Every tier communicates through the network. All ports are configurable; the def
 | Hosting | Every executable, the website and the gateway included, runs on Kestrel as a Windows service or a Linux systemd daemon; no IIS required. The website is exposed to the Internet behind a reverse proxy (Nginx; IIS possible); the gateway stays in the server zone, reached only by the website. Every tier can run on its own machine or container. Docker variant offered for other deployments |
 | Back ↔ Very Back | Raw TCP sockets, TLS 1.3 with mutual authentication, plus an authenticated ECDH handshake |
 | Gateway ↔ Back | Raw TCP sockets, TLS 1.3 with mutual authentication |
+| Certificates of the links (0.5.0, decided by the project lead after a second reading by the architect agent) | A private authority of the platform, as an offline tool that opens no port (`init`, `request`, `sign`, `install`, `list`); its self-signed root is the only trust anchor, never the store of the system. A tier makes its own key and sends a request: its key never leaves its machine. Identity by role (DNS name `<role>.<suffix>` and the usages of its side), no pinning of a leaf certificate, withdrawal by a refused list of thumbprints. PFX files everywhere, their password in an environment variable of the service until the vault (0.7.0). The public wildcard of the author serves the website only. Specified in `doc/adm/certificates.md` |
+| Largest frame per link (0.5.0, decided by the project lead) | 64 KiB on Gateway → Back and Back → Very Back, part of the contract of the link: the memory a peer can make a server hold is connections × 64 requests in flight × 64 KiB (4 MiB per connection, against 64 MiB at the default 1 MiB; with 8 connections served at most, 32 MiB against 512 MiB), with two orders of magnitude of margin over the operations of 0.5.0. A ceiling, not a measure: checked again against the game states of 0.13.0; lists are paged from 0.11.0 |
+| Signing keys of the handshake (0.6.0, decided by the project lead) | The public ECDSA keys are pinned in the settings of each end, as a list for rotation; no second authority, since the link has one key per end. Unlike the TLS certificates (no leaf is pinned, so that a renewal changes nothing on the peer), these keys are the identity of each end itself: there is no certificate to renew, and a key is rotated through the list. Distinct from the TLS certificates, so that a valid certificate alone never passes the handshake |
+| Instances (1.0.0 scope, decided by the project lead after a second reading by the architect agent) | One instance of each tier until 1.0.0; several instances in 1.1. The client of each link calls one host and one port, and several website instances need sticky sessions (see the render mode below): spreading the load is new work, not needed at the expected scale |
 | Socket protocol | The transport hands over a byte stream, so that TLS wraps it; frames carry a length prefix, a correlation identifier and a UTF-8 JSON payload (System.Text.Json), with a maximum frame size; several requests in flight on one connection. From 0.4.0 the version is agreed once per connection by a handshake (`hello` / `helloAck`), never written in each message; the control messages (handshake, heartbeat, cancellation) travel on the reserved correlation identifier 0. Specified in `doc/dev/protocol.md` |
 | Message envelope | From 0.3.0, every request is `{"operation":"<name>","body":{…}}` and every response `{"body":{…}}` (UTF-8 JSON, camelCase); each tier routes the requests by operation name. Reading is strict: any other shape is a protocol violation. From 0.4.0 a response holds either its body or an error, `{"error":{"code":"…"}}`, never both; a failed request is answered with a code and the connection stays open |
 | Protocol robustness (0.4.0, after a second reading by the architect agent) | Only the client pings, the server answers; each end closes on silence with its own timer, never by canceling a read. The server never stops reading: a request beyond its limit is answered `server.busy`. Reconnection on demand with a back-off; no queue and no automatic retry. Only the connect and request timeouts are settings; the other limits are constants until a need shows |
@@ -332,7 +339,6 @@ Every tier communicates through the network. All ports are configurable; the def
 
 | Choice | Decided in |
 |--------|------------|
-| Certificate authority (private CA or self-signed with pinning), key storage and rotation | 0.5.0 |
 | Vault product | 0.7.0 |
 | How clients present the session token to the SignalR hub | 0.10.0 |
 | Chat retention and GDPR (hiding versus deleting) | 0.12.0 |

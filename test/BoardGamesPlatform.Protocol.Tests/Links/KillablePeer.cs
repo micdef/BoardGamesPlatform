@@ -104,6 +104,11 @@ internal sealed class KillablePeer : IAsyncDisposable
     /// </summary>
     private int _accepted;
 
+    /// <summary>
+    /// Whether each Ping drops its connection without an answer (1), as a tier in a crash loop, or is answered (0)
+    /// </summary>
+    private int _crashOnPing;
+
     #endregion
 
     #region Delegates
@@ -191,6 +196,13 @@ internal sealed class KillablePeer : IAsyncDisposable
     /// </returns>
     private async Task<PingResponse> PingAsync(PingRequest request, CancellationToken cancellationToken)
     {
+        // Dropping the connection without an answer, as a tier that dies at its first request after an accepted handshake
+        if (Volatile.Read(ref _crashOnPing) == 1)
+        {
+            await DropConnectionsAsync();
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+        }
+
         // Holding the Ping when asked
         if (Interlocked.Exchange(ref _holdNextPing, 0) == 1)
         {
@@ -295,6 +307,16 @@ internal sealed class KillablePeer : IAsyncDisposable
     {
         // Setting
         Volatile.Write(ref _holdNextPing, 1);
+    }
+
+    /// <summary>
+    /// Method used to make each Ping drop its connection without an answer, or answer again
+    /// </summary>
+    /// <param name="isCrashing">True for a tier in a crash loop (the handshake is accepted, then the connection dies at the first request)</param>
+    public void CrashOnPing(bool isCrashing)
+    {
+        // Setting
+        Volatile.Write(ref _crashOnPing, isCrashing ? 1 : 0);
     }
 
     /// <summary>

@@ -112,7 +112,8 @@ public sealed class VeryBackClient : IAsyncDisposable
         options.Validate();
 
         // Setting (the link copies the validated values)
-        _link = new LinkClient(options.Host, options.Port, options.ConnectTimeout, options.RequestTimeout, PeerName, connector, logger);
+        _link = new LinkClient(options.Host, options.Port, options.ConnectTimeout, options.RequestTimeout, PeerName, connector, logger,
+            VeryBackOperations.LinkMaxPayloadLength);
     }
 
     #endregion

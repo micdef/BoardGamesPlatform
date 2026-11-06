@@ -53,6 +53,9 @@ public sealed class ProjectReferenceTests
         { "Protocol", Array.Empty<string>() },
         { "Observability", Array.Empty<string>() },
 
+        // Tools: the offline certificate authority knows the identity of the roles, defined by the protocol
+        { "CertificateAuthority", new string[] { "Protocol" } },
+
         // Contracts: each one belongs to the tier that exposes it
         { "Gateway.Contracts", new string[] { "Codes" } },
         { "Back.Contracts", new string[] { "Codes" } },

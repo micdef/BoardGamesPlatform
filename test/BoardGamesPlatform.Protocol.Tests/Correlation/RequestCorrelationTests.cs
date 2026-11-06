@@ -638,7 +638,7 @@ public sealed class RequestCorrelationTests
         // Sending a request, then closing the sending side only (the client still reads)
         await codec.WriteAsync(raw.Stream, new Frame(1, new byte[] { 42 }), token);
         await handlerStarted.Task.WaitAsync(token);
-        ((System.Net.Sockets.NetworkStream)raw.Stream).Socket.Shutdown(System.Net.Sockets.SocketShutdown.Send);
+        await raw.CloseSendAsync(token);
         release.SetResult();
         Frame? response = await codec.ReadAsync(raw.Stream, token);
 

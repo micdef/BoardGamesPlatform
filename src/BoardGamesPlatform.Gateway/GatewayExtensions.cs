@@ -9,6 +9,7 @@
 using BoardGamesPlatform.Gateway.BackLink;
 using BoardGamesPlatform.Gateway.Hubs;
 using BoardGamesPlatform.Protocol.Transport;
+using BoardGamesPlatform.Protocol.Transport.Tls;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
@@ -138,13 +139,22 @@ public static class GatewayExtensions
             .Bind(builder.Configuration.GetSection(BackClientOptions.SectionName))
             .ValidateOnStart();
 
+        // Mutual TLS: the settings, checked at startup, and the credentials of the Gateway, loaded and checked when first needed (when the
+        // services are built, before anything listens or connects); a relative path is taken from the folder of the Gateway
+        builder.Services.AddSingleton<IValidateOptions<TlsOptions>, TlsOptionsValidator>();
+        builder.Services.AddOptions<TlsOptions>().Bind(builder.Configuration.GetSection(TlsOptions.SectionName)).ValidateOnStart();
+        builder.Services.AddSingleton(services => TlsCredentials.FromOptions(PlatformRole.Gateway, services.GetRequiredService<IOptions<TlsOptions>>().Value,
+            builder.Environment.ContentRootPath, TimeProvider.System, services.GetRequiredService<ILogger<TlsCredentials>>()));
+
         // SignalR, with no internal message sent to a front
         builder.Services.AddSignalR(options => options.EnableDetailedErrors = false);
 
-        // The client of the Back, one connection shared by all the fronts (disposed with the host)
+        // The client of the Back, one connection shared by all the fronts (disposed with the host), over mutual TLS: only the Back is accepted
+        // as its server
         builder.Services.TryAddSingleton<IBackClient>(services => new BackClient(
             services.GetRequiredService<IOptions<BackClientOptions>>().Value,
-            new TcpTransportConnector(),
+            new TlsTransportConnector(new TcpTransportConnector(), services.GetRequiredService<TlsCredentials>(), PlatformRole.Back,
+                services.GetRequiredService<ILogger<BackClient>>()),
             services.GetRequiredService<ILogger<BackClient>>()));
 
         // Function's return
