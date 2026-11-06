@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-06
+
+An authenticated ECDH handshake on the Back → Very Back link, specified with its threat model in `doc/dev/secure-channel.md`. Inside the mutual TLS session, each end signs an ephemeral P-256 key with a long-term ECDSA key. That key is distinct from its TLS certificate and pinned by its peer. The signatures cover both TLS certificates: an attacker in the middle, even one holding valid certificates (its own, or stolen ones), can neither read nor change the traffic. The traffic then travels in AES-256-GCM records, and a connection is replaced before it reaches the limits of its keys. The signing keys are reloaded at startup and while the tier runs; a key removed from the list closes the connections that used it. Prerequisite: .NET 10.0.13 or later (see the prerequisites of `doc/dev/secure-channel.md`).
+
+### Added
+
+- Developer documentation, `doc/dev/secure-channel.md`: the specification of the secure channel of the Back → Very Back link. It was written before the code and reviewed by the security reviewer. It covers:
+  - three handshake messages of fixed size, signed with pinned ECDSA P-256 keys, with the hashes of both TLS certificates in the transcript;
+  - ephemeral ECDH, with the points checked on both sides, and an HKDF-SHA256 key schedule;
+  - AES-256-GCM records with an implicit sequence number, a close record, a hard limit and a renewal before it;
+  - key files in one normalized form, reloaded at startup and while the tier runs, a removed key closing its connections;
+  - failures that send nothing to the peer;
+  - its prerequisites (.NET 10.0.13 or later), its threat model (in scope, out of scope, residual risks) and its test plan.
+- Secure channel, handshake (`Protocol.Transport.Secure`): `SecureHandshake` runs the three messages of the specification on a stream, as the client or as the server.
+  - Both signatures (ECDSA P-256, IEEE P1363) cover the hashes of both TLS certificates, both nonces, both ephemeral keys and both key ids. Their labels name the version, the link and the role.
+  - Every point received is checked on the curve by the channel itself (`P256`), and every signature value is checked in range, before any import.
+  - A pinned key that is the key of the TLS certificate of the peer is refused. The last step checks that the key of the peer is still pinned.
+  - `KeySchedule` derives one key and one IV per direction with HKDF-SHA256, and erases every intermediate secret.
+  - A failure throws a `SecureChannelException` with its reason from a closed list (`SecureChannelFailure`); nothing is sent to the peer.
+- Secure channel, keys:
+  - `SigningPublicKey` reads a public key in one normalized form (named curve P-256, uncompressed point) and names it by the SHA-256 of that form: its key id.
+  - `SigningKeys` loads the signing key of a tier (encrypted PKCS#8 PEM) and the file of the public keys of its peer. The tier refuses to start (fail closed) on a wrong password, a password equal to the one of the PFX, 0 or more than 4 keys of the peer, a duplicate, its own key, or a signing key equal to its TLS key.
+  - The files are read again before each new connection and every minute, by modification time and SHA-256 of their content. Files that stay refused keep the current keys, and are logged again every 5 minutes with the time since those keys were taken.
+  - A removed key raises `PeerKeysRemoved`. Each listener is told on its own; a failing one is logged (event 9063), and the periodic check of the register closes its connections (see the transport below).
+  - The file of the peer is read as UTF-8 (a byte order mark is accepted, UTF-16 is refused). An unknown key id is carried by the `SecureChannelException`, for the logs.
+  - The "Handshake" settings (`SigningKeyPath`, `SigningKeyPassword`, `PeerPublicKeysPath`) and their validator. Event ids 9057-9060 and 9063.
+- Certificate authority tool: `signing-key --role <back|veryback> --out <folder>` creates the signing key of a tier, encrypted with `BOARDGAMESPLATFORM_SIGNING_KEY_PASSWORD`, and the line of its public key for the peer. The password of the PFX is refused.
+- Secure channel, records: `SecureRecordStream` carries the bytes of a connection in AES-256-GCM records of 16 KiB at most.
+  - The nonce is built from the IV of the direction and an implicit sequence number; the length is the associated data; a record of length 0 is the close record.
+  - A normal disposal of a connection sends its close record first, so that the peer never takes it for a truncation.
+  - At most 2^24 records per direction, the last one kept for the close record. A write that would pass that limit is refused before anything is written, and the stream stays usable.
+  - A changed, replayed, reordered, dropped or cut record, a byte after the close, or a record beyond the hard limit closes the connection. The first record fails as `KeyConfirmationFailed`.
+  - After a failed read, all later reads fail; after a failed write, all later writes fail, as on a lost connection. A stream whose reads are broken still sends its close record.
+  - Writes are serialized inside the stream.
+- Secure channel, transport: `SecureTransportListener` and `SecureTransportConnector` run the handshake inside the TLS session of the connection, within the handshake places and timeout of the link server and the connect timeout of the link client.
+  - A refused handshake is logged with its reason (event ids 9051-9053); nothing is sent to the peer. The refusals of the server are paced per reason by `LogPace`, so that a frequent one never hides a rare one; those of the client follow the back-off of the link client. An unknown key id is logged in hexadecimal.
+  - If the keys of the Back cannot be used, its calls fail with `link.unavailable`.
+  - A removed key closes the connections of the peer, its close record first (`SecureConnectionRegistry`, event 9061), including a handshake that ends after the removal; each connection is closed once.
+  - Every minute, the register closes a connection whose key is no longer pinned: a safety net when a removal could not be told (9063; a failed check is logged as 9067). The Very Back closes a connection 48 hours old (9062).
+  - Other events: record failures (9054-9055), a close record that cannot be sent (9064), a connection that cannot be closed after a refused handshake (9065), a connection that cannot be closed cleanly (9066), a close record of a normal close that cannot be sent (9068, Debug), keys of a refused handshake that cannot be erased (9069, Debug). 9056 stays reserved.
+- Links, renewal: `ITransportConnection.IsRenewalDue` tells that a connection should be replaced (on the secure channel: 2^23 records on a direction, or 24 hours).
+  - The link client replaces such a connection in the background; the callers never wait for it.
+  - The old connection stops taking new requests (`RequestClient.StopAccepting`). A request refused for that reason was never sent (`RequestNotSentException`), so it is sent again on the new connection (event 9020, Debug).
+  - The old connection is closed once its requests ended (within the request timeout), or when the link client is disposed.
+  - If the new connection cannot be opened, the old one is kept and the renewal is tried again after one minute.
+  - Event ids 9008-9010: renewed, failed, refused by a key, a certificate or the protocol.
+- Back and Very Back: the "Handshake" settings, checked at startup with the keys (fail closed). The Back calls the Very Back over mutual TLS and the secure channel; the Very Back accepts the Back only through it. The development settings point to the signing keys of `.certificates/dev`, which `New-DevelopmentCertificates.ps1` creates with the authority tool; their password is set in the user secrets of the two tiers, distinct from the one of the PFX.
+- Tests, handshake and keys:
+  - the primitives, the key schedule, both labels and the composition of the transcript, against vectors computed by the Python package `cryptography` and an HKDF written from RFC 5869 (`generate_vectors.py`, never the code under test), and RFC 5869 case A.1;
+  - the handshake over loopback sockets: agreement; a key not pinned, other certificates, on each side; a signing key that is the TLS key; a key removed during the handshake; no certificate;
+  - changed first, second and third messages; an ephemeral key replaced in the middle; the signature of the server sent back; random and mutated messages with fixed seeds; a replayed handshake;
+  - the load and the reload of the key files: refused files told again at their pace, files readable again unchanged no longer refused, refused files still refused after a read failure that passed.
+- Tests, channel:
+  - the first two records against values sealed by the Python package `cryptography`; round trips of random writes; every change of a record; the hard limit and the renewal threshold; writes at the borders of a record;
+  - over real mutual TLS, the done criterion of 0.6.0: a tier with a valid certificate but a signing key not pinned is refused on both sides; an attacker in the middle that ends TLS with valid certificates of its own makes the signatures fail; one that holds the stolen certificates only relays records it cannot read;
+  - a server without the channel, and a client without it (refused at the magic); a client silent after TLS, or that never sends its third message, closed within the handshake timeout of the link server, its place freed;
+  - a removed key closing an established connection; a key removed before, or while, its connection is attached; the age limit;
+  - a normal close read as a clean end; a close record that cannot be written; failed reads and writes; a write refused at the hard limit leaving the stream usable; a record changed during a session giving `link.unavailable`; the pace of the refusals per reason;
+  - the renewal by the link client: replaced, a request in flight answered, the old connection kept on a failure, over a real secure connection, at 24 hours; the draining request client; a disposed request client ending its connection cleanly; a disposed link client closing its replaced connections at once;
+  - a Back and a Very Back without valid keys do not start; the password of the PFX refused by `signing-key`.
+
+### Changed
+
+- Roadmap: the public keys of the peer are pinned in a file named by the settings, reloaded at startup and every minute, as the certificates are; the branches of 0.6.0 start with the specification and its threat model, reviewed by the security reviewer before any code.
+- Transport: a TLS connection keeps the certificate this end presented in its session, so that the secure channel hashes it (`SslStream.LocalCertificate` is null on a TLS 1.3 client).
+- Test kit: `TestTlsFiles` also writes the signing keys of the Back and the Very Back, adds their "Handshake" settings, and gives the Back a connector of the Very Back over the secure channel.
+- Docs: `doc/dev/protocol.md` (the layer of the secure channel, the heartbeat on authenticated records, the renewal, the event ids), `doc/dev/secure-channel.md` (the certificates taken from the session, the event ids, the pace of the refusals), `doc/adm/certificates.md` (protecting the key files; setting up, rotating and revoking the signing keys; the events of the range 9051-9069, and 9020), `back.md`, `very-back.md`, `configuration.md`, `tools/certificates/README.md`, the coding conventions.
+
 ## [0.5.0] - 2026-11-06
 
 Mutual TLS 1.3 on both socket links, documented in `doc/adm/certificates.md`. The Gateway → Back and Back → Very Back links run over TLS 1.3 only, each end presenting the certificate of its role, issued by the offline authority of the platform. A tier refuses to start without a valid certificate, and takes a renewed one without a restart. The four limits deferred by the security review of 0.4.0 are in: places of the handshakes per source, 64 KiB frames per link, a deadline on the server writes, and a back-off forgotten only after a response. Prerequisite: Windows Server 2022 or Windows 11, or Linux with OpenSSL 3.
@@ -213,7 +281,8 @@ Repository bootstrap: no game code yet.
 - Contribution guide describing the branching model, commit and pull request conventions, versioning and releases.
 - Continuous integration workflow building and testing every pull request.
 
-[Unreleased]: https://github.com/micdef/BoardGamesPlatform/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/micdef/BoardGamesPlatform/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/micdef/BoardGamesPlatform/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/micdef/BoardGamesPlatform/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/micdef/BoardGamesPlatform/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/micdef/BoardGamesPlatform/compare/v0.2.0...v0.3.0
