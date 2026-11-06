@@ -27,6 +27,7 @@
     <File Path="tools/database/README.md" />
   </Folder>
   <Folder Name="/doc/">
+    <File Path="doc/adm/certificates.md" />
     <File Path="doc/adm/configuration.md" />
     <File Path="doc/adm/observability.md" />
     <File Path="doc/adm/README.md" />

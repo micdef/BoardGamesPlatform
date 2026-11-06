@@ -6,7 +6,7 @@ The Very Back is the only process that reaches the database. The Back connects t
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `VeryBack:ListenAddress` | `127.0.0.1` | IP address (IPv4 or IPv6) the Very Back listens on. The loopback address keeps it unreachable from other machines. Another address is accepted, so that the tiers can run on separate machines or containers, but the Very Back logs a **warning** at startup: until 0.5.0 the link is neither encrypted nor authenticated, so restrict it with the firewall to the machine of the Back |
+| `VeryBack:ListenAddress` | `127.0.0.1` | IP address (IPv4 or IPv6) the Very Back listens on. The loopback address keeps it unreachable from other machines. Another address is accepted, so that the tiers can run on separate machines or containers; the Very Back then logs it as **information** at startup. The link is encrypted and authenticated (mutual TLS), but restrict it with the firewall to the machine of the Back all the same |
 | `VeryBack:Port` | `7822` | TCP port the Very Back listens on (Back to Very Back, see the network flows of the [roadmap](../analyse/roadmap.md)), from 1 to 65535 |
 | `ConnectionStrings:Main` | empty | Connection string of the database, with the application SQL user. A secret: see [configuration.md](configuration.md) |
 
@@ -20,11 +20,13 @@ Whether the server, the database and the login are right is only known when the 
 
 As environment variables: `VeryBack__ListenAddress`, `VeryBack__Port`, `ConnectionStrings__Main`.
 
+The certificate of the Very Back (role `veryback`: server for the Back) is set in the `Tls` section, described in [certificates.md](certificates.md); without a valid one, the Very Back does not start.
+
 ## Transport
 
-In 0.3.0 and 0.4.0 the link is plain TCP, for development only. TLS 1.3 with mutual authentication comes with 0.5.0, before any real use, and an authenticated key exchange on top of it with 0.6.0.
+From 0.5.0 the link runs over **mutual TLS 1.3** ([certificates.md](certificates.md)): the Very Back accepts the Back only (certificate of the role `back`); a connection without it, a valid certificate of another role included, is refused at the TLS handshake, before any byte of the protocol, and logged. An authenticated key exchange on top of it comes with 0.6.0. The largest frame of the link is 64 KiB.
 
-Each connection opens with a handshake, before any request: the client offers the protocol versions it speaks and its largest frame, the server chooses the newest common version and answers its own limit of requests in progress. A client without a common version, or configured with another largest frame, is refused with the code `protocol.versionUnsupported` or `protocol.limitsMismatch`, logged, and disconnected. A client that does not complete the handshake within 5 seconds is disconnected too.
+Each connection opens with a handshake, before any request: the client offers the protocol versions it speaks and its largest frame, the server chooses the newest common version and answers its own limit of requests in progress. A client without a common version, or configured with another largest frame, is refused with the code `protocol.versionUnsupported` or `protocol.limitsMismatch`, logged, and disconnected. A client that does not complete the TLS handshake and the protocol handshake within 5 seconds in all is disconnected too.
 
 The Back, client of each connection pings every 10 seconds, and the server answers. A connection on which the server receives nothing at all for 45 seconds is closed, so that a client that died, or a network path that broke, does not hold its requests in progress.
 
