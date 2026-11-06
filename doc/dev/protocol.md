@@ -140,7 +140,9 @@ Any byte received counts, not only a whole frame: a large frame on a slow link i
 |-------|-------|--------------|
 | Largest payload of a frame | 1 MiB (16 MiB at most) | the frame is refused, the connection closed |
 | Requests in progress per connection | 64, announced in the handshake (the client never keeps more than 64, whatever the server announces) | the client waits for a free place; the server answers `server.busy` to a request that arrives anyway (for example just after a cancellation, before the server has seen it) |
-| Connections served by a link server | 8 | a new connection is closed at once, and a warning is logged |
+| Connections served by a link server | 8 | a new connection is closed at once, before any byte; a connection whose handshake ends then is closed too |
+| Connections in their handshake (TLS, then protocol), not yet served | 4, of which 2 at most from one source (an IP address) | the oldest connection in its handshake of the source (when it holds its 2), else of all, is closed to make room for the new one: a silent or unknown peer never takes the place of a served connection, and must open connections without pause to keep the client tier out (a port it reaches can still be saturated before authentication: the firewall stays the barrier) |
+| Logs of the refused connections | one every 10 seconds at most; the next log gives the number of refusals in between | the refusals are counted, not logged one by one |
 | Handshake | 5 seconds | the connection is closed |
 | Request timeout, the wait for the connection included | `Back:RequestTimeout` (Gateway, 8 s) and `VeryBack:RequestTimeout` (Back, 5 s), at most 5 minutes | `link.timeout`, the request is canceled on the peer |
 | Response of an operation | the largest payload of the link | `internal`, logged; the connection stays open |
@@ -166,7 +168,7 @@ The protocol logs through the logger of the tier that uses it, with event ids re
 | Class | Event ids |
 |-------|-----------|
 | `LinkClient` | 9001-9006 |
-| `LinkServer` | 9011-9019, 9040 |
+| `LinkServer` | 9011-9019, 9040-9043 |
 | `OperationDispatcher` | 9021-9026 |
 | `TlsTransportListener` | 9031-9033 |
 | `TlsTransportConnector` | 9034-9035 |
