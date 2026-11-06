@@ -159,11 +159,15 @@ public sealed class TestPortBlockTests
         using TestPortBlock first = new TestPortBlock(0, "30500");
         InvalidOperationException exception = Should.Throw<InvalidOperationException>(() => new TestPortBlock(0, "30500"));
 
-        // Checks: the message names the ports and the variable; the cause is the sharing violation (Win32 error 32, in the low bits of the HResult)
+        // Checks: the message names the ports and the variable; the cause is the lock of the file (Win32 error 32 in the low bits of the
+        // HResult on Windows, EWOULDBLOCK on Linux)
         exception.Message.ShouldContain("Another test run uses the test ports 30500-30599");
         exception.Message.ShouldContain(TestPortBlock.BaseVariable);
         IOException cause = exception.InnerException.ShouldBeOfType<IOException>();
-        (cause.HResult & 0xFFFF).ShouldBe(32);
+        if (OperatingSystem.IsWindows())
+            (cause.HResult & 0xFFFF).ShouldBe(32);
+        else if (OperatingSystem.IsLinux())
+            cause.HResult.ShouldBe(11);
     }
 
     /// <summary>
