@@ -295,6 +295,30 @@ public sealed class LinkServerTests
         Should.Throw<ArgumentOutOfRangeException>(() => new LinkServer(listener, server, TierName, logger, TimeSpan.FromMilliseconds(-1)));
     }
 
+    /// <summary>
+    /// A listener whose closing fails still ends the service of the connections, and the failure ends the run instead of being lost
+    /// </summary>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    [Fact(Timeout = TestTimeout)]
+    public async Task AListenerThatFailsToCloseStillEndsTheServicesAsync()
+    {
+        // Running a server on a real listener whose closing throws, with a client connected
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        TcpTransportListener inner = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next()));
+        using CancellationTokenSource stopping = new CancellationTokenSource();
+        Task running = new LinkServer(new FailingCloseListener(inner), CreatePingServer(), TierName, NullLogger.Instance, TimeSpan.Zero).RunAsync(stopping.Token);
+        await using RequestClient client = await TestRequestClients.ConnectAsync("127.0.0.1", inner.LocalEndPoint.Port, cancellationToken);
+        (await client.SendAsync<PingRequest, PingResponse>(BackOperations.Ping, new PingRequest(), cancellationToken)).ServerTime.ShouldBe(_pingTime);
+
+        // Stopping the server
+        await stopping.CancelAsync();
+
+        // Checks: the failure of the closing ends the run, and the connection of the client is closed by the server
+        await Should.ThrowAsync<IOException>(() => running.WaitAsync(cancellationToken));
+        await Should.ThrowAsync<Exception>(() => client.SendAsync<PingRequest, PingResponse>(BackOperations.Ping, new PingRequest(), cancellationToken));
+    }
     #endregion
 
     #endregion
@@ -314,4 +338,36 @@ public sealed class LinkServerTests
     #endregion
 
     #endregion
+
+    /// <summary>
+    /// Listener that closes the listener wrapped, then throws, as a listener whose closing fails
+    /// </summary>
+    /// <param name="inner">Listener wrapped</param>
+    private sealed class FailingCloseListener(TcpTransportListener inner) : ITransportListener
+    {
+        /// <inheritdoc/>
+        public IPEndPoint LocalEndPoint => inner.LocalEndPoint;
+
+        /// <inheritdoc/>
+        public Task<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
+        {
+            // Function's return
+            return inner.AcceptAsync(cancellationToken);
+        }
+
+        /// <inheritdoc/>
+        public Task<ITransportConnection> EstablishAsync(ITransportConnection accepted, CancellationToken cancellationToken = default)
+        {
+            // Function's return
+            return inner.EstablishAsync(accepted, cancellationToken);
+        }
+
+        /// <inheritdoc/>
+        public async ValueTask DisposeAsync()
+        {
+            // Closing, then failing
+            await inner.DisposeAsync();
+            throw new IOException("The listener could not be closed");
+        }
+    }
 }

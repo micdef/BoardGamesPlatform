@@ -129,7 +129,7 @@ public sealed class PeerCertificateValidatorTests : IDisposable
         // Checks
         CheckAsClientOfTheBack(gateway).ShouldBeNull();
         PeerCertificateValidator.Validate(gateway, PlatformRole.Gateway, TestCertificates.Suffix, PlatformIdentity.ServerAuthenticationOid, _certificates.TrustedRoots, _noRefused,
-            DateTimeOffset.UtcNow).ShouldNotBeNull().ShouldContain("NotValidForUsage");
+            DateTimeOffset.UtcNow).ShouldNotBeNull().ShouldContain("does not allow the usage");
     }
 
     /// <summary>

@@ -10,6 +10,7 @@ using System.Diagnostics;
 using System.Net;
 using BoardGamesPlatform.Protocol.Control;
 using BoardGamesPlatform.Protocol.Correlation;
+using BoardGamesPlatform.Protocol.Logging;
 using BoardGamesPlatform.Protocol.Transport;
 using Microsoft.Extensions.Logging;
 
@@ -43,14 +44,17 @@ namespace BoardGamesPlatform.Protocol.Links;
 /// every connection is canceled and awaited: a lost listener never leaves connections served by a tier that stops.</para>
 /// <para>The places follow <see cref="LinkServerLimits"/>: a connection in its handshake (not yet authenticated) takes a place of the
 /// handshakes, never one of the served connections, and one source can only take a part of the places of the handshakes; the connection
-/// takes a served place once its handshake is done. A new connection is closed at once, before any byte, when no served place is free, when
-/// every place of the handshakes is taken, or when its source already holds its part; a connection whose handshake ends when the served
-/// places are all taken is closed too. A silent or unknown peer can therefore delay the next connections of the client tier for the
-/// handshake timeout at most, never take the place of the connections it serves. A refusal is logged at most once per
-/// <see cref="LinkServerLimits.RefusalLogInterval"/>, the refusals in between being counted in the next log, so that a flood of connections
-/// does not flood the logs.</para>
+/// takes a served place once its handshake is done. A new connection is closed at once, before any byte, when no served place is free; when
+/// its source already holds its part, or when every place of the handshakes is taken, the oldest connection in its handshake (of the
+/// source, else of all) is closed to make room for it; a connection whose handshake ends when the served places are all taken is closed
+/// too. A peer that holds connections in their handshake therefore never takes the place of the connections served, and must open new ones
+/// without pause to keep the client tier from connecting, whose handshake may still pass in between. A port that such a peer reaches can
+/// still be saturated before any authentication: the firewall, which admits the peer tier only, stays the barrier. A refusal, or a
+/// connection closed to make room, is logged at most once per <see cref="LinkServerLimits.RefusalLogInterval"/>, the ones in between being
+/// counted in the next log, so that a flood of connections does not flood the logs.</para>
 /// <para>The logs hold the remote end point and the exception; they go through the logger of the tier, with the event ids 9011 to 9019 and
-/// 9041 to 9043, reserved for this class (see the coding conventions).</para>
+/// 9040 to 9043, reserved for this class (see the coding conventions). A connection is logged as accepted once it is established
+/// (authenticated from 0.5.0); a failure of the establishment is logged by the listener, at its pace, and only traced here.</para>
 /// </remarks>
 public sealed partial class LinkServer
 {
@@ -123,39 +127,24 @@ public sealed partial class LinkServer
     private readonly List<Task> _connectionTasks = new List<Task>();
 
     /// <summary>
-    /// Lock of the places and of the pace of the refusal logs, taken by the accept loop and by the services of the connections
+    /// Lock of the places, taken by the accept loop and by the services of the connections
     /// </summary>
     private readonly object _slotsLock = new object();
 
     /// <summary>
-    /// Number of connections in their handshake, by source (a source without any is removed)
+    /// Connections in their handshake, the oldest first; under <see cref="_slotsLock"/>
     /// </summary>
-    private readonly Dictionary<string, int> _pendingBySource = new Dictionary<string, int>(StringComparer.Ordinal);
+    private readonly List<Handshake> _handshakes = new List<Handshake>();
 
     /// <summary>
-    /// Number of connections in their handshake
-    /// </summary>
-    private int _pending;
-
-    /// <summary>
-    /// Number of connections served
+    /// Number of connections served; under <see cref="_slotsLock"/>
     /// </summary>
     private int _served;
 
     /// <summary>
-    /// Whether a refusal has already been logged
+    /// Pace of the logs of the refusals and of the connections closed to make room, which a peer can trigger at will
     /// </summary>
-    private bool _hasLoggedRefusal;
-
-    /// <summary>
-    /// Time stamp (of <see cref="_timeProvider"/>) of the last refusal logged
-    /// </summary>
-    private long _lastRefusalLog;
-
-    /// <summary>
-    /// Number of refusals not logged since the last refusal logged
-    /// </summary>
-    private int _unloggedRefusals;
+    private readonly LogPace _refusalPace;
 
     /// <summary>
     /// Whether <see cref="RunAsync"/> has been called (0: no, 1: yes)
@@ -175,22 +164,22 @@ public sealed partial class LinkServer
     #region Enumerations
 
     /// <summary>
-    /// Why a connection is refused
+    /// Why a connection is refused, or closed in its handshake to make room for a newer one
     /// </summary>
     private enum Refusal
     {
         /// <summary>
-        /// Every served place is taken
+        /// Every served place is taken: the new connection is refused
         /// </summary>
         ServedFull,
 
         /// <summary>
-        /// Every place of the handshakes is taken
+        /// Every place of the handshakes was taken: the oldest connection in its handshake is closed
         /// </summary>
         HandshakesFull,
 
         /// <summary>
-        /// The source already holds its part of the places of the handshakes
+        /// The source already held its part of the places of the handshakes: its oldest connection in its handshake is closed
         /// </summary>
         SourceFull
     }
@@ -307,6 +296,7 @@ public sealed partial class LinkServer
         _handshakeTimeout = handshakeTimeout;
         _limits = limits;
         _timeProvider = timeProvider;
+        _refusalPace = new LogPace(limits.RefusalLogInterval, timeProvider);
     }
 
     #endregion
@@ -327,6 +317,14 @@ public sealed partial class LinkServer
     /// <param name="remoteEndPoint">Address and port of the peer</param>
     [LoggerMessage(EventId = 9011, Level = LogLevel.Information, Message = "Connection accepted from {RemoteEndPoint}")]
     private partial void LogAccepted(string remoteEndPoint);
+
+    /// <summary>
+    /// Method used to trace a connection that failed its establishment (TLS), which the listener already logged at its pace
+    /// </summary>
+    /// <param name="exception">Why the establishment failed</param>
+    /// <param name="remoteEndPoint">Address and port of the peer</param>
+    [LoggerMessage(EventId = 9040, Level = LogLevel.Debug, Message = "Connection from {RemoteEndPoint} closed: its establishment failed (logged by the listener)")]
+    private partial void LogEstablishmentFailed(Exception exception, string remoteEndPoint);
 
     /// <summary>
     /// Method used to log the normal end of the service of a connection
@@ -412,19 +410,20 @@ public sealed partial class LinkServer
     private partial void LogConnectionRefused(string remoteEndPoint, int maxConnections);
 
     /// <summary>
-    /// Method used to log a connection refused because every place of the handshakes is taken
+    /// Method used to log a connection closed in its handshake because every place of the handshakes was taken, to make room for a newer one
     /// </summary>
-    /// <param name="remoteEndPoint">Address and port of the peer</param>
+    /// <param name="remoteEndPoint">Address and port of the peer closed</param>
     /// <param name="maxPendingHandshakes">Maximum of connections in their handshake at the same time</param>
-    [LoggerMessage(EventId = 9041, Level = LogLevel.Warning, Message = "Connection from {RemoteEndPoint} refused: {MaxPendingHandshakes} connections are already in their handshake")]
+    [LoggerMessage(EventId = 9041, Level = LogLevel.Warning, Message = "Connection from {RemoteEndPoint} closed in its handshake: {MaxPendingHandshakes} connections were in their handshake, and a newer one takes its place")]
     private partial void LogHandshakesFull(string remoteEndPoint, int maxPendingHandshakes);
 
     /// <summary>
-    /// Method used to log a connection refused because its source already holds its part of the places of the handshakes
+    /// Method used to log a connection closed in its handshake because its source held its part of the places of the handshakes, to make room
+    /// for a newer one of the same source
     /// </summary>
-    /// <param name="remoteEndPoint">Address and port of the peer</param>
+    /// <param name="remoteEndPoint">Address and port of the peer closed</param>
     /// <param name="maxHandshakesPerSource">Maximum of connections in their handshake at the same time from one source</param>
-    [LoggerMessage(EventId = 9042, Level = LogLevel.Warning, Message = "Connection from {RemoteEndPoint} refused: its source already has {MaxHandshakesPerSource} connections in their handshake")]
+    [LoggerMessage(EventId = 9042, Level = LogLevel.Warning, Message = "Connection from {RemoteEndPoint} closed in its handshake: its source had {MaxHandshakesPerSource} connections in their handshake, and a newer one takes its place")]
     private partial void LogSourceFull(string remoteEndPoint, int maxHandshakesPerSource);
 
     /// <summary>
@@ -432,7 +431,7 @@ public sealed partial class LinkServer
     /// </summary>
     /// <param name="count">Number of refusals not logged</param>
     /// <param name="interval">Shortest time between two logs of a refusal</param>
-    [LoggerMessage(EventId = 9043, Level = LogLevel.Warning, Message = "{Count} other connections were refused without a log of their own (at most one log every {Interval})")]
+    [LoggerMessage(EventId = 9043, Level = LogLevel.Warning, Message = "{Count} other connections were refused or closed in their handshake without a log of their own (at most one log every {Interval})")]
     private partial void LogRefusalsNotLogged(int count, TimeSpan interval);
 
     /// <summary>
@@ -453,32 +452,55 @@ public sealed partial class LinkServer
     }
 
     /// <summary>
-    /// Method used to take a place of the handshakes for a new connection
+    /// Method used to take a place of the handshakes for a new connection, closing the oldest connection in its handshake when there is none
     /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> the oldest connection of the same source makes room when the source holds its part, else the oldest of all when
+    /// every place is taken: a peer that holds the places must open connections without pause to keep them, and the handshake of the client
+    /// tier may still pass in between. A connection in its handshake never takes a served place: when every served place is taken, the new
+    /// connection is refused.</para>
+    /// </remarks>
     /// <param name="source">[Cannot be null] Source of the connection</param>
-    /// <param name="refusal">Why the connection is refused, when no place is taken</param>
+    /// <param name="remoteEndPoint">[Cannot be null] Address and port of the peer, for the logs</param>
+    /// <param name="handshake">The place taken; null when the connection is refused</param>
+    /// <param name="evicted">The connection closed to make room, with why; null when none</param>
     /// <returns>
-    /// True when a place is taken, false when the connection is refused
+    /// True when a place is taken, false when the connection is refused (every served place is taken)
     /// </returns>
-    private bool TryTakeHandshakeSlot(string source, out Refusal refusal)
+    private bool TryTakeHandshakeSlot(string source, string remoteEndPoint, out Handshake? handshake, out (Handshake Connection, Refusal Reason)? evicted)
     {
         lock (_slotsLock)
         {
-            // Refusing when nothing could serve the connection, when every place of the handshakes is taken, or when the source holds its part
-            _pendingBySource.TryGetValue(source, out int ofSource);
-            refusal = Refusal.ServedFull;
+            // Refusing when nothing could serve the connection
+            handshake = null;
+            evicted = null;
             if (_served >= _limits.MaxConnections)
                 return false;
-            refusal = Refusal.HandshakesFull;
-            if (_pending >= _limits.MaxPendingHandshakes)
-                return false;
-            refusal = Refusal.SourceFull;
-            if (ofSource >= _limits.MaxHandshakesPerSource)
-                return false;
+
+            // Making room: the oldest of the source when it holds its part, else the oldest of all when every place is taken
+            Handshake? oldestOfSource = null;
+            int ofSource = 0;
+            foreach (Handshake pending in _handshakes)
+            {
+                if (pending.Source != source)
+                    continue;
+                oldestOfSource ??= pending;
+                ofSource++;
+            }
+            if (oldestOfSource is not null && ofSource >= _limits.MaxHandshakesPerSource)
+                evicted = (oldestOfSource, Refusal.SourceFull);
+            else if (_handshakes.Count >= _limits.MaxPendingHandshakes)
+                evicted = (_handshakes[0], Refusal.HandshakesFull);
+            if (evicted is not null)
+            {
+                _handshakes.Remove(evicted.Value.Connection);
+                evicted.Value.Connection.IsReleased = true;
+                evicted.Value.Connection.IsEvicted = true;
+            }
 
             // Taking the place
-            _pending++;
-            _pendingBySource[source] = ofSource + 1;
+            handshake = new Handshake(source, remoteEndPoint);
+            _handshakes.Add(handshake);
         }
 
         // Function's return
@@ -486,35 +508,35 @@ public sealed partial class LinkServer
     }
 
     /// <summary>
-    /// Method used to give back the place of the handshakes of a connection
+    /// Method used to give back the place of the handshakes of a connection, once (a connection closed to make room gave it back already)
     /// </summary>
-    /// <param name="source">[Cannot be null] Source of the connection</param>
-    private void ReleaseHandshakeSlot(string source)
+    /// <param name="handshake">[Cannot be null] Place of the connection</param>
+    private void ReleaseHandshakeSlot(Handshake handshake)
     {
         lock (_slotsLock)
         {
-            // Giving back the place, a source without any being forgotten
-            _pending--;
-            int ofSource = _pendingBySource[source] - 1;
-            if (ofSource == 0)
-                _pendingBySource.Remove(source);
-            else
-                _pendingBySource[source] = ofSource;
+            // Giving back the place
+            if (!handshake.IsReleased)
+            {
+                _handshakes.Remove(handshake);
+                handshake.IsReleased = true;
+            }
         }
     }
-
     /// <summary>
     /// Method used to take a served place for a connection whose handshake is done
     /// </summary>
+    /// <param name="handshake">[Cannot be null] Place of the handshakes the connection held</param>
     /// <returns>
-    /// True when a place is taken, false when every served place is taken
+    /// True when a place is taken, false when every served place is taken, or when the connection was chosen to make room (it may end its
+    /// handshake before it sees it)
     /// </returns>
-    private bool TryTakeServedSlot()
+    private bool TryTakeServedSlot(Handshake handshake)
     {
         lock (_slotsLock)
         {
-            // Refusing when every place is taken
-            if (_served >= _limits.MaxConnections)
+            // Refusing when every place is taken, or when the connection was closed to make room
+            if (_served >= _limits.MaxConnections || handshake.IsEvicted)
                 return false;
 
             // Taking the place
@@ -537,29 +559,15 @@ public sealed partial class LinkServer
     }
 
     /// <summary>
-    /// Method used to log a refused connection, at most once per interval of the limits
+    /// Method used to log a refused connection, or one closed to make room, at most once per interval of the limits
     /// </summary>
-    /// <param name="refusal">Why the connection is refused</param>
+    /// <param name="refusal">Why the connection is refused or closed</param>
     /// <param name="remoteEndPoint">[Cannot be null] Address and port of the peer</param>
     private void LogRefusal(Refusal refusal, string remoteEndPoint)
     {
-        // Counting the refusal instead of logging it when the last log is too recent
-        int notLogged;
-        lock (_slotsLock)
-        {
-            long now = _timeProvider.GetTimestamp();
-            if (_hasLoggedRefusal && _timeProvider.GetElapsedTime(_lastRefusalLog, now) < _limits.RefusalLogInterval)
-            {
-                _unloggedRefusals++;
-                return;
-            }
-            notLogged = _unloggedRefusals;
-            _unloggedRefusals = 0;
-            _lastRefusalLog = now;
-            _hasLoggedRefusal = true;
-        }
-
-        // Logging the refusals counted since the last log, then this one
+        // Counting the refusal instead of logging it when the last log is too recent, then logging the ones counted since, and this one
+        if (!_refusalPace.TryEnter(out int notLogged))
+            return;
         if (notLogged > 0)
             LogRefusalsNotLogged(notLogged, _limits.RefusalLogInterval);
         switch (refusal)
@@ -585,47 +593,58 @@ public sealed partial class LinkServer
     /// canceled call as an error of its own).</para>
     /// </remarks>
     /// <param name="accepted">[Cannot be null] Accepted connection; disposed by this method, with the connection established on it</param>
-    /// <param name="source">[Cannot be null] Source of the connection, whose place of the handshakes is taken; this method gives it back</param>
+    /// <param name="handshake">[Cannot be null] Place of the handshakes taken by the connection; this method gives it back</param>
     /// <param name="cancellationToken">Token canceled when the stop is requested</param>
     /// <returns>
     /// A task that completes once the connection is disposed and its places given back
     /// </returns>
-    private async Task ServeConnectionAsync(ITransportConnection accepted, string source, CancellationToken cancellationToken)
+    private async Task ServeConnectionAsync(ITransportConnection accepted, Handshake handshake, CancellationToken cancellationToken)
     {
         // Reading the remote end point first (read once when the connection was accepted)
-        string remoteEndPoint = accepted.RemoteEndPoint.ToString() ?? "unknown";
-        LogAccepted(remoteEndPoint);
+        string remoteEndPoint = handshake.RemoteEndPoint;
         ITransportConnection connection = accepted;
-        bool isPending = true;
         bool isServed = false;
+        using CancellationTokenSource inHandshake = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, handshake.Closing.Token);
         try
         {
-            // Establishing the connection (TLS), then agreeing on the protocol with the client, both within the handshake timeout; a deadline
-            // that expires is a timeout, not a stop of the tier
+            // Establishing the connection (TLS), then agreeing on the protocol with the client, both within the handshake timeout and until
+            // the connection is closed to make room; a deadline that expires is a timeout, not a stop of the tier. A failure of the
+            // establishment is logged by the listener, at its pace (a peer can fail handshakes in a loop): it is only traced here
             long start = Stopwatch.GetTimestamp();
-            using (CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            using (CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(inHandshake.Token))
             {
                 deadline.CancelAfter(_handshakeTimeout);
                 try
                 {
                     connection = await _listener.EstablishAsync(accepted, deadline.Token).ConfigureAwait(false);
                 }
+                catch (Exception) when (handshake.Closing.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    // Closed to make room for a newer connection: logged when it was chosen
+                    return;
+                }
                 catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
                 {
                     throw new TimeoutException($"The client did not establish its connection within {_handshakeTimeout}", exception);
                 }
+                catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    LogEstablishmentFailed(exception, remoteEndPoint);
+                    return;
+                }
             }
+            LogAccepted(remoteEndPoint);
             TimeSpan left = _handshakeTimeout - Stopwatch.GetElapsedTime(start);
             if (left <= TimeSpan.Zero)
                 throw new TimeoutException($"The client did not establish its connection within {_handshakeTimeout}");
-            await ProtocolHandshake.RunServerAsync(connection, _server.Codec, _server.MaxConcurrentRequests, left, cancellationToken).ConfigureAwait(false);
+            await ProtocolHandshake.RunServerAsync(connection, _server.Codec, _server.MaxConcurrentRequests, left, inHandshake.Token).ConfigureAwait(false);
 
             // Moving from a place of the handshakes to a served place; the connection is closed when none is free any more
-            ReleaseHandshakeSlot(source);
-            isPending = false;
-            if (!TryTakeServedSlot())
+            ReleaseHandshakeSlot(handshake);
+            if (!TryTakeServedSlot(handshake))
             {
-                LogRefusal(Refusal.ServedFull, remoteEndPoint);
+                if (!handshake.IsEvicted)
+                    LogRefusal(Refusal.ServedFull, remoteEndPoint);
                 return;
             }
             isServed = true;
@@ -639,6 +658,10 @@ public sealed partial class LinkServer
             // The stop is requested: not a failure
             LogClosed(remoteEndPoint);
         }
+        catch (Exception) when (handshake.Closing.IsCancellationRequested && !isServed)
+        {
+            // Closed in its protocol handshake to make room for a newer connection: logged when it was chosen
+        }
         catch (Exception exception)
         {
             // The connection rule of the codec: after any failure, the connection is closed, never reused
@@ -647,10 +670,10 @@ public sealed partial class LinkServer
         finally
         {
             // Closing the established connection, which owns the accepted one, or the accepted one when nothing was established, then giving
-            // back its place (after the close, so that the tier never holds more connections than its places)
+            // back its place (after the close, so that the tier never holds more connections than its places); the place of the handshakes is
+            // given back once, whoever gives it
             await CloseAsync(connection, remoteEndPoint).ConfigureAwait(false);
-            if (isPending)
-                ReleaseHandshakeSlot(source);
+            ReleaseHandshakeSlot(handshake);
             if (isServed)
                 ReleaseServedSlot();
         }
@@ -712,21 +735,27 @@ public sealed partial class LinkServer
                     continue;
                 }
 
-                // Refusing the connection when it gets no place of the handshakes: closed at once, so that a peer cannot make the tier hold
-                // an unbounded number of connections (each one can hold its requests in progress), nor take the places of the served ones
+                // Taking a place of the handshakes, the oldest connection in its handshake making room when there is none; refusing the
+                // connection at once when every served place is taken, so that a peer cannot make the tier hold an unbounded number of
+                // connections (each one can hold its requests in progress), nor take the places of the served ones
                 consecutiveFailures = 0;
                 _connectionTasks.RemoveAll(task => task.IsCompleted);
-                string source = GetSource(connection.RemoteEndPoint);
-                if (!TryTakeHandshakeSlot(source, out Refusal refusal))
+                string remoteEndPoint = connection.RemoteEndPoint.ToString() ?? "unknown";
+                if (!TryTakeHandshakeSlot(GetSource(connection.RemoteEndPoint), remoteEndPoint, out Handshake? handshake, out (Handshake Connection, Refusal Reason)? evicted))
                 {
-                    string refused = connection.RemoteEndPoint.ToString() ?? "unknown";
-                    LogRefusal(refusal, refused);
-                    await CloseAsync(connection, refused).ConfigureAwait(false);
+                    LogRefusal(Refusal.ServedFull, remoteEndPoint);
+                    await CloseAsync(connection, remoteEndPoint).ConfigureAwait(false);
                     continue;
+                }
+                if (evicted is not null)
+                {
+                    LogRefusal(evicted.Value.Reason, evicted.Value.Connection.RemoteEndPoint);
+                    await evicted.Value.Connection.Closing.CancelAsync().ConfigureAwait(false);
                 }
 
                 // Serving the connection in its own task, which gives its places back; the services that ended are forgotten
-                _connectionTasks.Add(Task.Run(() => ServeConnectionAsync(connection, source, services.Token), CancellationToken.None));
+                Handshake taken = handshake!;
+                _connectionTasks.Add(Task.Run(() => ServeConnectionAsync(connection, taken, services.Token), CancellationToken.None));
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -736,11 +765,18 @@ public sealed partial class LinkServer
         finally
         {
             // Closing the listener, then ending the service of every connection and waiting for it: without the cancellation, a listener lost
-            // without a stop request would wait for ever for connections that nothing ends any more
-            await _listener.DisposeAsync().ConfigureAwait(false);
-            LogStoppedListening(_name);
-            await services.CancelAsync().ConfigureAwait(false);
-            await Task.WhenAll(_connectionTasks).ConfigureAwait(false);
+            // without a stop request would wait for ever for connections that nothing ends any more. The services are ended even when closing
+            // the listener fails; that failure then ends the run
+            try
+            {
+                await _listener.DisposeAsync().ConfigureAwait(false);
+                LogStoppedListening(_name);
+            }
+            finally
+            {
+                await services.CancelAsync().ConfigureAwait(false);
+                await Task.WhenAll(_connectionTasks).ConfigureAwait(false);
+            }
         }
     }
 
@@ -763,4 +799,38 @@ public sealed partial class LinkServer
     #endregion
 
     #endregion
+
+    /// <summary>
+    /// Place of a connection in its handshake
+    /// </summary>
+    /// <param name="source">Source of the connection</param>
+    /// <param name="remoteEndPoint">Address and port of the peer, for the logs</param>
+    private sealed class Handshake(string source, string remoteEndPoint)
+    {
+        /// <summary>
+        /// Source of the connection
+        /// </summary>
+        public string Source { get; } = source;
+
+        /// <summary>
+        /// Address and port of the peer
+        /// </summary>
+        public string RemoteEndPoint { get; } = remoteEndPoint;
+
+        /// <summary>
+        /// Canceled when the connection is closed to make room for a newer one; never disposed, since the accept loop may still cancel it
+        /// after the connection ended, and a source without a timer holds no system resource
+        /// </summary>
+        public CancellationTokenSource Closing { get; } = new CancellationTokenSource();
+
+        /// <summary>
+        /// Whether the place was given back; under the lock of the places
+        /// </summary>
+        public bool IsReleased { get; set; }
+
+        /// <summary>
+        /// Whether the connection was chosen to make room for a newer one; set under the lock of the places
+        /// </summary>
+        public bool IsEvicted { get; set; }
+    }
 }
