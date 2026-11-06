@@ -44,14 +44,18 @@ namespace BoardGamesPlatform.Protocol.Links;
 /// <item><description>Reconnection with back-off: a lost connection is opened again by the next call, at once. When opening fails (the peer
 /// is down, refuses, or breaks the handshake), the next attempt waits a back-off delay: <see cref="FirstBackOff"/>, doubled after each failure
 /// up to <see cref="MaxBackOff"/>, with a random spread of 20 % either way so that several clients do not retry in step. A call made during
-/// the delay fails at once with <see cref="ErrorCodes.LinkUnavailable"/>, without touching the network; the first connection that opens
-/// resets the delay. Nothing waits in a queue: a request is either sent or failed, and never retried automatically, since the peer may already
-/// have handled it.</description></item>
+/// the delay fails at once with <see cref="ErrorCodes.LinkUnavailable"/>, without touching the network. A connection that opens lets the
+/// next attempt go at once, but the failures in a row are only forgotten once it answers a request (an error code of the peer included): a
+/// connection lost before any response counts as a failure to open, so that a peer in a crash loop (the handshake accepted, then a death at
+/// the first request) is not reconnected on every call. A connection opens for a call, which sends its request at once, so this includes a
+/// connection whose only requests were given up by their callers before the answer, then lost: the next attempt waits the first delay (0.5
+/// second), a small cost next to a reconnection storm. Nothing waits in a queue: a request is either sent or failed, and never retried
+/// automatically, since the peer may already have handled it.</description></item>
 /// <item><description>A call is stopped by the token of its caller, or by the request timeout, which covers the whole call: the wait for
 /// the connection as well as the wait for the response.</description></item>
 /// <item><description>After <see cref="DisposeAsync"/>, every call throws an <see cref="ObjectDisposedException"/>.</description></item>
 /// <item><description>The logs tell when a connection opens, is lost or is closed by the disposal, with the address of the peer only; they
-/// go through the logger of the tier, with the event ids 9001 to 9006, reserved for this class (see the coding conventions).</description></item>
+/// go through the logger of the tier, with the event ids 9001 to 9007, reserved for this class (see the coding conventions).</description></item>
 /// </list>
 /// </remarks>
 public sealed partial class LinkClient : IAsyncDisposable
@@ -121,7 +125,7 @@ public sealed partial class LinkClient : IAsyncDisposable
     private readonly string _peerName;
 
     /// <summary>
-    /// Connector used to open the connection (plain TCP in production)
+    /// Connector used to open the connection (mutual TLS in production, plain TCP in some tests)
     /// </summary>
     private readonly ITransportConnector _connector;
 
@@ -131,7 +135,7 @@ public sealed partial class LinkClient : IAsyncDisposable
     private readonly ILogger _logger;
 
     /// <summary>
-    /// Codec of the link; the peer uses the default maximum length too
+    /// Codec of the link; the peer uses the same largest payload (the handshake checks it)
     /// </summary>
     private readonly FrameCodec _codec;
 
@@ -142,7 +146,7 @@ public sealed partial class LinkClient : IAsyncDisposable
     private readonly SemaphoreSlim _openingLock;
 
     /// <summary>
-    /// Request client of the current connection; null before the first call. It is replaced by the call that finds it closed
+    /// Request client of the current connection; null before the first call, and once a call has found it closed, until a new connection opens
     /// </summary>
     private volatile RequestClient? _current;
 
@@ -171,6 +175,13 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// under the opening lock only
     /// </summary>
     private TimeSpan _backOffDelay;
+
+    /// <summary>
+    /// Last request client that received a response (an error code of the peer included): its connection proved the peer works. Written by
+    /// the calls, read under the opening lock
+    /// </summary>
+    private volatile RequestClient? _answered;
+
 
     #endregion
 
@@ -372,6 +383,16 @@ public sealed partial class LinkClient : IAsyncDisposable
     private partial void LogBackOff(string peer, int failures, TimeSpan delay);
 
     /// <summary>
+    /// Method used to log that a connection was lost before it answered any request, which counts as a failure to open
+    /// </summary>
+    /// <param name="cause">Why the connection closed, when known</param>
+    /// <param name="peer">Name of the peer</param>
+    /// <param name="host">Host of the peer</param>
+    /// <param name="port">Port of the peer</param>
+    [LoggerMessage(EventId = 9007, Level = LogLevel.Warning, Message = "Connection to {Peer} lost before any response ({Host}:{Port}); counted as a failure to open")]
+    private partial void LogConnectionLostUnanswered(Exception? cause, string peer, string host, int port);
+
+    /// <summary>
     /// Method used to compute the back-off delay after a number of failures in a row
     /// </summary>
     /// <remarks>
@@ -505,9 +526,21 @@ public sealed partial class LinkClient : IAsyncDisposable
             if (client is not null && client.IsOpen)
                 return client;
 
-            // Releasing the lost connection
+            // Releasing the lost connection, once: it is forgotten, so that the calls during the back-off do not count it again. One lost
+            // before any response counts as a failure to open (a peer in a crash loop accepts the handshake, then dies at the first request),
+            // one that answered resets the failures
             if (client is not null)
             {
+                _current = null;
+                if (ReferenceEquals(_answered, client))
+                {
+                    _openingFailures = 0;
+                }
+                else
+                {
+                    LogConnectionLostUnanswered(client.CloseReason, _peerName, _host, _port);
+                    StartBackOff();
+                }
                 try
                 {
                     await client.DisposeAsync().ConfigureAwait(false);
@@ -532,13 +565,11 @@ public sealed partial class LinkClient : IAsyncDisposable
             catch (Exception exception) when (exception is not OperationCanceledException || !callerToken.IsCancellationRequested)
             {
                 LogConnectionFailed(exception, _peerName, _host, _port);
-                _openingFailures++;
-                _backOffDelay = ComputeBackOff(_openingFailures);
-                _backOffStart = _timeProvider.GetTimestamp();
-                LogBackOff(_peerName, _openingFailures, _backOffDelay);
+                StartBackOff();
                 throw;
             }
-            _openingFailures = 0;
+
+            // The connection is open: the next attempt is due at once, but the failures are only forgotten once it answers
             _backOffDelay = TimeSpan.Zero;
             client = new RequestClient(connection, _codec, Math.Min(handshake.MaxConcurrentRequests, MaxConcurrentRequests));
             _current = client;
@@ -552,6 +583,18 @@ public sealed partial class LinkClient : IAsyncDisposable
         {
             _openingLock.Release();
         }
+    }
+
+    /// <summary>
+    /// Method used to count a failure to open and start the back-off delay that follows it; under the opening lock
+    /// </summary>
+    private void StartBackOff()
+    {
+        // Counting the failure, then delaying the next attempt
+        _openingFailures++;
+        _backOffDelay = ComputeBackOff(_openingFailures);
+        _backOffStart = _timeProvider.GetTimestamp();
+        LogBackOff(_peerName, _openingFailures, _backOffDelay);
     }
 
     /// <summary>
@@ -629,8 +672,18 @@ public sealed partial class LinkClient : IAsyncDisposable
         // its work too; a connection lost before the response is a failure of the link (the disposal of this client is not)
         try
         {
+            // Sending; an answer proves that the peer works
+            TResponse response = await client.SendAsync<TRequest, TResponse>(operation, request, deadline.Token).ConfigureAwait(false);
+            _answered = client;
+
             // Function's return
-            return await client.SendAsync<TRequest, TResponse>(operation, request, deadline.Token).ConfigureAwait(false);
+            return response;
+        }
+        catch (RemoteErrorException)
+        {
+            // An error code is an answer too: the peer works
+            _answered = client;
+            throw;
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
         {
