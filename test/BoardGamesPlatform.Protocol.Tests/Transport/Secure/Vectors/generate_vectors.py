@@ -14,6 +14,7 @@ import hmac
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 P256_ORDER = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
 
@@ -118,6 +119,15 @@ def main() -> None:
     show("TranscriptT2", hashlib.sha256(cert_s + cert_c + m1 + m2[:135]).digest())
     show("TranscriptT3", hashlib.sha256(cert_s + cert_c + m1 + m2).digest())
     show("TranscriptTh", hashlib.sha256(cert_s + cert_c + m1 + m2 + m3).digest())
+    # The first two records client -> server: the nonce is the IV XOR the sequence number (0, then 1), the associated data the length
+    c2s_key = hkdf_expand(prk, info(32, "BGPS v1 back-veryback c2s key", transcript_hash), 32)
+    c2s_iv = hkdf_expand(prk, info(12, "BGPS v1 back-veryback c2s iv", transcript_hash), 12)
+    for sequence, plaintext in ((0, b"BGPS first record"), (1, b"second")):
+        nonce = bytes(a ^ b for a, b in zip(c2s_iv, b"\x00" * 4 + sequence.to_bytes(8, "big")))
+        header = len(plaintext).to_bytes(2, "big")
+        sealed = AESGCM(c2s_key).encrypt(nonce, plaintext, header)
+        show(f"Record{sequence}Plaintext", plaintext)
+        show(f"Record{sequence}", header + sealed)
 
 
 if __name__ == "__main__":

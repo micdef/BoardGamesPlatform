@@ -6,6 +6,7 @@
  */
 
 // Using
+using System.Collections.Concurrent;
 using BoardGamesPlatform.Protocol.Control;
 using BoardGamesPlatform.Protocol.Correlation;
 using BoardGamesPlatform.Protocol.Errors;
@@ -55,7 +56,7 @@ namespace BoardGamesPlatform.Protocol.Links;
 /// the connection as well as the wait for the response.</description></item>
 /// <item><description>After <see cref="DisposeAsync"/>, every call throws an <see cref="ObjectDisposedException"/>.</description></item>
 /// <item><description>The logs tell when a connection opens, is lost or is closed by the disposal, with the address of the peer only; they
-/// go through the logger of the tier, with the event ids 9001 to 9007, reserved for this class (see the coding conventions).</description></item>
+/// go through the logger of the tier, with the event ids 9001 to 9010 and 9020, reserved for this class (see the coding conventions). A connection that asks for a renewal (see <see cref="ITransportConnection.IsRenewalDue"/>) is replaced by a new one in the background, the old one taking no new request and closed once its requests ended.</description></item>
 /// </list>
 /// </remarks>
 public sealed partial class LinkClient : IAsyncDisposable
@@ -94,6 +95,16 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// Longest back-off delay between two attempts to open a connection
     /// </summary>
     public static readonly TimeSpan MaxBackOff = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Delay before a renewal is tried again, when the new connection could not be opened (the current one stays in use until then)
+    /// </summary>
+    public static readonly TimeSpan RenewalRetryDelay = TimeSpan.FromMinutes(1);
+
+    /// <summary>
+    /// Interval of the checks of a connection being replaced, until its requests ended
+    /// </summary>
+    private static readonly TimeSpan _retirementPoll = TimeSpan.FromMilliseconds(100);
 
     #endregion
 
@@ -182,6 +193,27 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// </summary>
     private volatile RequestClient? _answered;
 
+    /// <summary>
+    /// Request clients replaced by a renewal, closed once their requests ended; their end is logged as a renewal, not as a loss
+    /// </summary>
+    private readonly ConcurrentDictionary<RequestClient, byte> _retired = new ConcurrentDictionary<RequestClient, byte>();
+
+    /// <summary>
+    /// Time stamp of the clock before which no renewal is tried again, after a renewal that could not open its connection; written by the
+    /// renewal, read with <see cref="Interlocked"/>
+    /// </summary>
+    private long _renewalNotBefore;
+
+    /// <summary>
+    /// Whether a renewal runs in the background (0: no, 1: yes): one at a time
+    /// </summary>
+    private int _isRenewing;
+
+    /// <summary>
+    /// Canceled by <see cref="DisposeAsync"/>, so that a renewal or a retirement in the background stops with the client; never disposed,
+    /// since a background task may still read its token, and a source without a timer holds no system resource
+    /// </summary>
+    private readonly CancellationTokenSource _disposal = new CancellationTokenSource();
 
     #endregion
 
@@ -393,6 +425,44 @@ public sealed partial class LinkClient : IAsyncDisposable
     private partial void LogConnectionLostUnanswered(Exception? cause, string peer, string host, int port);
 
     /// <summary>
+    /// Method used to log a connection replaced by a renewal, closed once its requests ended
+    /// </summary>
+    /// <param name="peer">Name of the peer</param>
+    /// <param name="host">Host of the peer</param>
+    /// <param name="port">Port of the peer</param>
+    [LoggerMessage(EventId = 9008, Level = LogLevel.Information, Message = "Connection to {Peer} renewed ({Host}:{Port}): the replaced one is closed once its requests ended")]
+    private partial void LogConnectionRenewed(string peer, string host, int port);
+
+    /// <summary>
+    /// Method used to log a renewal whose new connection could not be opened, the current one staying in use
+    /// </summary>
+    /// <param name="exception">Why the new connection failed</param>
+    /// <param name="peer">Name of the peer</param>
+    /// <param name="host">Host of the peer</param>
+    /// <param name="port">Port of the peer</param>
+    [LoggerMessage(EventId = 9009, Level = LogLevel.Warning, Message = "The renewal of the connection to {Peer} failed ({Host}:{Port}); the current one stays in use, tried again later")]
+    private partial void LogRenewalFailed(Exception exception, string peer, string host, int port);
+
+    /// <summary>
+    /// Method used to log a renewal refused by the peer or by this tier (a key, a certificate, the protocol): a setup to fix before the current
+    /// connection reaches its limit, not a passing failure of the network
+    /// </summary>
+    /// <param name="exception">Why the new connection was refused</param>
+    /// <param name="peer">Name of the peer</param>
+    /// <param name="host">Host of the peer</param>
+    /// <param name="port">Port of the peer</param>
+    [LoggerMessage(EventId = 9010, Level = LogLevel.Error, Message = "The renewal of the connection to {Peer} was refused ({Host}:{Port}); the current one stays in use until its limit: check the keys and the certificates")]
+    private partial void LogRenewalRefused(Exception exception, string peer, string host, int port);
+
+    /// <summary>
+    /// Method used to trace a request sent again on the new connection, the replaced one having refused it before sending anything of it
+    /// </summary>
+    /// <param name="exception">Refusal of the replaced connection</param>
+    /// <param name="peer">Name of the peer</param>
+    [LoggerMessage(EventId = 9020, Level = LogLevel.Debug, Message = "A request to {Peer} was sent again on the new connection: the replaced one refused it before sending it")]
+    private partial void LogRequestSentAgain(Exception exception, string peer);
+
+    /// <summary>
     /// Method used to compute the back-off delay after a number of failures in a row
     /// </summary>
     /// <remarks>
@@ -429,11 +499,14 @@ public sealed partial class LinkClient : IAsyncDisposable
         // Waiting for the end of the connection (the completion never fails)
         await client.Completion.ConfigureAwait(false);
 
-        // Telling the end: a loss with its cause, or the disposal of the client
-        if (Volatile.Read(ref _isDisposed) == 0)
-            LogConnectionLost(client.CloseReason, _peerName, _host, _port);
-        else
+        // Telling the end: the disposal of the client, a renewal (a replaced connection closed by its retirement), or a loss with its cause
+        bool isRetired = _retired.TryRemove(client, out _);
+        if (Volatile.Read(ref _isDisposed) == 1)
             LogConnectionClosed(_peerName, _host, _port);
+        else if (isRetired && client.CloseReason is ObjectDisposedException)
+            LogConnectionRenewed(_peerName, _host, _port);
+        else
+            LogConnectionLost(client.CloseReason, _peerName, _host, _port);
     }
 
     /// <summary>
@@ -511,10 +584,15 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// <param name="callerToken">Token of the caller alone, without the request timeout: tells a cancellation of the caller from the timeout</param>
     private async Task<RequestClient> GetRequestClientAsync(CancellationToken cancellationToken, CancellationToken callerToken)
     {
-        // Using the open connection, without any lock
+        // Using the open connection, without any lock; one that asks for a renewal is still used, while the renewal runs in the background
         RequestClient? client = _current;
         if (client is not null && client.IsOpen)
+        {
+            StartRenewalIfDue(client);
+
+            // Function's return
             return client;
+        }
 
         // Letting one call at a time open the connection
         await _openingLock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -571,7 +649,7 @@ public sealed partial class LinkClient : IAsyncDisposable
 
             // The connection is open: the next attempt is due at once, but the failures are only forgotten once it answers
             _backOffDelay = TimeSpan.Zero;
-            client = new RequestClient(connection, _codec, Math.Min(handshake.MaxConcurrentRequests, MaxConcurrentRequests));
+            client = await CreateRequestClientAsync(connection, handshake).ConfigureAwait(false);
             _current = client;
             LogConnectionOpened(_peerName, _host, _port);
             _ = WatchConnectionAsync(client);
@@ -582,6 +660,171 @@ public sealed partial class LinkClient : IAsyncDisposable
         finally
         {
             _openingLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Method used to tell whether the connection of a request client should be renewed now
+    /// </summary>
+    /// <param name="client">[Cannot be null] Request client of the current connection</param>
+    /// <returns>
+    /// True when its connection asks for a renewal, and no failed renewal delays it
+    /// </returns>
+    private bool IsRenewalToTry(RequestClient client)
+    {
+        // Function's return
+        return client.IsRenewalDue && _timeProvider.GetTimestamp() >= Interlocked.Read(ref _renewalNotBefore);
+    }
+
+    /// <summary>
+    /// Method used to build the request client of a connection just opened, the connection being closed when that fails
+    /// </summary>
+    /// <param name="connection">[Cannot be null] Connection opened, with its handshake done</param>
+    /// <param name="handshake">[Cannot be null] Agreement of its handshake</param>
+    /// <returns>
+    /// The request client, which owns the connection
+    /// </returns>
+    private async Task<RequestClient> CreateRequestClientAsync(ITransportConnection connection, HandshakeResult handshake)
+    {
+        try
+        {
+            // Function's return
+            return new RequestClient(connection, _codec, Math.Min(handshake.MaxConcurrentRequests, MaxConcurrentRequests));
+        }
+        catch
+        {
+            // Closing the connection, a failure of that close logged so that it never hides the first one
+            try
+            {
+                await connection.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception closeFailure) when (closeFailure is not OutOfMemoryException)
+            {
+                LogCloseFailed(closeFailure, _peerName);
+            }
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Method used to start the renewal of a connection that asks for it, in the background, once at a time
+    /// </summary>
+    /// <param name="client">[Cannot be null] Request client of the current connection</param>
+    private void StartRenewalIfDue(RequestClient client)
+    {
+        // Starting it when the connection asks for it, no failed renewal delays it, and none runs
+        if (IsRenewalToTry(client) && Interlocked.CompareExchange(ref _isRenewing, 1, 0) == 0)
+            _ = RenewAsync(client);
+    }
+
+    /// <summary>
+    /// Method used to replace a connection that asks for a renewal by a new one, in the background
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> the callers keep using the old connection meanwhile, and never wait for the renewal, nor give it their deadline.
+    /// The new connection then takes the next requests; the old one stops taking new ones (a request refused that way, never sent, is sent
+    /// again on the new one) and is closed once its requests ended, within the request timeout, so that no request fails because of the
+    /// renewal. When the new connection cannot be opened, the old one stays in use, and the renewal is tried again after
+    /// <see cref="RenewalRetryDelay"/>: it still works until its hard limit. A renewal never counts for the back-off.</para>
+    /// </remarks>
+    /// <param name="old">[Cannot be null] Request client of the connection to replace</param>
+    /// <returns>
+    /// A task that completes once the renewal ended; it never throws, since nobody waits for it but the logs
+    /// </returns>
+    private async Task RenewAsync(RequestClient old)
+    {
+        try
+        {
+            // Replacing the connection under the opening lock, unless another call replaced it meanwhile
+            await _openingLock.WaitAsync(_disposal.Token).ConfigureAwait(false);
+            try
+            {
+                if (Volatile.Read(ref _isDisposed) == 1 || !ReferenceEquals(_current, old) || !old.IsOpen)
+                    return;
+
+                // Opening the new connection within the connect timeout; a failure keeps the old one, and delays the next renewal
+                RequestClient client;
+                try
+                {
+                    (ITransportConnection connection, HandshakeResult handshake) = await ConnectAsync(_disposal.Token).ConfigureAwait(false);
+                    client = await CreateRequestClientAsync(connection, handshake).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException || !_disposal.IsCancellationRequested)
+                {
+                    Interlocked.Exchange(ref _renewalNotBefore, _timeProvider.GetTimestamp() + (long)(RenewalRetryDelay.TotalSeconds * _timeProvider.TimestampFrequency));
+                    if (exception is System.Security.Authentication.AuthenticationException or RemoteErrorException)
+                        LogRenewalRefused(exception, _peerName, _host, _port);
+                    else
+                        LogRenewalFailed(exception, _peerName, _host, _port);
+                    return;
+                }
+
+                // Using the new connection; the old one is marked as replaced first, then stops taking requests, and is retired in any case
+                _retired[old] = 0;
+                _current = client;
+                try
+                {
+                    _ = WatchConnectionAsync(client);
+                    LogConnectionOpened(_peerName, _host, _port);
+                }
+                finally
+                {
+                    old.StopAccepting();
+                    if (old.Completion.IsCompleted)
+                        _retired.TryRemove(old, out _);
+                    _ = RetireAsync(old);
+                }
+            }
+            finally
+            {
+                _openingLock.Release();
+            }
+        }
+        catch (OperationCanceledException) when (_disposal.IsCancellationRequested)
+        {
+            // The client is disposed: nothing to renew
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // Anything unexpected is logged, never lost in the background; the next renewal is tried later
+            Interlocked.Exchange(ref _renewalNotBefore, _timeProvider.GetTimestamp() + (long)(RenewalRetryDelay.TotalSeconds * _timeProvider.TimestampFrequency));
+            LogRenewalFailed(exception, _peerName, _host, _port);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _isRenewing, 0);
+        }
+    }
+
+    /// <summary>
+    /// Method used to close a replaced connection once its requests ended, or the request timeout passed, or the client is disposed
+    /// </summary>
+    /// <param name="old">[Cannot be null] Request client of the replaced connection</param>
+    /// <returns>
+    /// A task that completes once it is closed; it never throws, since nobody waits for it but the logs
+    /// </returns>
+    private async Task RetireAsync(RequestClient old)
+    {
+        // Waiting for its requests, at most the request timeout (none of them waits longer), or until the client is disposed
+        long start = _timeProvider.GetTimestamp();
+        try
+        {
+            while (old.IsOpen && old.PendingRequestCount > 0 && _timeProvider.GetElapsedTime(start) < _requestTimeout)
+                await Task.Delay(_retirementPoll, _timeProvider, _disposal.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // The client is disposed: the old connection is closed at once
+        }
+
+        // Closing it in any case
+        try
+        {
+            await old.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            LogCloseFailed(exception, _peerName);
         }
     }
 
@@ -616,7 +859,8 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// Method used to send a request of an operation and read its response, on the shared connection (Asynchronous)
     /// </summary>
     /// <remarks>
-    /// <para><b>Behavior:</b> opens the connection first when needed; the request is not retried when it fails. A request that gets no
+    /// <para><b>Behavior:</b> opens the connection first when needed; the request is not retried when it fails, except once on the new connection when a connection
+    /// being replaced refused it before sending anything of it (<see cref="RequestNotSentException"/>, event id 9020). A request that gets no
     /// connection, or no response, within the request timeout fails with a <see cref="LinkFailureException"/> whose code is <see cref="ErrorCodes.LinkTimeout"/>;
     /// it is canceled on the peer like any canceled request.</para>
     /// </remarks>
@@ -647,51 +891,64 @@ public sealed partial class LinkClient : IAsyncDisposable
         using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(_requestTimeout);
 
-        // Getting the connection; a peer that cannot be reached, or whose handshake fails, is a failure of the link (a refusal keeps its code)
-        RequestClient client;
-        try
+        // Sending once, or twice when the first connection was being replaced and refused the request before anything of it was sent
+        for (int attempt = 1; ; attempt++)
         {
-            client = await GetRequestClientAsync(deadline.Token, cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
-        {
-            throw new LinkFailureException(ErrorCodes.LinkTimeout, $"{_peerName} could not be reached within {_requestTimeout}", exception);
-        }
-        catch (RemoteErrorException exception)
-        {
-            throw new LinkFailureException(exception.Code, $"{_peerName} refused the handshake", exception);
-        }
-        catch (Exception exception) when (exception is (System.Net.Sockets.SocketException or TimeoutException or IOException or InvalidDataException
-            or System.Security.Authentication.AuthenticationException) and not LinkFailureException)
-        {
-            // A peer whose certificate is refused, or that refuses this tier, cannot be reached either; the reason stays in the logs of the tier
-            throw new LinkFailureException(ErrorCodes.LinkUnavailable, $"{_peerName} cannot be reached", exception);
-        }
+            // Getting the connection; a peer that cannot be reached, or whose handshake fails, is a failure of the link (a refusal keeps its code)
+            RequestClient client;
+            try
+            {
+                client = await GetRequestClientAsync(deadline.Token, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
+            {
+                throw new LinkFailureException(ErrorCodes.LinkTimeout, $"{_peerName} could not be reached within {_requestTimeout}", exception);
+            }
+            catch (RemoteErrorException exception)
+            {
+                throw new LinkFailureException(exception.Code, $"{_peerName} refused the handshake", exception);
+            }
+            catch (Exception exception) when (exception is (System.Net.Sockets.SocketException or TimeoutException or IOException or InvalidDataException
+                or System.Security.Authentication.AuthenticationException) and not LinkFailureException)
+            {
+                // A peer whose certificate is refused, or that refuses this tier, cannot be reached either; the reason stays in the logs of the tier
+                throw new LinkFailureException(ErrorCodes.LinkUnavailable, $"{_peerName} cannot be reached", exception);
+            }
 
-        // Sending the request within what is left of the request timeout: a deadline that expires cancels the request, so that the peer stops
-        // its work too; a connection lost before the response is a failure of the link (the disposal of this client is not)
-        try
-        {
-            // Sending; an answer proves that the peer works
-            TResponse response = await client.SendAsync<TRequest, TResponse>(operation, request, deadline.Token).ConfigureAwait(false);
-            _answered = client;
+            // Sending the request within what is left of the request timeout: a deadline that expires cancels the request, so that the peer
+            // stops its work too; a connection lost before the response is a failure of the link (the disposal of this client is not)
+            try
+            {
+                // Sending; an answer proves that the peer works
+                TResponse response = await client.SendAsync<TRequest, TResponse>(operation, request, deadline.Token).ConfigureAwait(false);
+                _answered = client;
 
-            // Function's return
-            return response;
-        }
-        catch (RemoteErrorException)
-        {
-            // An error code is an answer too: the peer works
-            _answered = client;
-            throw;
-        }
-        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
-        {
-            throw new LinkFailureException(ErrorCodes.LinkTimeout, $"{_peerName} did not answer within {_requestTimeout}", exception);
-        }
-        catch (IOException exception) when (Volatile.Read(ref _isDisposed) == 0)
-        {
-            throw new LinkFailureException(ErrorCodes.LinkUnavailable, $"The connection to {_peerName} was lost before the response", exception);
+                // Function's return
+                return response;
+            }
+            catch (RequestNotSentException exception) when (Volatile.Read(ref _isDisposed) == 1)
+            {
+                throw new ObjectDisposedException($"The client of {_peerName} has been disposed", exception);
+            }
+            catch (RequestNotSentException exception) when (attempt == 1)
+            {
+                // The connection was being replaced, and refused the request before sending anything of it: sent on the new connection
+                LogRequestSentAgain(exception, _peerName);
+            }
+            catch (RemoteErrorException)
+            {
+                // An error code is an answer too: the peer works
+                _answered = client;
+                throw;
+            }
+            catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
+            {
+                throw new LinkFailureException(ErrorCodes.LinkTimeout, $"{_peerName} did not answer within {_requestTimeout}", exception);
+            }
+            catch (IOException exception) when (Volatile.Read(ref _isDisposed) == 0)
+            {
+                throw new LinkFailureException(ErrorCodes.LinkUnavailable, $"The connection to {_peerName} was lost before the response", exception);
+            }
         }
     }
 
@@ -707,14 +964,25 @@ public sealed partial class LinkClient : IAsyncDisposable
         if (Interlocked.Exchange(ref _isDisposed, 1) == 1)
             return;
 
-        // Waiting for a connection being opened, then closing the current one; a call that waited for the lock finds the client disposed
+        // Stopping a renewal or a retirement in the background, then waiting for a connection being opened, and closing the current one and
+        // the replaced ones; a call that waited for the lock finds the client disposed
+        await _disposal.CancelAsync().ConfigureAwait(false);
         await _openingLock.WaitAsync().ConfigureAwait(false);
         try
         {
             RequestClient? client = _current;
             _current = null;
-            if (client is not null)
-                await client.DisposeAsync().ConfigureAwait(false);
+            foreach (RequestClient toClose in _retired.Keys.Prepend(client).OfType<RequestClient>())
+            {
+                try
+                {
+                    await toClose.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is not OutOfMemoryException)
+                {
+                    LogCloseFailed(exception, _peerName);
+                }
+            }
         }
         finally
         {

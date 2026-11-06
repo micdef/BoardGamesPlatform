@@ -12,6 +12,7 @@ using BoardGamesPlatform.Protocol.Framing;
 using BoardGamesPlatform.Protocol.Links;
 using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
+using BoardGamesPlatform.Protocol.Transport.Secure;
 using BoardGamesPlatform.Protocol.Transport.Tls;
 using BoardGamesPlatform.VeryBack.Contracts;
 using BoardGamesPlatform.VeryBack.Contracts.Ping;
@@ -136,16 +137,18 @@ public sealed partial class VeryBackListenerService : BackgroundService
     #region Constructors
 
     /// <summary>
-    /// Constructor, listening over mutual TLS 1.3
+    /// Constructor, listening over mutual TLS 1.3 and the secure channel
     /// </summary>
     /// <param name="options">[Cannot be null] Settings of the listener, validated at startup</param>
     /// <param name="svcPingProcedure">[Cannot be null] Call of the Ping procedure</param>
     /// <param name="svcTlsCredentials">[Cannot be null] Certificate of the Very Back and roots of the platform</param>
+    /// <param name="svcSigningKeys">[Cannot be null] Signing key of the Very Back and pinned keys of the Back</param>
     /// <param name="logger">[Cannot be null] Logger of the service</param>
-    /// <exception cref="ArgumentNullException">If a parameter is null (the credentials when the listener starts)</exception>
+    /// <exception cref="ArgumentNullException">If a parameter is null (the credentials and the keys when the listener starts)</exception>
     public VeryBackListenerService(IOptions<VeryBackOptions> options, IPingProcedure svcPingProcedure, TlsCredentials svcTlsCredentials,
-        ILogger<VeryBackListenerService> logger)
-        : this(options, svcPingProcedure, logger, endPoint => new TlsTransportListener(TcpTransportListener.Start(endPoint), svcTlsCredentials, PlatformRole.Back, logger),
+        SigningKeys svcSigningKeys, ILogger<VeryBackListenerService> logger)
+        : this(options, svcPingProcedure, logger, endPoint => new SecureTransportListener(
+            new TlsTransportListener(TcpTransportListener.Start(endPoint), svcTlsCredentials, PlatformRole.Back, logger), svcSigningKeys, logger),
             LinkServer.DefaultAcceptFailurePause)
     {
     }

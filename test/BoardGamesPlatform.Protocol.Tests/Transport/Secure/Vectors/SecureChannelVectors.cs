@@ -145,6 +145,26 @@ internal static class SecureChannelVectors
     /// </summary>
     public const string TranscriptTh = "43FDCE3939D09556EA4F960C4F8DC60063A77A4A5C2776847F4ED729A17DF707";
 
+    /// <summary>
+    /// Plaintext of the first record client → server ("BGPS first record")
+    /// </summary>
+    public const string Record0Plaintext = "42475053206669727374207265636F7264";
+
+    /// <summary>
+    /// First record client → server, sequence number 0: its length, its ciphertext, its tag
+    /// </summary>
+    public const string Record0 = "0011AC08A71992800FB253FAA23A1A4E009138833289B3CBB7E6951E80DDC0D6ABD4E9";
+
+    /// <summary>
+    /// Plaintext of the second record client → server ("second")
+    /// </summary>
+    public const string Record1Plaintext = "7365636F6E64";
+
+    /// <summary>
+    /// Second record client → server, sequence number 1
+    /// </summary>
+    public const string Record1 = "00067324469BB585DE6AC04AC5D5164F287D263FB0DB9388";
+
     #endregion
 
     #region Variables

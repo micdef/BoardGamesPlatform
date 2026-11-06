@@ -116,6 +116,11 @@ public sealed partial class SigningKeys : IDisposable
     private Exception? _lastRefusal;
 
     /// <summary>
+    /// Whether the last refusal was files that could not be read, rather than files read and refused
+    /// </summary>
+    private bool _isLastRefusalARead;
+
+    /// <summary>
     /// Time stamp of the clock when the keys in use were taken
     /// </summary>
     private long _lastTaken;
@@ -226,14 +231,15 @@ public sealed partial class SigningKeys : IDisposable
     /// </summary>
     /// <param name="exception">Why the files were refused</param>
     /// <param name="sinceTaken">Time since the keys in use were taken</param>
-    [LoggerMessage(EventId = 9060, Level = LogLevel.Error, Message = "The key files of the secure channel are refused; the keys taken {SinceTaken} ago are kept until the files are fixed")]
-    private partial void LogReloadFailed(Exception exception, TimeSpan sinceTaken);
+    /// <param name="heldBack">Number of refusals not logged since the last one logged</param>
+    [LoggerMessage(EventId = 9060, Level = LogLevel.Error, Message = "The key files of the secure channel are refused; the keys taken {SinceTaken} ago are kept until the files are fixed ({HeldBack} other refusals not logged since the last one)")]
+    private partial void LogReloadFailed(Exception exception, TimeSpan sinceTaken, int heldBack);
 
     /// <summary>
-    /// Method used to log a listener of the removed keys that failed, its connections maybe still open
+    /// Method used to log a listener of the removed keys that failed, its connections closed by the periodic check of the register instead
     /// </summary>
     /// <param name="exception">Failure of the listener</param>
-    [LoggerMessage(EventId = 9063, Level = LogLevel.Error, Message = "A removed key of the peer could not be told to the connections: some may stay open until the tier restarts")]
+    [LoggerMessage(EventId = 9063, Level = LogLevel.Error, Message = "A removed key of the peer could not be told to the connections: the periodic check closes them within a minute")]
     private partial void LogRemovalNotTold(Exception exception);
 
     /// <summary>
@@ -403,7 +409,7 @@ public sealed partial class SigningKeys : IDisposable
             isSameKey = check.IsSameKey;
         }
         if (isSameKey)
-            throw new InvalidOperationException("The signing key of the secure channel is the key of the TLS certificate of the tier: they must be distinct");
+            throw new SigningKeysUnusableException();
     }
 
     /// <summary>
@@ -421,7 +427,7 @@ public sealed partial class SigningKeys : IDisposable
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
-            RememberRefusal(exception);
+            RememberRefusal(exception, isRead: false);
         }
     }
 
@@ -430,12 +436,18 @@ public sealed partial class SigningKeys : IDisposable
     /// the time since the last keys taken: the operator is told again until the files are fixed; under <see cref="_reloadLock"/> or the timer
     /// </summary>
     /// <param name="exception">[Cannot be null] Why the files were refused</param>
-    private void RememberRefusal(Exception exception)
+    /// <param name="isRead">Whether the files could not be read (a passing state), rather than read and refused</param>
+    private void RememberRefusal(Exception exception, bool isRead)
     {
-        // Remembering, then logging at the pace of the refusals
-        _lastRefusal = exception;
-        if (_refusalPace.TryEnter(out _))
-            LogReloadFailed(exception, _timeProvider.GetElapsedTime(_lastTaken));
+        // Remembering, unless a read fails while a refusal of the content waits: the files may be the same once readable again, and their
+        // refusal must not be forgotten; then logging at the pace of the refusals, with the number held back since the last log
+        if (!isRead || _lastRefusal is null || _isLastRefusalARead)
+        {
+            _lastRefusal = exception;
+            _isLastRefusalARead = isRead;
+        }
+        if (_refusalPace.TryEnter(out int heldBack))
+            LogReloadFailed(exception, _timeProvider.GetElapsedTime(_lastTaken), heldBack);
     }
 
     #endregion
@@ -602,16 +614,19 @@ public sealed partial class SigningKeys : IDisposable
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
                 // Missing or unreadable now: tried again at the next check, the refusal told again at its pace
-                RememberRefusal(exception);
+                RememberRefusal(exception, isRead: true);
                 return;
             }
             byte[] signingKeyHash = SHA256.HashData(signingKeyContent);
             byte[] peerKeysHash = SHA256.HashData(peerKeysContent);
             if (!_files.HasChanged(signingKeyTime, signingKeyHash, peerKeysTime, peerKeysHash))
             {
-                // Unchanged files that were refused: still refused, told again at the pace of the refusals
-                if (_lastRefusal is not null)
-                    RememberRefusal(_lastRefusal);
+                // Unchanged files whose content was refused: still refused, told again at the pace of the refusals; unchanged files that only
+                // could not be read for a while are fine again: the keys in use are the ones of these files
+                if (_lastRefusal is not null && !_isLastRefusalARead)
+                    RememberRefusal(_lastRefusal, isRead: false);
+                else
+                    _lastRefusal = null;
                 return;
             }
 
@@ -625,12 +640,12 @@ public sealed partial class SigningKeys : IDisposable
                 if (IsCertificateKey(next, _tlsCertificate()))
                 {
                     next.ReleaseSigningKey();
-                    throw new InvalidOperationException("The signing key of the secure channel is the key of the TLS certificate of the tier: they must be distinct");
+                    throw new SigningKeysUnusableException();
                 }
             }
             catch (Exception exception) when (exception is not OutOfMemoryException)
             {
-                RememberRefusal(exception);
+                RememberRefusal(exception, isRead: false);
                 return;
             }
 
