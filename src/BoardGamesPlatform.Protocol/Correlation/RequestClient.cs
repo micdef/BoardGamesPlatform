@@ -38,8 +38,12 @@ namespace BoardGamesPlatform.Protocol.Correlation;
 /// is closed. The check compares with the last identifier given to a request, not with the last one written: a peer that guesses the
 /// identifier of a request still waiting for the write lock could answer it early. The links join tiers of the platform only, and mutual
 /// TLS authenticates the peer from 0.5.0.</description></item>
-/// <item><description>The client pings the server at a fixed interval (<see cref="HeartbeatSettings"/>) and closes when no frame at all
-/// came back within its timeout: a dead server or a broken path is found even when no request flows.</description></item>
+/// <item><description>The client pings the server at a fixed interval (<see cref="HeartbeatSettings"/>) and closes when the server showed
+/// no sign of life within its timeout: no byte received, and no piece of a large frame written (a frame larger than one piece of
+/// <see cref="FrameCodec.WriteChunkLength"/>), so that a large frame on a slow link is not taken for a dead server. A short frame written is
+/// never a sign of life: the system takes its bytes without the server reading them, so short requests sent often never keep a silent server
+/// alive, and a large frame towards a silent server stops leaving once the buffers of the system are full. A dead server or a broken path is
+/// found even when no request flows.</description></item>
 /// <item><description>When the connection closes (peer, failure, violation, heartbeat or disposal), the client closes for good: every pending and later
 /// request fails. A new connection needs a new client: the link client opens one on the next call.</description></item>
 /// </list>
@@ -119,9 +123,24 @@ public sealed class RequestClient : IAsyncDisposable
     private readonly Task _heartbeatLoop;
 
     /// <summary>
-    /// Time stamp of the clock when the last frame was received (the opening of the client before the first one)
+    /// Time stamp of the clock at the last sign of life of the server: bytes received (the opening of the client before the first ones)
     /// </summary>
     private long _lastReceived;
+
+    /// <summary>
+    /// Records a sign of life of the server, given to the codec for the reads, built once
+    /// </summary>
+    private readonly Action _markReceived;
+
+    /// <summary>
+    /// Time stamp of the clock at the last piece of a large frame written (the opening of the client before the first one)
+    /// </summary>
+    private long _lastWritten;
+
+    /// <summary>
+    /// Records a piece of a large frame written, given to the codec for the writes of the large frames only, built once
+    /// </summary>
+    private readonly Action _markWritten;
 
     /// <summary>
     /// Completed once the client is closed for good: connection disposed and every pending request failed
@@ -238,6 +257,9 @@ public sealed class RequestClient : IAsyncDisposable
         _heartbeat = heartbeat ?? HeartbeatSettings.Default;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _lastReceived = _timeProvider.GetTimestamp();
+        _lastWritten = _lastReceived;
+        _markReceived = () => Interlocked.Exchange(ref _lastReceived, _timeProvider.GetTimestamp());
+        _markWritten = () => Interlocked.Exchange(ref _lastWritten, _timeProvider.GetTimestamp());
 
         // Starting the read loop and the heartbeat
         _readLoop = ReadResponsesAsync();
@@ -277,15 +299,13 @@ public sealed class RequestClient : IAsyncDisposable
         {
             while (true)
             {
-                Frame? frame = await _codec.ReadAsync(_connection.Stream, _lifetime.Token).ConfigureAwait(false);
+                // Any byte received proves that the server is there, even inside a large frame on a slow link
+                Frame? frame = await _codec.ReadAsync(_connection.Stream, _markReceived, _lifetime.Token).ConfigureAwait(false);
                 if (frame is null)
                 {
                     reason = new IOException("The peer closed the connection");
                     break;
                 }
-
-                // Any frame proves that the server is there
-                Interlocked.Exchange(ref _lastReceived, _timeProvider.GetTimestamp());
 
                 // A control message from the server can only be a pong, which needs nothing more
                 if (frame.CorrelationId == Frame.NoCorrelation)
@@ -317,9 +337,11 @@ public sealed class RequestClient : IAsyncDisposable
     /// Method used to ping the server at each interval, and to close the client when no frame came back in time
     /// </summary>
     /// <remarks>
-    /// <para><b>Behavior:</b> at each tick, the client first checks the time since the last frame received: beyond the client timeout, the
-    /// server is taken as dead and the client closes with a <see cref="TimeoutException"/>. Otherwise it writes a ping, like any frame, under
-    /// the write lock; that write is bounded by the client timeout too, so that a peer that no longer reads cannot block the heartbeat. A read
+    /// <para><b>Behavior:</b> at each tick, the client first checks the time since the last sign of life of the server, bytes received or a
+    /// piece of a large frame written: beyond the client timeout, the server is taken as dead and the client closes with a
+    /// <see cref="TimeoutException"/>. Otherwise it writes a ping, like any frame, under the write lock; that write is bounded by the client
+    /// timeout too, so that a peer that no longer reads cannot block the heartbeat. When another frame is being written, the ping is skipped:
+    /// if that write stalls, the next ticks find no sign of life and close the client. A read
     /// is never canceled here: closing the client ends the read loop, following the connection rule of the codec. The task only fails when
     /// disposing the connection throws; that error is then thrown by <see cref="DisposeAsync"/>.</para>
     /// </remarks>
@@ -334,19 +356,23 @@ public sealed class RequestClient : IAsyncDisposable
             using PeriodicTimer timer = new PeriodicTimer(_heartbeat.PingInterval, _timeProvider);
             while (await timer.WaitForNextTickAsync(_lifetime.Token).ConfigureAwait(false))
             {
-                // Giving up on a server that sent nothing for too long
-                if (_timeProvider.GetElapsedTime(Interlocked.Read(ref _lastReceived)) > _heartbeat.ClientTimeout)
+                // Giving up on a server that showed no sign of life for too long: nothing received, and no piece of a large frame written
+                if (_timeProvider.GetElapsedTime(Interlocked.Read(ref _lastReceived)) > _heartbeat.ClientTimeout
+                    && _timeProvider.GetElapsedTime(Interlocked.Read(ref _lastWritten)) > _heartbeat.ClientTimeout)
                 {
-                    reason = new TimeoutException($"The server sent no frame for more than {_heartbeat.ClientTimeout}");
+                    reason = new TimeoutException($"The server showed no sign of life for more than {_heartbeat.ClientTimeout}");
                     break;
                 }
 
-                // Pinging, within the client timeout
+                // Skipping the ping while another frame is being written: if that write stalls, the next ticks close the client
+                if (!_writeLock.Wait(0, CancellationToken.None))
+                    continue;
+
+                // Pinging under the write lock just taken, within the client timeout
                 using CancellationTokenSource deadline = new CancellationTokenSource(_heartbeat.ClientTimeout, _timeProvider);
                 using CancellationTokenSource writing = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token, deadline.Token);
                 try
                 {
-                    await _writeLock.WaitAsync(writing.Token).ConfigureAwait(false);
                     try
                     {
                         await _codec.WriteAsync(_connection.Stream, new Frame(Frame.NoCorrelation, _ping), writing.Token)
@@ -552,7 +578,10 @@ public sealed class RequestClient : IAsyncDisposable
         {
             if (!request.Task.IsCompleted)
             {
-                await _codec.WriteAsync(_connection.Stream, new Frame(correlationId, payload), _lifetime.Token).ConfigureAwait(false);
+                // Only the pieces of a large frame are a sign of life: they leave only when the server reads, once the buffers of the system
+                // are full, while a short frame always fits in them
+                Action? onProgress = FrameCodec.HeaderLength + payload.Length > FrameCodec.WriteChunkLength ? _markWritten : null;
+                await _codec.WriteAsync(_connection.Stream, new Frame(correlationId, payload), onProgress, _lifetime.Token).ConfigureAwait(false);
                 isWritten = true;
             }
         }

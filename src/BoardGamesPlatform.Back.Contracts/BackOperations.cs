@@ -2,7 +2,7 @@
  *	@file	src/BoardGamesPlatform.Back.Contracts/BackOperations.cs
  *	@author	Defraene Michaël (AKA Sonic) (co-written by Claude)
  *
- *	@brief	Names of the operations that the Back answers
+ *	@brief	Names of the operations that the Back answers, and the largest payload of its link
  */
 
 // Using
@@ -33,6 +33,13 @@ public static class BackOperations
     /// Checks that the chain of tiers answers, and gives back the time of the SQL Server
     /// </summary>
     public const string Ping = "Ping";
+
+    /// <summary>
+    /// Largest payload of a frame of the link Gateway → Back, in bytes, used by both ends (the handshake refuses another one): sized to the
+    /// operations of the link, a few hundred bytes of JSON, far below the 1 MiB of the protocol, so that the memory a peer can make the
+    /// server hold stays small (connections × requests in progress × this size)
+    /// </summary>
+    public const int LinkMaxPayloadLength = 64 * 1024;
 
     #endregion
 

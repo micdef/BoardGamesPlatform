@@ -207,7 +207,7 @@ public sealed class ReconnectionTests
     }
 
     /// <summary>
-    /// A connection that opens resets the back-off: after a success, a new loss is reconnected at once
+    /// A connection that answers resets the back-off: after a success, a new loss is reconnected at once
     /// </summary>
     [Fact(Timeout = TestTimeout)]
     public async Task ASuccessResetsTheBackOffAsync()
@@ -244,6 +244,41 @@ public sealed class ReconnectionTests
         response.ShouldNotBeNull().ServerTime.ShouldBe(_pingTime);
     }
 
+
+    /// <summary>
+    /// A peer in a crash loop (it accepts the handshake, then dies at the first request) is reconnected with the back-off, doubled after each
+    /// connection lost before any response, not on every call (L2 of the security review of 0.4.0); once it answers again, it is served
+    /// </summary>
+    [Fact(Timeout = TestTimeout)]
+    public async Task APeerInACrashLoopIsReconnectedWithTheBackOffAsync()
+    {
+        // Starting a peer whose connections die at the first request, and a client
+        CancellationToken token = TestContext.Current.CancellationToken;
+        FakeTimeProvider clock = new FakeTimeProvider();
+        await using KillablePeer peer = KillablePeer.Start(_pingTime);
+        peer.CrashOnPing(true);
+        await using LinkClient client = CreateClient(peer.Port, clock);
+
+        // The first call opens a connection, which dies without an answer; the next calls fail at once, without reaching the peer
+        for (int call = 0; call < 4; call++)
+            (await Should.ThrowAsync<LinkFailureException>(() => PingAsync(client, token))).Code.ShouldBe(ErrorCodes.LinkUnavailable);
+        peer.Accepted.ShouldBe(1);
+
+        // Once the first delay (at most 0.6 s) has passed, one new connection, which dies too; the second delay is at least 0.8 s
+        clock.Advance(LinkClient.FirstBackOff * 1.3);
+        (await Should.ThrowAsync<LinkFailureException>(() => PingAsync(client, token))).Code.ShouldBe(ErrorCodes.LinkUnavailable);
+        (await Should.ThrowAsync<LinkFailureException>(() => PingAsync(client, token))).Code.ShouldBe(ErrorCodes.LinkUnavailable);
+        peer.Accepted.ShouldBe(2);
+        clock.Advance(LinkClient.FirstBackOff * 1.3);
+        (await Should.ThrowAsync<LinkFailureException>(() => PingAsync(client, token))).Code.ShouldBe(ErrorCodes.LinkUnavailable);
+        peer.Accepted.ShouldBe(2);
+
+        // The peer answers again: once the second delay (at most 1.2 s) has passed, the call is served
+        peer.CrashOnPing(false);
+        clock.Advance(LinkClient.FirstBackOff * 1.2);
+        (await PingAsync(client, token)).ServerTime.ShouldBe(_pingTime);
+        peer.Accepted.ShouldBe(3);
+    }
     #endregion
 
     #endregion

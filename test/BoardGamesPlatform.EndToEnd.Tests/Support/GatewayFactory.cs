@@ -8,6 +8,8 @@
 // Using
 using System.Globalization;
 using BoardGamesPlatform.Gateway.Contracts;
+using BoardGamesPlatform.Protocol.Transport.Tls;
+using BoardGamesPlatform.TestKit;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -151,12 +153,15 @@ internal sealed class GatewayFactory : WebApplicationFactory<Program>
     /// <inheritdoc/>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        // Keeping the Gateway from writing to the Event Log of the machine (see TestLogging)
+        builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(TestLogging.WithoutEventLog));
+
         // Pointing the real Back client of the Gateway at the Back of the test
-        Dictionary<string, string?> settings = new Dictionary<string, string?>
+        Dictionary<string, string?> settings = TestTlsFiles.Shared.AddTo(new Dictionary<string, string?>
         {
             ["Back:Host"] = "127.0.0.1",
             ["Back:Port"] = _backPort.ToString(CultureInfo.InvariantCulture),
-        };
+        }, PlatformRole.Gateway);
         builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(settings));
     }
 

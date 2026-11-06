@@ -167,7 +167,7 @@ internal sealed class FakeVeryBack : IAsyncDisposable
         // Setting
         _listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next()));
         _stopping = new CancellationTokenSource();
-        _dispatcher = new OperationDispatcher(NullLogger.Instance)
+        _dispatcher = new OperationDispatcher(NullLogger.Instance, VeryBackOperations.LinkMaxPayloadLength)
             .Register<PingRequest, PingResponse>(VeryBackOperations.Ping, (request, cancellationToken) => Task.FromResult(new PingResponse(PingTime)));
         _connections = new ConcurrentDictionary<ITransportConnection, byte>();
         _serving = new ConcurrentBag<Task>();
@@ -221,7 +221,7 @@ internal sealed class FakeVeryBack : IAsyncDisposable
         // Serving; a connection dropped by the test, or a failing handler, ends the service with an error that the test expects
         try
         {
-            RequestServer server = new RequestServer(new FrameCodec(), HandleAsync);
+            RequestServer server = new RequestServer(new FrameCodec(VeryBackOperations.LinkMaxPayloadLength), HandleAsync);
             await ProtocolHandshake.RunServerAsync(connection, server.Codec, server.MaxConcurrentRequests, ProtocolHandshake.DefaultServerTimeout, _stopping.Token)
                 .ConfigureAwait(false);
             await server.ServeAsync(connection, _stopping.Token).ConfigureAwait(false);

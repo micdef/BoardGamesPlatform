@@ -13,8 +13,11 @@ using BoardGamesPlatform.Back.Services;
 using BoardGamesPlatform.Back.Settings;
 using BoardGamesPlatform.Observability;
 using BoardGamesPlatform.Platform.Infrastructure.VeryBack;
+using BoardGamesPlatform.Protocol.Control;
 using BoardGamesPlatform.Protocol.Correlation;
 using BoardGamesPlatform.Protocol.Errors;
+using BoardGamesPlatform.Protocol.Framing;
+using BoardGamesPlatform.Protocol.Links;
 using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
 using BoardGamesPlatform.TestKit;
@@ -162,7 +165,7 @@ public sealed class BackListenerServiceTests
     {
         // Creating and starting the service
         BackListenerService service = new BackListenerService(Options.Create(new BackOptions { ListenAddress = LoopbackHost, Port = TestPorts.Block.Next() }), veryBackClient,
-            logger);
+            logger, endPoint => TcpTransportListener.Start(endPoint), LinkServer.DefaultAcceptFailurePause);
         await service.StartAsync(cancellationToken);
 
         // Function's return
@@ -180,7 +183,8 @@ public sealed class BackListenerServiceTests
     private static async Task<RequestClient> ConnectAsGatewayAsync(BackListenerService service, CancellationToken cancellationToken)
     {
         // Function's return: connected and agreed on the protocol, like the Gateway
-        return await TestRequestClients.ConnectAsync(LoopbackHost, service.LocalEndPoint.Port, cancellationToken);
+        return await TestRequestClients.ConnectAsync(LoopbackHost, service.LocalEndPoint.Port, new TcpTransportConnector(), BackOperations.LinkMaxPayloadLength,
+            cancellationToken);
     }
 
     #endregion
@@ -304,17 +308,17 @@ public sealed class BackListenerServiceTests
     }
 
     /// <summary>
-    /// A listen address that other machines can reach is accepted, with a warning; the loopback address gives none
+    /// A listen address that other machines can reach is accepted, and logged; the loopback address is not
     /// </summary>
     /// <param name="address">Address the listener claims to listen on</param>
-    /// <param name="warned">Whether a warning is expected</param>
+    /// <param name="warned">Whether the log is expected</param>
     /// <returns>
     /// A task that completes when the check is done
     /// </returns>
     [Theory(Timeout = TestTimeout)]
     [InlineData("0.0.0.0", true)]
     [InlineData("127.0.0.1", false)]
-    public async Task AnAddressOtherThanLoopbackIsLoggedAsAWarningAsync(string address, bool warned)
+    public async Task AnAddressOtherThanLoopbackIsLoggedAsync(string address, bool warned)
     {
         // Starting the service on an idle listener with that address, then stopping it once its loop waits for a connection
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
@@ -327,8 +331,50 @@ public sealed class BackListenerServiceTests
         await service.StopAsync(cancellationToken);
 
         // Checks
-        logger.Entries.Any(entry => entry.Level == LogLevel.Warning && entry.Message.Contains("not a loopback address")).ShouldBe(warned);
+        logger.Entries.Any(entry => entry.Level == LogLevel.Information && entry.Message.Contains("not a loopback address")).ShouldBe(warned);
         service.ExecuteTask.ShouldNotBeNull().IsCompletedSuccessfully.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// The link has a largest payload of its own (M3 of the security review of 0.4.0): a client that offers the 1 MiB of the protocol is
+    /// refused in the handshake, and a frame larger than the link allows closes the connection before its payload is held
+    /// </summary>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    [Fact(Timeout = TestTimeout)]
+    public async Task TheLinkHasALargestPayloadOfItsOwnAsync()
+    {
+        // Starting a fake Very Back and the Back
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        await using FakeVeryBack veryBack = new FakeVeryBack();
+        await using VeryBackClient veryBackClient = CreateVeryBackClient(veryBack.Port);
+        BackListenerService service = await StartBackAsync(veryBackClient, cancellationToken);
+        try
+        {
+            // Check: a hello with the largest payload of the protocol is refused, the code telling why
+            RemoteErrorException refused = await Should.ThrowAsync<RemoteErrorException>(() => TestRequestClients.ConnectAsync(LoopbackHost, service.LocalEndPoint.Port,
+                cancellationToken));
+            refused.Code.ShouldBe(ErrorCodes.ProtocolLimitsMismatch);
+
+            // A client of the link announces a frame one byte larger than the link allows (the server may close before the whole frame is written)
+            await using ITransportConnection connection = await new TcpTransportConnector().ConnectAsync(LoopbackHost, service.LocalEndPoint.Port, cancellationToken);
+            FrameCodec codec = new FrameCodec(BackOperations.LinkMaxPayloadLength);
+            await ProtocolHandshake.RunClientAsync(connection, codec, cancellationToken);
+            Exception? writeFailure = await Record.ExceptionAsync(() => new FrameCodec().WriteAsync(connection.Stream, new Frame(1, new byte[BackOperations.LinkMaxPayloadLength + 1]),
+                cancellationToken));
+            Frame? answer = null;
+            Exception? readFailure = await Record.ExceptionAsync(async () => answer = await codec.ReadAsync(connection.Stream, cancellationToken));
+
+            // Checks: the connection is closed without an answer
+            (writeFailure is null or IOException).ShouldBeTrue(writeFailure?.ToString());
+            (readFailure is null or IOException).ShouldBeTrue(readFailure?.ToString());
+            answer.ShouldBeNull();
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+        }
     }
 
     #endregion

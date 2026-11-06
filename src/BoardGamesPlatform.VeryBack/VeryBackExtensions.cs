@@ -6,6 +6,7 @@
  */
 
 // Using
+using BoardGamesPlatform.Protocol.Transport.Tls;
 using BoardGamesPlatform.VeryBack.Procedures;
 using BoardGamesPlatform.VeryBack.Services;
 using BoardGamesPlatform.VeryBack.Settings;
@@ -128,6 +129,13 @@ public static class VeryBackExtensions
         builder.Services.AddOptions<ConnectionStringsOptions>().Bind(builder.Configuration.GetSection(ConnectionStringsOptions.SectionName)).ValidateOnStart();
 
         // Listening for the Back and calling the database
+        // Mutual TLS: the settings, checked at startup, and the credentials of the Very Back, loaded and checked when first needed (when the
+        // services are built, before anything listens or connects); a relative path is taken from the folder of the Very Back
+        builder.Services.AddSingleton<IValidateOptions<TlsOptions>, TlsOptionsValidator>();
+        builder.Services.AddOptions<TlsOptions>().Bind(builder.Configuration.GetSection(TlsOptions.SectionName)).ValidateOnStart();
+        builder.Services.AddSingleton(services => TlsCredentials.FromOptions(PlatformRole.VeryBack, services.GetRequiredService<IOptions<TlsOptions>>().Value,
+            builder.Environment.ContentRootPath, TimeProvider.System, services.GetRequiredService<ILogger<TlsCredentials>>()));
+
         builder.Services.AddSingleton<IPingProcedure, SqlPingProcedure>();
         builder.Services.AddHostedService<VeryBackListenerService>();
 

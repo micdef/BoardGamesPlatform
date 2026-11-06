@@ -30,7 +30,8 @@ namespace BoardGamesPlatform.Protocol.Correlation;
 /// <para><b>Behavior:</b> the connection has already passed its handshake (<see cref="ProtocolHandshake"/>). The server reads the frames one
 /// after the other and never waits for a slot to read, so that a control message (a cancellation, a ping) is received at once, even when every
 /// slot is busy; only a client that stops reading the answers written from the read loop (a pong, a "busy") can stall it, until the idle
-/// timeout ends the connection. Each request is handed to the handler without waiting for the previous one, up to a maximum number handled at
+/// timeout ends the connection. A write that makes no progress for the idle timeout ends the connection too, so that a client that stops
+/// reading cannot hold the write lock. Each request is handed to the handler without waiting for the previous one, up to a maximum number handled at
 /// the same time; beyond it, the request is answered at once with the code <see cref="ErrorCodes.ServerBusy"/>, without being started, so that
 /// a peer cannot make the server start an unbounded amount of work. The frames are written one at a time.</para>
 /// <list type="bullet">
@@ -150,7 +151,8 @@ public sealed class RequestServer
     /// <param name="codec">[Cannot be null] Codec of the link; both ends use the same maximum length</param>
     /// <param name="handler">[Cannot be null] Handler of the requests: receives the content of a request and the token of that request,
     /// canceled when the client cancels it or when the service of the connection ends, and returns the content of the response. It may be
-    /// called for several requests at the same time. It must observe the token: the service of a connection only ends once every handler has
+    /// called for several requests at the same time. It must observe the token, and the callbacks it registers on the token must not block: the
+    /// service of a connection only ends once every handler, and every cancellation callback, has
     /// returned. Its response must not exceed the maximum length of the codec; a larger one is a handler failure.</param>
     /// <param name="maxConcurrentRequests">Number of requests of one connection handled at the same time, at most; 1 or more</param>
     /// <param name="heartbeat">[Can be null] Timings of the heartbeat; null for <see cref="HeartbeatSettings.Default"/></param>
@@ -189,6 +191,39 @@ public sealed class RequestServer
     #region Privates
 
     /// <summary>
+    /// Method used to write one frame within the write deadline, the write lock being held
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> a write that makes no progress (no piece of the frame written) for the idle timeout of the heartbeat fails with
+    /// a <see cref="TimeoutException"/>, which ends the service of the connection: a client that stops reading, while it keeps the connection
+    /// alive with frames that need no answer (cancellations), cannot hold the write lock, its slots and its responses for ever. The end of the
+    /// service stops the write too.</para>
+    /// </remarks>
+    /// <param name="connection">[Cannot be null] Connection to write on</param>
+    /// <param name="frame">[Cannot be null] Frame to write</param>
+    /// <param name="service">[Cannot be null] State shared by the requests of the connection</param>
+    /// <returns>
+    /// A task that completes once the frame is written
+    /// </returns>
+    /// <exception cref="TimeoutException">If the write makes no progress for the idle timeout</exception>
+    private async Task WriteFrameAsync(ITransportConnection connection, Frame frame, ServedConnectionState service)
+    {
+        // A deadline moved after each piece written, linked to the end of the service
+        TimeSpan timeout = _heartbeat.ServerIdleTimeout;
+        using CancellationTokenSource deadline = new CancellationTokenSource(timeout, _timeProvider);
+        using CancellationTokenSource writing = CancellationTokenSource.CreateLinkedTokenSource(service.Token, deadline.Token);
+        try
+        {
+            await _codec.WriteAsync(connection.Stream, frame, () => deadline.CancelAfter(timeout), writing.Token).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (deadline.IsCancellationRequested && !service.Token.IsCancellationRequested)
+        {
+            // The deadline expired, whatever the stream threw when its write was canceled
+            throw new TimeoutException($"The client read nothing of a frame for more than {timeout}", exception);
+        }
+    }
+
+    /// <summary>
     /// Method used to write one frame, when no other frame of the connection is being written
     /// </summary>
     /// <param name="connection">[Cannot be null] Connection to write on</param>
@@ -203,7 +238,7 @@ public sealed class RequestServer
         await service.WriteLock.WaitAsync(service.Token).ConfigureAwait(false);
         try
         {
-            await _codec.WriteAsync(connection.Stream, frame, service.Token).ConfigureAwait(false);
+            await WriteFrameAsync(connection, frame, service).ConfigureAwait(false);
         }
         finally
         {
@@ -255,7 +290,7 @@ public sealed class RequestServer
                 service.EndRequest(request.CorrelationId);
                 service.Slots.Release();
                 isEnded = true;
-                await _codec.WriteAsync(connection.Stream, new Frame(request.CorrelationId, response), service.Token).ConfigureAwait(false);
+                await WriteFrameAsync(connection, new Frame(request.CorrelationId, response), service).ConfigureAwait(false);
             }
             catch (Exception exception)
             {
@@ -300,9 +335,9 @@ public sealed class RequestServer
         ControlMessage message = MessageSerializer.ReadControl(frame.Payload.Span);
         switch (message)
         {
-            // Canceling the request, if it is still in progress
+            // Canceling the request, if it is still in progress, outside the read loop: the callbacks of the handler may block
             case CancelMessage cancel:
-                service.CancelRequest(cancel.CorrelationId);
+                service.StartCancelRequest(cancel.CorrelationId);
                 break;
 
             // Answering the ping, like any frame
@@ -319,7 +354,7 @@ public sealed class RequestServer
     /// Method used to end the service of a connection on which nothing was received for too long
     /// </summary>
     /// <remarks>
-    /// <para><b>Behavior:</b> checks at each ping interval the time since the last frame received; beyond the server idle timeout, the service
+    /// <para><b>Behavior:</b> checks at each ping interval the time since the last bytes received; beyond the server idle timeout, the service
     /// fails with a <see cref="TimeoutException"/>, which cancels the read and the requests in progress (the caller then closes the connection,
     /// following the connection rule of the codec). Never throws.</para>
     /// </remarks>
@@ -337,7 +372,7 @@ public sealed class RequestServer
             {
                 if (_timeProvider.GetElapsedTime(service.LastReceived) > _heartbeat.ServerIdleTimeout)
                 {
-                    service.Fail(new TimeoutException($"The client sent no frame for more than {_heartbeat.ServerIdleTimeout}"));
+                    service.Fail(new TimeoutException($"The client sent nothing for more than {_heartbeat.ServerIdleTimeout}"));
 
                     // Function's return: the service ends
                     return;
@@ -371,7 +406,7 @@ public sealed class RequestServer
     /// <exception cref="ArgumentNullException">If the connection is null</exception>
     /// <exception cref="InvalidDataException">If the peer breaks the protocol (a malformed frame or control message, an identifier in progress)</exception>
     /// <exception cref="IOException">If the stream fails</exception>
-    /// <exception cref="TimeoutException">If the client sent no frame for the idle timeout of the heartbeat</exception>
+    /// <exception cref="TimeoutException">If the client sent nothing for the idle timeout of the heartbeat</exception>
     /// <exception cref="OperationCanceledException">If the service is canceled</exception>
     /// <exception cref="Exception">Whatever a handler throws</exception>
     public async Task ServeAsync(ITransportConnection connection, CancellationToken cancellationToken = default)
@@ -384,11 +419,14 @@ public sealed class RequestServer
         using ServedConnectionState service = new ServedConnectionState(_maxConcurrentRequests, _timeProvider.GetTimestamp(), cancellationToken);
         using CancellationTokenSource watching = CancellationTokenSource.CreateLinkedTokenSource(service.Token);
         Task watchdog = WatchIdleAsync(service, watching.Token);
+
+        // Any byte received proves that the client is there, even inside a large frame on a slow link
+        Action markReceived = () => service.MarkReceived(_timeProvider.GetTimestamp());
         try
         {
             while (true)
             {
-                Frame? frame = await _codec.ReadAsync(connection.Stream, service.Token).ConfigureAwait(false);
+                Frame? frame = await _codec.ReadAsync(connection.Stream, markReceived, service.Token).ConfigureAwait(false);
                 if (frame is null)
                 {
                     // The client sends nothing more: the requests in progress may still be answered (a client that closed only its sending
@@ -396,7 +434,6 @@ public sealed class RequestServer
                     service.EndOnPeerClose(_heartbeat.ServerIdleTimeout, _timeProvider);
                     break;
                 }
-                service.MarkReceived(_timeProvider.GetTimestamp());
 
                 // A control message is handled at once, in the read loop
                 if (frame.CorrelationId == Frame.NoCorrelation)
@@ -426,9 +463,10 @@ public sealed class RequestServer
             service.Fail(exception);
         }
 
-        // Stopping the idle watch: the read loop has ended
+        // Stopping the idle watch, then waiting for the cancellations asked by the client: the read loop has ended and starts none any more
         await watching.CancelAsync().ConfigureAwait(false);
         await watchdog.ConfigureAwait(false);
+        await service.WhenCancellationsEndedAsync().ConfigureAwait(false);
 
         // Waiting for the requests in progress (each one gives its slot back), then for the last response being written, which holds the
         // write lock without a slot: once both are taken, nothing of this connection runs any more

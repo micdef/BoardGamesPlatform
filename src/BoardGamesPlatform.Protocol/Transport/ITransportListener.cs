@@ -26,8 +26,10 @@ namespace BoardGamesPlatform.Protocol.Transport;
 /// connections already accepted stay open until they are disposed themselves.</para>
 /// <para><b>Accept loop rule:</b> an <see cref="ObjectDisposedException"/> or an <see cref="OperationCanceledException"/> means that the
 /// listener is closed or that the tier stops: the loop ends. Any other exception concerns one incoming connection only (a peer that resets
-/// at once, a failed TLS handshake from 0.5.0): the loop logs it and keeps accepting. An accepted connection may already be dead: the code
-/// that serves it follows the connection rule of the frame codec.</para>
+/// at once): the loop logs it and keeps accepting. An accepted connection may already be dead: the code that serves it follows the connection
+/// rule of the frame codec.</para>
+/// <para><b>Two steps:</b> <see cref="AcceptAsync"/> only takes the next connection, at once; <see cref="EstablishAsync"/> then authenticates it
+/// (the TLS handshake), in the task that serves that connection, so that a slow or hostile peer never holds the accept loop.</para>
 /// </remarks>
 public interface ITransportListener : IAsyncDisposable
 {
@@ -69,6 +71,25 @@ public interface ITransportListener : IAsyncDisposable
     /// <exception cref="ObjectDisposedException">If the listener is disposed, before or during the wait</exception>
     /// <exception cref="System.Net.Sockets.SocketException">If the system fails to accept one incoming connection; the listener can still be used</exception>
     public Task<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Method used to make an accepted connection ready to carry frames: authenticated on TLS, as it is on plain TCP
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> a listener logs its own failures, at a pace a peer cannot flood (the caller only traces them), except a
+    /// cancellation, which the caller tells. A listener that wraps another one establishes the connection below first.</para>
+    /// </remarks>
+    /// <param name="accepted">[Cannot be null] Connection returned by <see cref="AcceptAsync"/></param>
+    /// <param name="cancellationToken">Token used to give up, with the deadline of the handshake</param>
+    /// <returns>
+    /// The connection to serve: it owns the accepted one, and disposing it closes both. On a failure, the accepted connection stays owned by
+    /// the caller, who disposes it.
+    /// </returns>
+    /// <exception cref="ArgumentNullException">If the connection is null</exception>
+    /// <exception cref="System.Security.Authentication.AuthenticationException">If the peer is not one this listener accepts (TLS)</exception>
+    /// <exception cref="IOException">If the connection fails during the handshake</exception>
+    /// <exception cref="OperationCanceledException">If the handshake is canceled</exception>
+    public Task<ITransportConnection> EstablishAsync(ITransportConnection accepted, CancellationToken cancellationToken = default);
 
     #endregion
 }

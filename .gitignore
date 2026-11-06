@@ -245,6 +245,11 @@ ClientBin/
 *.dbproj.schemaview
 *.jfm
 *.pfx
+
+# Keys, requests and certificates of the platform authority (tools/certificates writes the development ones in .certificates/)
+*.key
+*.csr
+.certificates/
 *.publishsettings
 orleans.codegen.cs
 

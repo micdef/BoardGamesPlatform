@@ -198,6 +198,25 @@ public sealed class TcpTransportListener : ITransportListener
     }
 
     /// <summary>
+    /// Method used to make an accepted connection ready: a plain TCP connection is, as soon as it is accepted
+    /// </summary>
+    /// <param name="accepted">[Cannot be null] Connection returned by <see cref="AcceptAsync"/></param>
+    /// <param name="cancellationToken">Not used</param>
+    /// <returns>
+    /// The same connection
+    /// </returns>
+    /// <exception cref="ArgumentNullException">If the connection is null</exception>
+    public Task<ITransportConnection> EstablishAsync(ITransportConnection accepted, CancellationToken cancellationToken = default)
+    {
+        // Check
+        if (accepted is null)
+            throw new ArgumentNullException(nameof(accepted), $"The value of the parameter: {nameof(accepted)} cannot be null");
+
+        // Function's return
+        return Task.FromResult(accepted);
+    }
+
+    /// <summary>
     /// Method used to stop listening
     /// </summary>
     /// <returns>

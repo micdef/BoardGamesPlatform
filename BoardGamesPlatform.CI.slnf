@@ -4,6 +4,7 @@
     "projects": [
       "src\\BoardGamesPlatform.Back\\BoardGamesPlatform.Back.csproj",
       "src\\BoardGamesPlatform.Back.Contracts\\BoardGamesPlatform.Back.Contracts.csproj",
+      "src\\BoardGamesPlatform.CertificateAuthority\\BoardGamesPlatform.CertificateAuthority.csproj",
       "src\\BoardGamesPlatform.Codes\\BoardGamesPlatform.Codes.csproj",
       "src\\BoardGamesPlatform.Games.Abstractions\\BoardGamesPlatform.Games.Abstractions.csproj",
       "src\\BoardGamesPlatform.Observability\\BoardGamesPlatform.Observability.csproj",
@@ -18,6 +19,7 @@
       "src\\BoardGamesPlatform.Web\\BoardGamesPlatform.Web.csproj",
       "test\\BoardGamesPlatform.Architecture.Tests\\BoardGamesPlatform.Architecture.Tests.csproj",
       "test\\BoardGamesPlatform.Back.Tests\\BoardGamesPlatform.Back.Tests.csproj",
+      "test\\BoardGamesPlatform.CertificateAuthority.Tests\\BoardGamesPlatform.CertificateAuthority.Tests.csproj",
       "test\\BoardGamesPlatform.Database.Tests\\BoardGamesPlatform.Database.Tests.csproj",
       "test\\BoardGamesPlatform.EndToEnd.Tests\\BoardGamesPlatform.EndToEnd.Tests.csproj",
       "test\\BoardGamesPlatform.Gateway.Tests\\BoardGamesPlatform.Gateway.Tests.csproj",

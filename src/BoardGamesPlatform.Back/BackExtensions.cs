@@ -10,6 +10,7 @@ using BoardGamesPlatform.Back.Services;
 using BoardGamesPlatform.Back.Settings;
 using BoardGamesPlatform.Platform.Infrastructure.VeryBack;
 using BoardGamesPlatform.Protocol.Transport;
+using BoardGamesPlatform.Protocol.Transport.Tls;
 using Microsoft.Extensions.Options;
 
 // Static using
@@ -128,9 +129,18 @@ public static class BackExtensions
         builder.Services.AddOptions<BackOptions>().Bind(builder.Configuration.GetSection(BackOptions.SectionName)).ValidateOnStart();
         builder.Services.AddOptions<VeryBackClientOptions>().Bind(builder.Configuration.GetSection(VeryBackClientOptions.SectionName)).ValidateOnStart();
 
-        // Calling the Very Back over plain TCP, and listening for the Gateway
+        // Mutual TLS: the settings, checked at startup, and the credentials of the Back, loaded and checked when first needed (when the
+        // services are built, before anything listens or connects); a relative path is taken from the folder of the Back
+        builder.Services.AddSingleton<IValidateOptions<TlsOptions>, TlsOptionsValidator>();
+        builder.Services.AddOptions<TlsOptions>().Bind(builder.Configuration.GetSection(TlsOptions.SectionName)).ValidateOnStart();
+        builder.Services.AddSingleton(services => TlsCredentials.FromOptions(PlatformRole.Back, services.GetRequiredService<IOptions<TlsOptions>>().Value,
+            builder.Environment.ContentRootPath, TimeProvider.System, services.GetRequiredService<ILogger<TlsCredentials>>()));
+
+        // Calling the Very Back over mutual TLS (only the Very Back is accepted as its server), and listening for the Gateway
         builder.Services.AddSingleton(services => new VeryBackClient(services.GetRequiredService<IOptions<VeryBackClientOptions>>().Value,
-            new TcpTransportConnector(), services.GetRequiredService<ILogger<VeryBackClient>>()));
+            new TlsTransportConnector(new TcpTransportConnector(), services.GetRequiredService<TlsCredentials>(), PlatformRole.VeryBack,
+                services.GetRequiredService<ILogger<VeryBackClient>>()),
+            services.GetRequiredService<ILogger<VeryBackClient>>()));
         builder.Services.AddHostedService<BackListenerService>();
 
         // Function's return

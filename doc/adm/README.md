@@ -5,6 +5,7 @@ Installation, configuration, deployment and operation of the platform.
 | Document | Content |
 |----------|---------|
 | [back.md](back.md) | Settings of the Back (listen address and port, address of the Very Back), its transport, its stop and exit code |
+| [certificates.md](certificates.md) | Mutual TLS of the links: the offline authority of the platform, issuing, renewing and withdrawing the certificates of the tiers, the `Tls` settings |
 | [configuration.md](configuration.md) | Configuration sources of every executable, and where its secrets live in each environment |
 | [gateway.md](gateway.md) | Settings of the Gateway (SignalR hub path, address of the Back) and its security status until authentication (0.10.0) |
 | [observability.md](observability.md) | Sending the logs, traces and metrics of every executable to an OpenTelemetry collector |

@@ -21,10 +21,10 @@ namespace BoardGamesPlatform.Protocol.Tests;
 /// Test ports of this project
 /// </summary>
 /// <remarks>
-/// <para><b>Purpose:</b> every listener of these tests binds a fixed port of the block of this project (17000-17099 by default), never a port
+/// <para><b>Purpose:</b> every listener of these tests binds a fixed port of the blocks of this project (17000-17099, then 17600-17699 by default), never a port
 /// handed out by the system (see <see cref="TestPortBlock"/>).</para>
-/// <para><b>Behavior:</b> one block for the whole test run of the project; each call to <see cref="TestPortBlock.Next"/> gives a new port of
-/// it.</para>
+/// <para><b>Behavior:</b> the blocks for the whole test run of the project, the second one locked only once the first one is used up; each
+/// call to <see cref="TestPortBlockSet.Next"/> gives a new port of them.</para>
 /// </remarks>
 internal static class TestPorts
 {
@@ -43,7 +43,8 @@ internal static class TestPorts
     /// it is, not hidden in a type initialization error, and cached for the whole run: every later use throws the same exception, nothing is
     /// retried
     /// </summary>
-    private static readonly Lazy<TestPortBlock> _block = new Lazy<TestPortBlock>(() => new TestPortBlock(TestPortBlocks.Protocol), LazyThreadSafetyMode.ExecutionAndPublication);
+    private static readonly Lazy<TestPortBlockSet> _block = new Lazy<TestPortBlockSet>(() => new TestPortBlockSet(TestPortBlocks.Protocol, TestPortBlocks.ProtocolSecond),
+        LazyThreadSafetyMode.ExecutionAndPublication);
 
     #endregion
 
@@ -74,7 +75,7 @@ internal static class TestPorts
     /// <summary>
     /// Block of ports of this test project
     /// </summary>
-    public static TestPortBlock Block => _block.Value;
+    public static TestPortBlockSet Block => _block.Value;
 
     #endregion
 

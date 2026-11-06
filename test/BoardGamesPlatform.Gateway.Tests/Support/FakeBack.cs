@@ -14,6 +14,8 @@ using BoardGamesPlatform.Protocol.Framing;
 using BoardGamesPlatform.Protocol.Links;
 using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
+using BoardGamesPlatform.Protocol.Transport.Tls;
+using BoardGamesPlatform.TestKit;
 using Microsoft.Extensions.Logging.Abstractions;
 
 // Static using
@@ -125,12 +127,13 @@ internal sealed class FakeBack : IAsyncDisposable
     /// </summary>
     private FakeBack()
     {
-        // Listening, then serving with the real link server
-        TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next()));
+        // Listening over mutual TLS as the Back (only the Gateway is accepted), then serving with the real link server
+        TlsTransportListener listener = new TlsTransportListener(TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next())),
+            TestTlsFiles.Shared.LoadCredentials(PlatformRole.Back), PlatformRole.Gateway, NullLogger.Instance);
         Port = listener.LocalEndPoint.Port;
-        OperationDispatcher dispatcher = new OperationDispatcher(NullLogger.Instance)
+        OperationDispatcher dispatcher = new OperationDispatcher(NullLogger.Instance, BackOperations.LinkMaxPayloadLength)
             .Register<PingRequest, PingResponse>(BackOperations.Ping, (_, _) => Task.FromResult(new PingResponse(PingTime)));
-        RequestServer server = new RequestServer(new FrameCodec(), dispatcher.HandleAsync);
+        RequestServer server = new RequestServer(new FrameCodec(BackOperations.LinkMaxPayloadLength), dispatcher.HandleAsync);
         LinkServer link = new LinkServer(
             listener, server, "the fake Back", new ConnectionSignalLogger(() => _connectionClosed.TrySetResult()), LinkServer.DefaultAcceptFailurePause);
         _stopping = new CancellationTokenSource();
