@@ -167,6 +167,9 @@ public sealed class GatewayHost : WebApplicationFactory<GatewayApp::Program>
     /// <inheritdoc/>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        // Keeping the Gateway from writing to the Event Log of the machine (see TestLogging)
+        builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(TestLogging.WithoutEventLog));
+
         // Pinning the environment and the settings the Gateway reads; added last, they win over the environment variables of the machine
         builder.UseEnvironment("Testing");
         builder.ConfigureAppConfiguration((_, configuration) =>
