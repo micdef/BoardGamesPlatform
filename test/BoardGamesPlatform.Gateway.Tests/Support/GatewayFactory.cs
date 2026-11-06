@@ -7,6 +7,7 @@
 
 // Using
 using BoardGamesPlatform.Gateway.BackLink;
+using BoardGamesPlatform.TestKit;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -176,6 +177,9 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
     /// <inheritdoc/>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        // Keeping the Gateway from writing to the Event Log of the machine (see TestLogging)
+        builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(TestLogging.WithoutEventLog));
+
         // Setting the hub path and the port of the Back
         Dictionary<string, string?> settings = new Dictionary<string, string?>();
         if (_hubPath is not null)
