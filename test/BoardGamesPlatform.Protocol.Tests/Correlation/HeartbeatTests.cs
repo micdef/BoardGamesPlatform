@@ -467,6 +467,84 @@ public sealed class HeartbeatTests
     }
 
     /// <summary>
+    /// A response the client never reads ends the service at the write deadline (L1 of the security review of 0.4.0), even while the client
+    /// keeps the connection alive with frames that need no answer
+    /// </summary>
+    [Fact(Timeout = TestTimeout)]
+    public async Task AWriteWithoutProgressEndsTheServiceAsync()
+    {
+        // Serving a connection on a fake clock whose writes never go through, as towards a client that stops reading
+        CancellationToken token = TestContext.Current.CancellationToken;
+        FakeTimeProvider clock = new FakeTimeProvider();
+        FrameCodec codec = new FrameCodec();
+        (ITransportConnection clientEnd, ITransportConnection serverEnd) = await ConnectAsync(token);
+        await using ITransportConnection raw = clientEnd;
+        ObservedConnection observed = new ObservedConnection(serverEnd);
+        await using GatedWriteConnection served = new GatedWriteConnection(observed);
+        Task serving = new RequestServer(new FrameCodec(), (request, requestToken) => Task.FromResult(request), heartbeat: _timings, timeProvider: clock)
+            .ServeAsync(served, token);
+
+        // A request whose response gets stuck, then a cancellation (read by the server) that keeps the connection alive
+        await codec.WriteAsync(raw.Stream, new Frame(1, new byte[] { 7 }), token);
+        await served.WaitForWriteAsync(token);
+        byte[] cancel = MessageSerializer.WriteControl(new CancelMessage(99));
+        await codec.WriteAsync(raw.Stream, new Frame(Frame.NoCorrelation, cancel), token);
+        await observed.WaitForReadAsync((FrameCodec.HeaderLength * 2) + 1 + cancel.Length, token);
+
+        // Moving the clock to the deadline of the write (the idle timeout is not passed: something was received at this time)
+        clock.Advance(_timings.ServerIdleTimeout);
+
+        // Check
+        TimeoutException failure = await Should.ThrowAsync<TimeoutException>(() => serving);
+        failure.Message.ShouldContain("read nothing of a frame");
+    }
+
+    /// <summary>
+    /// A large response read slowly keeps the service: the write deadline moves with each piece written, so the whole frame may take longer
+    /// than the deadline
+    /// </summary>
+    [Fact(Timeout = TestTimeout)]
+    public async Task AWriteThatProgressesSlowlyKeepsTheServiceAsync()
+    {
+        // Serving a connection on a fake clock whose writes go through one at a time, answering a large response
+        CancellationToken token = TestContext.Current.CancellationToken;
+        FakeTimeProvider clock = new FakeTimeProvider();
+        FrameCodec codec = new FrameCodec();
+        (ITransportConnection clientEnd, ITransportConnection serverEnd) = await ConnectAsync(token);
+        await using ITransportConnection raw = clientEnd;
+        ObservedConnection observed = new ObservedConnection(serverEnd);
+        await using GatedWriteConnection served = new GatedWriteConnection(observed);
+        byte[] response = Enumerable.Range(0, (3 * FrameCodec.WriteChunkLength) + 100).Select(value => (byte)value).ToArray();
+        Task serving = new RequestServer(new FrameCodec(), (request, requestToken) => Task.FromResult<ReadOnlyMemory<byte>>(response), heartbeat: _timings,
+            timeProvider: clock).ServeAsync(served, token);
+
+        // Sending the request, and reading the response while it is written
+        await codec.WriteAsync(raw.Stream, new Frame(1, new byte[] { 7 }), token);
+        long received = FrameCodec.HeaderLength + 1;
+        Task<Frame?> reading = codec.ReadAsync(raw.Stream, token);
+
+        // Letting each of the 4 pieces through after almost the deadline, a cancellation keeping the connection alive in between: the whole
+        // response takes more than 3 times the deadline
+        byte[] cancel = MessageSerializer.WriteControl(new CancelMessage(99));
+        for (int piece = 0; piece < 4; piece++)
+        {
+            await served.WaitForWriteAsync(token);
+            await codec.WriteAsync(raw.Stream, new Frame(Frame.NoCorrelation, cancel), token);
+            received += FrameCodec.HeaderLength + cancel.Length;
+            await observed.WaitForReadAsync(received, token);
+            clock.Advance(_timings.ServerIdleTimeout - TimeSpan.FromSeconds(1));
+            served.AllowWrite();
+        }
+
+        // Checks: the response is whole, the service goes on, and closing ends it cleanly
+        Frame answered = (await reading).ShouldNotBeNull();
+        answered.Payload.ToArray().ShouldBe(response);
+        serving.IsCompleted.ShouldBeFalse();
+        raw.Stream.Close();
+        await serving;
+    }
+
+    /// <summary>
     /// A server that reads everything but never answers is given up by the client, even while short requests leave at every interval: a
     /// write that completes is not a sign of life
     /// </summary>
