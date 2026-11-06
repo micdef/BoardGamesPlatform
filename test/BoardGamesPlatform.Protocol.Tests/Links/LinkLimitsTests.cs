@@ -7,6 +7,7 @@
 
 // Using
 using System.Net;
+using System.Net.Sockets;
 using BoardGamesPlatform.Back.Contracts;
 using BoardGamesPlatform.Back.Contracts.Ping;
 using BoardGamesPlatform.Protocol.Control;
@@ -206,6 +207,55 @@ public sealed class LinkLimitsTests
     }
 
     /// <summary>
+    /// Method used to open a connection that says nothing from a local address of the loopback network (127.0.0.0/8), as another source
+    /// </summary>
+    /// <param name="local">[Cannot be null] Local address of the connection</param>
+    /// <param name="port">Port of the server</param>
+    /// <param name="cancellationToken">Token of the test</param>
+    /// <returns>
+    /// The connected socket, to dispose
+    /// </returns>
+    private static async Task<Socket> OpenSilentFromAsync(IPAddress local, int port, CancellationToken cancellationToken)
+    {
+        // Binding the local address, then connecting
+        Socket socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        socket.Bind(new IPEndPoint(local, 0));
+        await socket.ConnectAsync(new IPEndPoint(IPAddress.Loopback, port), cancellationToken);
+
+        // Function's return
+        return socket;
+    }
+
+    /// <summary>
+    /// Method used to check that the server closes a connection without a byte
+    /// </summary>
+    /// <param name="connection">[Cannot be null] Connection opened by the test</param>
+    /// <param name="cancellationToken">Token of the test</param>
+    /// <returns>
+    /// A task that completes once the close is seen
+    /// </returns>
+    private static async Task ShouldBeClosedAsync(ITransportConnection connection, CancellationToken cancellationToken)
+    {
+        // Reading: the server closes the connection without a byte (or resets it)
+        Exception? end = await Record.ExceptionAsync(async () => (await new FrameCodec().ReadAsync(connection.Stream, cancellationToken)).ShouldBeNull());
+        (end is null or IOException).ShouldBeTrue(end?.ToString());
+    }
+
+    /// <summary>
+    /// Method used to check that the server closes a socket without a byte
+    /// </summary>
+    /// <param name="socket">[Cannot be null] Socket opened by the test</param>
+    /// <param name="cancellationToken">Token of the test</param>
+    /// <returns>
+    /// A task that completes once the close is seen
+    /// </returns>
+    private static async Task ShouldBeClosedAsync(Socket socket, CancellationToken cancellationToken)
+    {
+        // Reading: the server closes the socket without a byte (or resets it)
+        Exception? end = await Record.ExceptionAsync(async () => (await socket.ReceiveAsync(new byte[1], SocketFlags.None, cancellationToken)).ShouldBe(0));
+        (end is null or SocketException).ShouldBeTrue(end?.ToString());
+    }
+    /// <summary>
     /// Method used to dispose connections
     /// </summary>
     /// <param name="connections">[Cannot be null] Connections to dispose</param>
@@ -373,10 +423,11 @@ public sealed class LinkLimitsTests
     }
 
     /// <summary>
-    /// A source that already holds its part of the places of the handshakes gets no other one, and the refusal is logged
+    /// A source that holds its part of the places of the handshakes makes room with its own oldest connection: a new connection of the source
+    /// is taken, its oldest one closed, and the close is logged
     /// </summary>
     [Fact(Timeout = TestTimeout)]
-    public async Task ASourceBeyondItsPartOfTheHandshakesIsRefusedAsync()
+    public async Task ASourceBeyondItsPartClosesItsOldestHandshakeAsync()
     {
         // Starting a server that gives two places of the handshakes to a source, and taking them
         CancellationToken token = TestContext.Current.CancellationToken;
@@ -384,12 +435,12 @@ public sealed class LinkLimitsTests
         using CancellationTokenSource stopping = new CancellationTokenSource();
         Task running = StartServer(new LinkServerLimits(8, 4, 2, TimeSpan.Zero), ProtocolHandshake.DefaultServerTimeout, TimeProvider.System, logger, stopping.Token,
             out int port);
-        List<ITransportConnection> silent = await OpenSilentAsync(port, 2, token);
+        List<ITransportConnection> silent = await OpenSilentAsync(port, 3, token);
         try
         {
-            // Checks
-            await ShouldBeRefusedAsync(port, token);
-            logger.Entries.ShouldContain(entry => entry.Level == LogLevel.Warning && entry.Message.Contains("its source already has 2 connections in their handshake"));
+            // Checks: the oldest is closed, and the close is logged
+            await ShouldBeClosedAsync(silent[0], token);
+            logger.Entries.ShouldContain(entry => entry.Level == LogLevel.Warning && entry.Message.Contains("its source had 2 connections in their handshake"));
         }
         finally
         {
@@ -400,32 +451,62 @@ public sealed class LinkLimitsTests
     }
 
     /// <summary>
-    /// When every place of the handshakes is taken, a new connection is refused, and the refusal is logged
+    /// When every place of the handshakes is taken by several sources, a new connection is taken and the oldest connection of all closed
     /// </summary>
     [Fact(Timeout = TestTimeout)]
-    public async Task EveryHandshakePlaceTakenRefusesANewConnectionAsync()
+    public async Task EveryHandshakePlaceTakenClosesTheOldestAsync()
     {
-        // Starting a server with two places of the handshakes, and taking them
+        // Starting a server with two places of the handshakes, taken by two sources
         CancellationToken token = TestContext.Current.CancellationToken;
         CapturingLogger<LinkLimitsTests> logger = new CapturingLogger<LinkLimitsTests>();
         using CancellationTokenSource stopping = new CancellationTokenSource();
         Task running = StartServer(new LinkServerLimits(8, 2, 2, TimeSpan.Zero), ProtocolHandshake.DefaultServerTimeout, TimeProvider.System, logger, stopping.Token,
             out int port);
-        List<ITransportConnection> silent = await OpenSilentAsync(port, 2, token);
+        using Socket first = await OpenSilentFromAsync(IPAddress.Parse("127.0.0.2"), port, token);
+        using Socket second = await OpenSilentFromAsync(IPAddress.Parse("127.0.0.3"), port, token);
         try
         {
-            // Checks
-            await ShouldBeRefusedAsync(port, token);
-            logger.Entries.ShouldContain(entry => entry.Level == LogLevel.Warning && entry.Message.Contains("refused: 2 connections are already in their handshake"));
+            // A third source comes
+            using Socket third = await OpenSilentFromAsync(IPAddress.Parse("127.0.0.4"), port, token);
+
+            // Checks: the oldest is closed, and the close is logged
+            await ShouldBeClosedAsync(first, token);
+            logger.Entries.ShouldContain(entry => entry.Level == LogLevel.Warning && entry.Message.Contains("2 connections were in their handshake"));
         }
         finally
         {
-            await DisposeAllAsync(silent);
             await stopping.CancelAsync();
             await running;
         }
     }
 
+    /// <summary>
+    /// A source that holds connections in their handshake without end never keeps another source from being served
+    /// </summary>
+    [Fact(Timeout = TestTimeout)]
+    public async Task AFullSourceNeverKeepsAnotherSourceFromBeingServedAsync()
+    {
+        // Starting a server with four places of the handshakes, two per source, and a source that opens three silent connections
+        CancellationToken token = TestContext.Current.CancellationToken;
+        using CancellationTokenSource stopping = new CancellationTokenSource();
+        Task running = StartServer(new LinkServerLimits(8, 4, 2, TimeSpan.Zero), ProtocolHandshake.DefaultServerTimeout, TimeProvider.System, NullLogger.Instance,
+            stopping.Token, out int port);
+        IPAddress hostile = IPAddress.Parse("127.0.0.2");
+        using Socket first = await OpenSilentFromAsync(hostile, port, token);
+        using Socket second = await OpenSilentFromAsync(hostile, port, token);
+        using Socket third = await OpenSilentFromAsync(hostile, port, token);
+        try
+        {
+            // Check: the client tier, from its own source, is served
+            await using RequestClient client = await TestRequestClients.ConnectAsync("127.0.0.1", port, token);
+            (await client.SendAsync<PingRequest, PingResponse>(BackOperations.Ping, new PingRequest(), token)).ServerTime.ShouldBe(_pingTime);
+        }
+        finally
+        {
+            await stopping.CancelAsync();
+            await running;
+        }
+    }
     /// <summary>
     /// A connection closed at the end of its handshake timeout gives its place back: the next connection is served
     /// </summary>
@@ -531,7 +612,7 @@ public sealed class LinkLimitsTests
 
             // Checks: two refusals logged, the second one with the number of the two in between
             logger.Entries.Count(entry => entry.Message.Contains("refused: 1 connections are already served")).ShouldBe(2);
-            logger.Entries.ShouldContain(entry => entry.Level == LogLevel.Warning && entry.Message.Contains("2 other connections were refused without a log of their own"));
+            logger.Entries.ShouldContain(entry => entry.Level == LogLevel.Warning && entry.Message.Contains("2 other connections were refused or closed in their handshake without a log of their own"));
         }
         finally
         {

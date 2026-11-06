@@ -192,7 +192,7 @@ public sealed class TlsCredentialsTests : IDisposable
         // Checks: another role (the Gateway has no server usage; the Very Back has it, but not the name of the Back), another authority,
         // expired, a certificate refused, without the usage of a client
         Replace(_certificates.Issue(PlatformRole.Gateway), Password);
-        Should.Throw<InvalidOperationException>(() => Load()).Message.ShouldContain("NotValidForUsage");
+        Should.Throw<InvalidOperationException>(() => Load()).Message.ShouldContain("does not allow the usage");
         Replace(_certificates.Issue(PlatformRole.VeryBack), Password);
         Should.Throw<InvalidOperationException>(() => Load()).Message.ShouldContain("not the one of back.bgp.test");
         Replace(other.Issue(PlatformRole.Back), Password);
@@ -203,7 +203,7 @@ public sealed class TlsCredentialsTests : IDisposable
         Replace(refused, Password);
         Should.Throw<InvalidOperationException>(() => Load(new string[] { PeerCertificateValidator.GetThumbprint(refused) })).Message.ShouldContain("refused list");
         Replace(_certificates.IssueWithUsages(PlatformRole.Back, PlatformIdentity.ServerAuthenticationOid), Password);
-        Should.Throw<InvalidOperationException>(() => Load()).Message.ShouldContain("NotValidForUsage");
+        Should.Throw<InvalidOperationException>(() => Load()).Message.ShouldContain("does not allow the usage");
 
         // Checks: a wrong password, a missing file, a refused thumbprint that is not one
         Replace(_certificates.Issue(PlatformRole.Back), "another-password");
@@ -274,6 +274,89 @@ public sealed class TlsCredentialsTests : IDisposable
         _logger.Entries.ShouldContain(entry => entry.Level == LogLevel.Warning && entry.Message.Contains("renew it"));
     }
 
+    /// <summary>
+    /// The periodic check warns once a day at most when the certificate in use expires soon, and logs an error once it expired, though no
+    /// connection opens: a tier whose links stay open still warns
+    /// </summary>
+    [Fact]
+    public void ThePeriodicCheckWarnsBeforeTheExpiryAndAfterIt()
+    {
+        // Loading a certificate that expires in 40 days, on a fake clock
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        FakeTimeProvider clock = new FakeTimeProvider(now);
+        Replace(_certificates.Issue(PlatformRole.Back, now.AddDays(-1), now.AddDays(40)), Password);
+        _certificates.WriteTrustedRoots(RootsPath);
+        using TlsCredentials credentials = Load(clock: clock);
+        _logger.Entries.ShouldNotContain(entry => entry.Level == LogLevel.Warning);
+
+        // Checks: 13 days later (3 of them within the warning delay), a warning per day at most
+        clock.Advance(TimeSpan.FromDays(13));
+        int warnings = _logger.Entries.Count(entry => entry.Level == LogLevel.Warning && entry.Message.Contains("renew it"));
+        warnings.ShouldBeInRange(1, 4);
+
+        // Check: once expired, an error
+        clock.Advance(TimeSpan.FromDays(28));
+        _logger.Entries.ShouldContain(entry => entry.Level == LogLevel.Error && entry.Message.Contains("expired on"));
+    }
+
+    /// <summary>
+    /// The periodic check takes a renewed PFX though no connection opens
+    /// </summary>
+    [Fact]
+    public void ThePeriodicCheckTakesARenewal()
+    {
+        // Loading a certificate on a fake clock, then renewing it
+        FakeTimeProvider clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        Replace(_certificates.Issue(PlatformRole.Back), Password);
+        _certificates.WriteTrustedRoots(RootsPath);
+        using TlsCredentials credentials = Load(clock: clock);
+        X509Certificate2 renewed = _certificates.Issue(PlatformRole.Back);
+        Replace(renewed, Password);
+
+        // Check: taken at the next check
+        clock.Advance(TlsCredentials.CheckInterval);
+        PeerCertificateValidator.GetThumbprint(credentials.Certificate).ShouldBe(PeerCertificateValidator.GetThumbprint(renewed));
+    }
+
+    /// <summary>
+    /// A renewed PFX that cannot be read yet (a copy in progress) is logged, then taken at the next try, though its change time does not move
+    /// again
+    /// </summary>
+    [Fact]
+    public void ARenewalThatCannotBeReadYetIsTriedAgain()
+    {
+        // Loading a certificate, then renewing it while the file is held open by another writer
+        Replace(_certificates.Issue(PlatformRole.Back), Password);
+        _certificates.WriteTrustedRoots(RootsPath);
+        TlsCredentials credentials = Load();
+        X509Certificate2 current = credentials.Certificate;
+        X509Certificate2 renewed = _certificates.Issue(PlatformRole.Back);
+        Replace(renewed, Password);
+        using (FileStream copying = new FileStream(PfxPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            // Checks: the read fails, the current certificate stays, the failure says why
+            credentials.ReloadIfChanged();
+            PeerCertificateValidator.GetThumbprint(credentials.Certificate).ShouldBe(PeerCertificateValidator.GetThumbprint(current));
+            _logger.Entries.ShouldContain(entry => entry.Level == LogLevel.Error && entry.Message.Contains("were refused"));
+        }
+
+        // Check: once the copy ends, the next try takes it
+        credentials.ReloadIfChanged();
+        PeerCertificateValidator.GetThumbprint(credentials.Certificate).ShouldBe(PeerCertificateValidator.GetThumbprint(renewed));
+    }
+
+    /// <summary>
+    /// TLS 1.3 is known to be missing on Windows before Windows Server 2022 (build 20348), and left to OpenSSL on the other systems
+    /// </summary>
+    [Fact]
+    public void TheSystemsWithoutTls13AreKnown()
+    {
+        // Checks
+        TlsCredentials.HasTls13(isWindows: true, new Version(10, 0, 17763)).ShouldBeFalse();
+        TlsCredentials.HasTls13(isWindows: true, new Version(10, 0, 20348)).ShouldBeTrue();
+        TlsCredentials.HasTls13(isWindows: true, new Version(10, 0, 26100)).ShouldBeTrue();
+        TlsCredentials.HasTls13(isWindows: false, new Version(6, 1)).ShouldBeTrue();
+    }
     /// <summary>
     /// Method used to delete the folder of the test and release the certificates
     /// </summary>

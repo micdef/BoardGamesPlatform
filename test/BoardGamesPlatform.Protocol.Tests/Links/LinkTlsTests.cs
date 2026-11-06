@@ -6,6 +6,7 @@
  */
 
 // Using
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using BoardGamesPlatform.Back.Contracts;
@@ -243,6 +244,40 @@ public sealed class LinkTlsTests : IDisposable
         _certificates.Dispose();
     }
 
+    /// <summary>
+    /// A peer that starts TLS, then stops in the middle of its first message, is closed when the handshake timeout elapses: the timeout covers
+    /// the TLS handshake itself
+    /// </summary>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    [Fact(Timeout = TestTimeout)]
+    public async Task APeerSilentInTheMiddleOfTlsIsClosedAtTheTimeoutAsync()
+    {
+        // Running the Back with a short handshake timeout, and sending the start of a TLS record (a handshake of 80 bytes) without its end
+        CancellationToken token = TestContext.Current.CancellationToken;
+        using CancellationTokenSource stopping = CancellationTokenSource.CreateLinkedTokenSource(token);
+        int port = StartBack(TimeSpan.FromSeconds(1), stopping.Token, out Task running);
+        using TcpClient partial = new TcpClient();
+        await partial.ConnectAsync(IPAddress.Loopback, port, token);
+        NetworkStream stream = partial.GetStream();
+        await stream.WriteAsync(new byte[] { 0x16, 0x03, 0x01, 0x00, 0x50, 0x01 }, token);
+
+        // Check: the server closes it within a few seconds, without waiting for the rest
+        byte[] buffer = new byte[1];
+        Stopwatch watch = Stopwatch.StartNew();
+        Exception? end = await Record.ExceptionAsync(async () =>
+        {
+            if (await stream.ReadAsync(buffer, token) != 0)
+                throw new InvalidOperationException("The server answered a TLS record that never ended");
+        });
+        (end is null or IOException).ShouldBeTrue(end?.ToString());
+        watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(8));
+
+        // Stopping the Back
+        await stopping.CancelAsync();
+        await running;
+    }
     #endregion
 
     #endregion
