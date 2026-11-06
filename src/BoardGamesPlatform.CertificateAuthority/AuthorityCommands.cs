@@ -10,6 +10,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using BoardGamesPlatform.Protocol.Transport.Secure;
 using BoardGamesPlatform.Protocol.Transport.Tls;
 
 // Static using
@@ -58,6 +59,11 @@ internal sealed class AuthorityCommands
     /// Environment variable holding the password of the key and of the PFX of a tier
     /// </summary>
     public const string CertificatePasswordVariable = "BOARDGAMESPLATFORM_CERTIFICATE_PASSWORD";
+
+    /// <summary>
+    /// Environment variable holding the password of the signing key of the secure channel of a tier
+    /// </summary>
+    public const string SigningKeyPasswordVariable = "BOARDGAMESPLATFORM_SIGNING_KEY_PASSWORD";
 
     /// <summary>
     /// Shortest password accepted for a new key
@@ -123,9 +129,10 @@ internal sealed class AuthorityCommands
           sign    --dir <folder> --request <file.csr> --role <gateway|back|veryback> --suffix <suffix> [--days <1-397>] --out <file.crt>
           install --key <file.key> --certificate <file.crt> --authority <platform-ca.crt> --out <file.pfx>
           list    --dir <folder>
+          signing-key --role <back|veryback> --out <folder>
 
-        Passwords: BOARDGAMESPLATFORM_CA_PASSWORD (root key) and BOARDGAMESPLATFORM_CERTIFICATE_PASSWORD (key and PFX of a tier),
-        else asked on the console. No file is ever overwritten.
+        Passwords: BOARDGAMESPLATFORM_CA_PASSWORD (root key), BOARDGAMESPLATFORM_CERTIFICATE_PASSWORD (key and PFX of a tier) and
+        BOARDGAMESPLATFORM_SIGNING_KEY_PASSWORD (signing key of the secure channel), else asked on the console. No file is ever overwritten.
         """;
 
     #endregion
@@ -594,6 +601,35 @@ internal sealed class AuthorityCommands
             _output.WriteLine(line);
     }
 
+    /// <summary>
+    /// Method used to create the signing key of the secure channel of a tier, and the line of its public key for the peer
+    /// </summary>
+    /// <param name="args">[Cannot be null] Options of the command</param>
+    private void SigningKey(string[] args)
+    {
+        // Reading the options: only the two ends of the secure channel have a signing key; refusing existing files
+        Dictionary<string, string> options = ReadOptions(args, "role", "out");
+        if (!PlatformIdentity.TryParseRole(Require(options, "role"), out PlatformRole role) || role is not (PlatformRole.Back or PlatformRole.VeryBack))
+            throw new UsageException("The option --role must be back or veryback: only the Back -> Very Back link has a secure channel");
+        string directory = Require(options, "out");
+        string roleName = PlatformIdentity.GetRoleName(role);
+        string keyPath = Path.Combine(directory, $"{roleName}-signing.key");
+        string publicKeyPath = Path.Combine(directory, $"{roleName}-signing.pub");
+        RefuseExisting(keyPath, publicKeyPath);
+        string password = ReadPassword(SigningKeyPasswordVariable, "New password of the signing key of the tier", isNew: true);
+
+        // Creating the key, written encrypted, and its normalized public key, one line for the file of the peer
+        using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        SigningPublicKey publicKey = SigningPublicKey.FromKey(key);
+        PbeParameters encryption = new PbeParameters(PbeEncryptionAlgorithm.Aes256Cbc, HashAlgorithmName.SHA256, KeyDerivationIterations);
+        Directory.CreateDirectory(directory);
+        WriteNew(keyPath, Encoding.ASCII.GetBytes(key.ExportEncryptedPkcs8PrivateKeyPem(password, encryption)), isPrivate: true);
+        WriteNew(publicKeyPath, Encoding.ASCII.GetBytes(publicKey.ToBase64() + Environment.NewLine), isPrivate: false);
+        _output.WriteLine($"Signing key of the {roleName} created, key id {publicKey.KeyIdHex}");
+        _output.WriteLine($"Key (never copy it elsewhere): {keyPath}");
+        _output.WriteLine($"Public key, a line to add to the file of the public keys of the peer: {publicKeyPath}");
+    }
+
     #endregion
 
     #region Publics
@@ -629,6 +665,9 @@ internal sealed class AuthorityCommands
                     break;
                 case "list":
                     List(options);
+                    break;
+                case "signing-key":
+                    SigningKey(options);
                     break;
                 default:
                     throw new UsageException(args.Length == 0 ? "No command" : $"Unknown command: {args[0]}");
