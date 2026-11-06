@@ -257,8 +257,10 @@ public sealed class SecureHandshakeTests : IDisposable
         // Acting
         (Task<SessionSecrets> client, Task<SessionSecrets> server) = await RunBothAsync(clientKeys, serverKeys);
 
-        // Checks: nothing is sent to the client, which only sees the connection close
-        (await Should.ThrowAsync<SecureChannelException>(server)).Reason.ShouldBe(SecureChannelFailure.UnknownKey);
+        // Checks: nothing is sent to the client, which only sees the connection close; the server tells which key id was named
+        SecureChannelException refused = await Should.ThrowAsync<SecureChannelException>(server);
+        refused.Reason.ShouldBe(SecureChannelFailure.UnknownKey);
+        refused.KeyIdHex.ShouldBe(clientKeys.OwnKey.KeyIdHex);
         (await Should.ThrowAsync<SecureChannelException>(client)).Reason.ShouldBe(SecureChannelFailure.PeerClosed);
     }
 
@@ -399,6 +401,7 @@ public sealed class SecureHandshakeTests : IDisposable
     [InlineData("suite", SecureChannelFailure.UnsupportedVersion)]
     [InlineData("point", SecureChannelFailure.Malformed)]
     [InlineData("keyId", SecureChannelFailure.UnknownKey)]
+    [InlineData("serverKeyId", SecureChannelFailure.UnknownKey)]
     [InlineData("short", SecureChannelFailure.PeerClosed)]
     public async Task AChangedFirstMessageIsRefusedAsync(string change, SecureChannelFailure reason)
     {
@@ -424,6 +427,9 @@ public sealed class SecureHandshakeTests : IDisposable
                 break;
             case "keyId":
                 hello[^1] ^= 0x01;
+                break;
+            case "serverKeyId":
+                serverKeys.OwnKey.KeyId.ToArray().CopyTo(hello, hello.Length - SigningPublicKey.KeyIdLength);
                 break;
             default:
                 hello = hello[..100];
@@ -467,6 +473,283 @@ public sealed class SecureHandshakeTests : IDisposable
 
         // Check
         ((SecureChannelException)failure).Reason.ShouldBe(SecureChannelFailure.BadSignature);
+    }
+
+    /// <summary>
+    /// Both signatures cover the transcript exactly as the specification composes it: the hashes of both certificates, then the messages
+    /// </summary>
+    /// <returns>
+    /// A task that completes once checked
+    /// </returns>
+    [Fact]
+    public async Task TheSignaturesCoverTheTranscriptAsTheSpecificationSaysAsync()
+    {
+        // Arranging: both ends record what they write
+        ECDsa clientKey = SecureChannelTestKeys.CreateSigningKey();
+        ECDsa serverKey = SecureChannelTestKeys.CreateSigningKey();
+        SigningKeySet clientKeys = SecureChannelTestKeys.CreateSet(clientKey, serverKey);
+        SigningKeySet serverKeys = SecureChannelTestKeys.CreateSet(serverKey, clientKey);
+        (NetworkStream clientStream, NetworkStream serverStream) = await SecureChannelTestKeys.OpenStreamsAsync();
+        using MemoryStream clientWrites = new MemoryStream();
+        using MemoryStream serverWrites = new MemoryStream();
+        CancellationToken token = TestContext.Current.CancellationToken;
+
+        // Acting
+        Task<SessionSecrets> server = RunAndCloseAsync(serverStream, () => SecureHandshake.RunServerAsync(new RecordingStream(serverStream, serverWrites), serverKeys,
+            _serverCertificate, _clientCertificate, HandshakeEntropy.System, _ => true, token));
+        using SessionSecrets clientSecrets = await RunAndCloseAsync(clientStream, () => SecureHandshake.RunClientAsync(new RecordingStream(clientStream, clientWrites),
+            clientKeys, _serverCertificate, _clientCertificate, HandshakeEntropy.System, _ => true, token));
+        (await server).Dispose();
+
+        // Checks: each signature verifies over the transcript composed here, field by field, as the specification writes it
+        byte[] m1 = clientWrites.ToArray()[..SecureHandshake.ClientHelloLength];
+        byte[] m3 = clientWrites.ToArray()[SecureHandshake.ClientHelloLength..];
+        byte[] m2 = serverWrites.ToArray();
+        byte[] certS = SHA256.HashData(_serverCertificate.RawData);
+        byte[] certC = SHA256.HashData(_clientCertificate.RawData);
+        byte[] t2 = SHA256.HashData([.. certS, .. certC, .. m1, .. m2[..SecureHandshake.ClientHelloLength]]);
+        byte[] t3 = SHA256.HashData([.. certS, .. certC, .. m1, .. m2]);
+        m3.Length.ShouldBe(SecureHandshake.ClientSignatureLength);
+        serverKeys.OwnKey.Verify([.. "BGPS v1 back-veryback server signature"u8.ToArray(), 0x00, .. t2], m2.AsSpan(SecureHandshake.ClientHelloLength)).ShouldBeTrue();
+        clientKeys.OwnKey.Verify([.. "BGPS v1 back-veryback client signature"u8.ToArray(), 0x00, .. t3], m3).ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// A party in the middle that replaces the ephemeral key of the server by another valid point breaks the signature of the server
+    /// </summary>
+    /// <returns>
+    /// A task that completes once checked
+    /// </returns>
+    [Fact]
+    public async Task AReplacedEphemeralKeyBreaksTheSignatureAsync()
+    {
+        // Arranging two connections joined by a party in the middle
+        ECDsa clientKey = SecureChannelTestKeys.CreateSigningKey();
+        ECDsa serverKey = SecureChannelTestKeys.CreateSigningKey();
+        SigningKeySet clientKeys = SecureChannelTestKeys.CreateSet(clientKey, serverKey);
+        SigningKeySet serverKeys = SecureChannelTestKeys.CreateSet(serverKey, clientKey);
+        (NetworkStream clientStream, NetworkStream middleToClient) = await SecureChannelTestKeys.OpenStreamsAsync();
+        (NetworkStream middleToServer, NetworkStream serverStream) = await SecureChannelTestKeys.OpenStreamsAsync();
+        CancellationToken token = TestContext.Current.CancellationToken;
+        Task<SessionSecrets> client = RunAndCloseAsync(clientStream, () => SecureHandshake.RunClientAsync(clientStream, clientKeys, _serverCertificate, _clientCertificate,
+            HandshakeEntropy.System, _ => true, token));
+        Task<SessionSecrets> server = RunAndCloseAsync(serverStream, () => SecureHandshake.RunServerAsync(serverStream, serverKeys, _serverCertificate, _clientCertificate,
+            HandshakeEntropy.System, _ => true, token));
+
+        // Acting: M1 relayed as it is, M2 with the ephemeral key of the vector instead of the one of the server
+        await using (middleToClient)
+        await using (middleToServer)
+        {
+            byte[] m1 = new byte[SecureHandshake.ClientHelloLength];
+            await middleToClient.ReadExactlyAsync(m1, token);
+            await middleToServer.WriteAsync(m1, token);
+            byte[] m2 = new byte[SecureHandshake.ServerHelloLength];
+            await middleToServer.ReadExactlyAsync(m2, token);
+            Bytes(ServerEphemeralPoint).CopyTo(m2, 4 + 1 + 1 + HandshakeEntropy.NonceLength);
+            await middleToClient.WriteAsync(m2, token);
+
+            // Check
+            (await Should.ThrowAsync<SecureChannelException>(client)).Reason.ShouldBe(SecureChannelFailure.BadSignature);
+        }
+        await Should.ThrowAsync<SecureChannelException>(server);
+    }
+
+    /// <summary>
+    /// The signature of the server sent back as the signature of the client is refused: the labels of the roles differ
+    /// </summary>
+    /// <returns>
+    /// A task that completes once checked
+    /// </returns>
+    [Fact]
+    public async Task TheSignatureOfTheServerSentBackIsRefusedAsync()
+    {
+        // Arranging: a client played by the test, with a pinned key id but no signing key
+        ECDsa clientKey = SecureChannelTestKeys.CreateSigningKey();
+        ECDsa serverKey = SecureChannelTestKeys.CreateSigningKey();
+        SigningKeySet clientKeys = SecureChannelTestKeys.CreateSet(clientKey, serverKey);
+        SigningKeySet serverKeys = SecureChannelTestKeys.CreateSet(serverKey, clientKey);
+        (NetworkStream clientStream, NetworkStream serverStream) = await SecureChannelTestKeys.OpenStreamsAsync();
+        CancellationToken token = TestContext.Current.CancellationToken;
+        Task<SessionSecrets> server = RunAndCloseAsync(serverStream, () => SecureHandshake.RunServerAsync(serverStream, serverKeys, _serverCertificate, _clientCertificate,
+            HandshakeEntropy.System, _ => true, token));
+
+        // Acting: M1, then the signature of the server as M3
+        await using (clientStream)
+        {
+            await clientStream.WriteAsync(BuildClientHello(clientKeys), token);
+            byte[] m2 = new byte[SecureHandshake.ServerHelloLength];
+            await clientStream.ReadExactlyAsync(m2, token);
+            await clientStream.WriteAsync(m2.AsMemory(SecureHandshake.ClientHelloLength), token);
+
+            // Check
+            (await Should.ThrowAsync<SecureChannelException>(server)).Reason.ShouldBe(SecureChannelFailure.BadSignature);
+        }
+    }
+
+    /// <summary>
+    /// A changed second message is refused by the client with its reason, and the client sends no third message
+    /// </summary>
+    /// <param name="change">What is changed in M2</param>
+    /// <param name="reason">Reason expected</param>
+    /// <returns>
+    /// A task that completes once checked
+    /// </returns>
+    [Theory]
+    [InlineData("none", SecureChannelFailure.BadSignature)]
+    [InlineData("magic", SecureChannelFailure.Malformed)]
+    [InlineData("version", SecureChannelFailure.UnsupportedVersion)]
+    [InlineData("suite", SecureChannelFailure.UnsupportedVersion)]
+    [InlineData("point", SecureChannelFailure.Malformed)]
+    [InlineData("keyId", SecureChannelFailure.UnknownKey)]
+    [InlineData("zeroSignature", SecureChannelFailure.Malformed)]
+    [InlineData("short", SecureChannelFailure.PeerClosed)]
+    public async Task AChangedSecondMessageIsRefusedAsync(string change, SecureChannelFailure reason)
+    {
+        // Arranging an M2 well formed, with the key id the client pins, and a signature in range that the server never made
+        ECDsa clientKey = SecureChannelTestKeys.CreateSigningKey();
+        ECDsa serverKey = SecureChannelTestKeys.CreateSigningKey();
+        SigningKeySet clientKeys = SecureChannelTestKeys.CreateSet(clientKey, serverKey);
+        byte[] m2 = [.. "BGPS"u8.ToArray(), SecureHandshake.Version, SecureHandshake.Suite, .. Bytes(ServerNonce), .. Bytes(ServerEphemeralPoint),
+            .. SigningPublicKey.FromKey(serverKey).KeyId.ToArray(), .. Bytes(Signature)];
+        switch (change)
+        {
+            case "magic":
+                m2[0] = (byte)'X';
+                break;
+            case "version":
+                m2[4] = 2;
+                break;
+            case "suite":
+                m2[5] = 2;
+                break;
+            case "point":
+                m2[6 + 32 + 64] ^= 0x01;
+                break;
+            case "keyId":
+                m2[134] ^= 0x01;
+                break;
+            case "zeroSignature":
+                Array.Clear(m2, SecureHandshake.ClientHelloLength, P256.SignatureLength);
+                break;
+            case "short":
+                m2 = m2[..150];
+                break;
+        }
+        ScriptedStream stream = new ScriptedStream(m2);
+
+        // Acting
+        SecureChannelException failure = await Should.ThrowAsync<SecureChannelException>(SecureHandshake.RunClientAsync(stream, clientKeys, _serverCertificate,
+            _clientCertificate, HandshakeEntropy.System, _ => true, TestContext.Current.CancellationToken));
+
+        // Checks: the reason, and nothing sent after M1
+        failure.Reason.ShouldBe(reason);
+        stream.Written.Length.ShouldBe(SecureHandshake.ClientHelloLength);
+    }
+
+    /// <summary>
+    /// A third message out of range, not signed by the client, or missing is refused by the server, which reads no record
+    /// </summary>
+    /// <param name="change">What the client sends as M3</param>
+    /// <param name="reason">Reason expected</param>
+    /// <returns>
+    /// A task that completes once checked
+    /// </returns>
+    [Theory]
+    [InlineData("zero", SecureChannelFailure.Malformed)]
+    [InlineData("otherSignature", SecureChannelFailure.BadSignature)]
+    [InlineData("none", SecureChannelFailure.PeerClosed)]
+    public async Task AChangedThirdMessageIsRefusedAsync(string change, SecureChannelFailure reason)
+    {
+        // Arranging M1 of the client, then the M3 of the case
+        ECDsa clientKey = SecureChannelTestKeys.CreateSigningKey();
+        ECDsa serverKey = SecureChannelTestKeys.CreateSigningKey();
+        SigningKeySet clientKeys = SecureChannelTestKeys.CreateSet(clientKey, serverKey);
+        SigningKeySet serverKeys = SecureChannelTestKeys.CreateSet(serverKey, clientKey);
+        byte[] m3 = change switch
+        {
+            "zero" => new byte[P256.SignatureLength],
+            "otherSignature" => Bytes(Signature),
+            _ => []
+        };
+        ScriptedStream stream = new ScriptedStream([.. BuildClientHello(clientKeys), .. m3]);
+
+        // Acting
+        SecureChannelException failure = await Should.ThrowAsync<SecureChannelException>(SecureHandshake.RunServerAsync(stream, serverKeys, _serverCertificate,
+            _clientCertificate, HandshakeEntropy.System, _ => true, TestContext.Current.CancellationToken));
+
+        // Checks: the reason, and nothing written after M2
+        failure.Reason.ShouldBe(reason);
+        stream.Written.Length.ShouldBe(SecureHandshake.ServerHelloLength);
+    }
+
+    /// <summary>
+    /// Random and mutated messages never succeed and never fail otherwise than with a reason of the closed list, on either side
+    /// </summary>
+    /// <param name="seed">Seed of the messages, so that a failure can be replayed</param>
+    /// <returns>
+    /// A task that completes once checked
+    /// </returns>
+    [Theory]
+    [InlineData(11)]
+    [InlineData(12)]
+    [InlineData(13)]
+    public async Task RandomMessagesAreRefusedWithAReasonAsync(int seed)
+    {
+        // Arranging
+        Random random = new Random(seed);
+        ECDsa clientKey = SecureChannelTestKeys.CreateSigningKey();
+        ECDsa serverKey = SecureChannelTestKeys.CreateSigningKey();
+        SigningKeySet clientKeys = SecureChannelTestKeys.CreateSet(clientKey, serverKey);
+        SigningKeySet serverKeys = SecureChannelTestKeys.CreateSet(serverKey, clientKey);
+        byte[] validHello = BuildClientHello(clientKeys);
+        byte[] validServerHello = [.. "BGPS"u8.ToArray(), SecureHandshake.Version, SecureHandshake.Suite, .. Bytes(ServerNonce), .. Bytes(ServerEphemeralPoint),
+            .. serverKeys.OwnKey.KeyId.ToArray(), .. Bytes(Signature)];
+        CancellationToken token = TestContext.Current.CancellationToken;
+
+        // Acting and checking, 60 messages per side: random bytes of any length, or a valid message with 1 to 3 bytes changed
+        for (int index = 0; index < 60; index++)
+        {
+            byte[] toServer = Mutate(random, validHello, SecureHandshake.ClientHelloLength + P256.SignatureLength);
+            byte[] toClient = Mutate(random, validServerHello, SecureHandshake.ServerHelloLength);
+            SecureChannelException serverFailure = await Should.ThrowAsync<SecureChannelException>(SecureHandshake.RunServerAsync(new ScriptedStream(toServer),
+                serverKeys, _serverCertificate, _clientCertificate, HandshakeEntropy.System, _ => true, token));
+            SecureChannelException clientFailure = await Should.ThrowAsync<SecureChannelException>(SecureHandshake.RunClientAsync(new ScriptedStream(toClient),
+                clientKeys, _serverCertificate, _clientCertificate, HandshakeEntropy.System, _ => true, token));
+            Enum.IsDefined(serverFailure.Reason).ShouldBeTrue();
+            Enum.IsDefined(clientFailure.Reason).ShouldBeTrue();
+        }
+    }
+
+    /// <summary>
+    /// Method used to make a random message: random bytes of any length, or a valid message with 1 to 3 bytes changed and random bytes after
+    /// </summary>
+    /// <param name="random">[Cannot be null] Source of the seed of the test</param>
+    /// <param name="valid">[Cannot be null] Valid message</param>
+    /// <param name="maxRandomLength">Longest random message</param>
+    /// <returns>
+    /// The message
+    /// </returns>
+    private static byte[] Mutate(Random random, byte[] valid, int maxRandomLength)
+    {
+        // Random bytes half of the time
+        if (random.Next(2) == 0)
+        {
+            byte[] noise = new byte[random.Next(0, maxRandomLength + 1)];
+            random.NextBytes(noise);
+
+            // Function's return
+            return noise;
+        }
+
+        // Else the valid message changed, followed by a random third message
+        byte[] mutated = [.. valid, .. new byte[P256.SignatureLength]];
+        random.NextBytes(mutated.AsSpan(valid.Length));
+        int changes = random.Next(1, 4);
+        for (int change = 0; change < changes; change++)
+            mutated[random.Next(valid.Length)] ^= (byte)random.Next(1, 256);
+
+        // Function's return
+        return mutated;
     }
 
     /// <summary>

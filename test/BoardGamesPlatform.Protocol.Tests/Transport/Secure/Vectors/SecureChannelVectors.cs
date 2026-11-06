@@ -111,6 +111,41 @@ internal static class SecureChannelVectors
     public const string Signature = "F5B46B3349D9BFFC339D899D971CCEDEAFD1A0380CBCD5F057C9D54A0AAF654277D58EDB5D146E8A03383A0D84A8C6AB448F153087A7BAD6AADAD2BB849D84B1";
 
     /// <summary>
+    /// Message signed by the client: its label, a zero byte, the hash of the transcript
+    /// </summary>
+    public const string ClientSignedMessage = "42475053207631206261636B2D766572796261636B20636C69656E74207369676E617475726500DFB7552747B53EE6C2C05E291AD27FBB7587227D473F2DC92F0EF9611DA4F0AF";
+
+    /// <summary>
+    /// Signature of the client message by the signing key, IEEE P1363
+    /// </summary>
+    public const string ClientSignature = "C0677305D43F997C8E1BDE758DC77890BA04A0BAB698B008DD3E99B2E54AC617289FEF8EA08753F610FFD4B9F3FD956635FF2D9256CE3A2DE800618D7504B4A8";
+
+    /// <summary>
+    /// Hash of the certificate of the server of the transcript vector (SHA-256 of "BGPS test server certificate")
+    /// </summary>
+    public const string TranscriptServerCertificate = "8ADB06240F640874DFF1C6F6CE7262105D08FE5FEA0E9A7CBBD520529D745925";
+
+    /// <summary>
+    /// Hash of the certificate of the client of the transcript vector (SHA-256 of "BGPS test client certificate")
+    /// </summary>
+    public const string TranscriptClientCertificate = "982E903E3F0103CFFDD029E7D706739B2D88DBA8AE812ADCBF153D4D0192CC93";
+
+    /// <summary>
+    /// T2 of the transcript vector: M1 = bytes 0 to 134, M2 = byte i * 7 mod 256 for i from 0 to 198, without its signature
+    /// </summary>
+    public const string TranscriptT2 = "0CF66E93E82B0464639DC338787CD909831E8990F910861E159126791AD40D81";
+
+    /// <summary>
+    /// T3 of the transcript vector: M1 and the whole M2
+    /// </summary>
+    public const string TranscriptT3 = "02BEBF3F7A15BE51D34332E30F06EDA0170EA97DA39B7F63C8DAA88C3F8A1DA4";
+
+    /// <summary>
+    /// TH of the transcript vector: M1, M2 and M3 = bytes 100 to 163
+    /// </summary>
+    public const string TranscriptTh = "43FDCE3939D09556EA4F960C4F8DC60063A77A4A5C2776847F4ED729A17DF707";
+
+    /// <summary>
     /// Plaintext of the first record client → server ("BGPS first record")
     /// </summary>
     public const string Record0Plaintext = "42475053206669727374207265636F7264";

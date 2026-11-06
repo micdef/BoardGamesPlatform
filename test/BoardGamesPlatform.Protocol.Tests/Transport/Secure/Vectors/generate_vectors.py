@@ -101,6 +101,24 @@ def main() -> None:
     show("SignedMessage", message)
     show("Signature", r.to_bytes(32, "big") + s.to_bytes(32, "big"))
 
+    # The client label, and the composition of the transcript: the hashes of both certificates, then the messages in their order
+    client_message = b"BGPS v1 back-veryback client signature\x00" + transcript_hash
+    r, s = decode_dss_signature(signing.sign(client_message, ec.ECDSA(hashes.SHA256())))
+    show("ClientSignedMessage", client_message)
+    show("ClientSignature", r.to_bytes(32, "big") + s.to_bytes(32, "big"))
+    cert_s = hashlib.sha256(b"BGPS test server certificate").digest()
+    cert_c = hashlib.sha256(b"BGPS test client certificate").digest()
+    m1 = bytes(range(135))
+    m2 = bytes((index * 7) % 256 for index in range(199))
+    m3 = bytes(range(100, 164))
+    show("TranscriptServerCertificate", cert_s)
+    show("TranscriptClientCertificate", cert_c)
+    show("TranscriptM1", m1)
+    show("TranscriptM2", m2)
+    show("TranscriptM3", m3)
+    show("TranscriptT2", hashlib.sha256(cert_s + cert_c + m1 + m2[:135]).digest())
+    show("TranscriptT3", hashlib.sha256(cert_s + cert_c + m1 + m2).digest())
+    show("TranscriptTh", hashlib.sha256(cert_s + cert_c + m1 + m2 + m3).digest())
     # The first two records client -> server: the nonce is the IV XOR the sequence number (0, then 1), the associated data the length
     c2s_key = hkdf_expand(prk, info(32, "BGPS v1 back-veryback c2s key", transcript_hash), 32)
     c2s_iv = hkdf_expand(prk, info(12, "BGPS v1 back-veryback c2s iv", transcript_hash), 12)

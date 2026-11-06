@@ -458,6 +458,80 @@ public sealed class SigningKeysTests : IDisposable
     }
 
     /// <summary>
+    /// A file of public keys in UTF-8 with a byte order mark is read; one in UTF-16 is refused
+    /// </summary>
+    [Fact]
+    public void TheFileOfThePeerIsReadAsUtf8Only()
+    {
+        // Arranging
+        WriteSigningKey(_ownKey);
+        File.WriteAllText(PeerKeysPath, Line(_peerKey) + Environment.NewLine, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        using (SigningKeys keys = Load())
+            keys.Current.PeerKeys.ShouldBe([SigningPublicKey.FromKey(_peerKey)]);
+
+        // Acting
+        File.WriteAllText(PeerKeysPath, Line(_peerKey) + Environment.NewLine, System.Text.Encoding.Unicode);
+
+        // Check
+        Should.Throw<InvalidOperationException>(() => Load()).Message.ShouldContain("UTF-8");
+    }
+
+    /// <summary>
+    /// Files that stay refused are told again every five minutes, not at every check, until they are fixed
+    /// </summary>
+    [Fact]
+    public void FilesThatStayRefusedAreToldAgainAtTheirPace()
+    {
+        // Arranging: loaded keys, then a broken list
+        DateTime before = DateTime.UtcNow.AddMinutes(-10);
+        WriteSigningKey(_ownKey, time: before);
+        WritePeerKeys(before, Line(_peerKey));
+        FakeTimeProvider clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        using SigningKeys keys = Load(clock);
+        WritePeerKeys(before.AddMinutes(1), "broken");
+
+        // Acting: a first check, a second one at once, then one five minutes later
+        keys.ReloadIfChanged();
+        int afterFirst = _logger.Entries.Count(entry => entry.Level == LogLevel.Error);
+        keys.ReloadIfChanged();
+        int afterSecond = _logger.Entries.Count(entry => entry.Level == LogLevel.Error);
+        clock.Advance(SigningKeys.RefusalRepeat);
+        keys.ReloadIfChanged();
+        int afterPace = _logger.Entries.Count(entry => entry.Level == LogLevel.Error);
+
+        // Checks
+        afterFirst.ShouldBe(1);
+        afterSecond.ShouldBe(1);
+        afterPace.ShouldBe(2);
+        keys.IsPinned(SigningPublicKey.FromKey(_peerKey)).ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// A listener of the removed keys that fails is logged, and never keeps the next listeners from being told nor stops the reload
+    /// </summary>
+    [Fact]
+    public void AFailingListenerKeepsTheOthersTold()
+    {
+        // Arranging two listeners, the first one failing
+        DateTime before = DateTime.UtcNow.AddMinutes(-10);
+        WriteSigningKey(_ownKey, time: before);
+        ECDsa second = NewKey();
+        WritePeerKeys(before, Line(_peerKey), Line(second));
+        using SigningKeys keys = Load();
+        bool isSecondTold = false;
+        keys.PeerKeysRemoved += (_, _) => throw new InvalidOperationException("A failing listener of the test");
+        keys.PeerKeysRemoved += (_, _) => isSecondTold = true;
+
+        // Acting
+        WritePeerKeys(before.AddMinutes(1), Line(second));
+        keys.ReloadIfChanged();
+
+        // Checks
+        isSecondTold.ShouldBeTrue();
+        _logger.Entries.ShouldContain(entry => entry.Level == LogLevel.Error && entry.Message.Contains("could not be told", StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// A set refuses a public key as its signing key
     /// </summary>
     [Fact]

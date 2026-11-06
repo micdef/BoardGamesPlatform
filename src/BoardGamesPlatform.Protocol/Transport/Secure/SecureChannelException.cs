@@ -70,6 +70,12 @@ public sealed class SecureChannelException : AuthenticationException
     /// </summary>
     public SecureChannelFailure Reason { get; }
 
+    /// <summary>
+    /// Key id the peer named, in upper-case hexadecimal, when it is not pinned (<see cref="SecureChannelFailure.UnknownKey"/>): a fixed-size
+    /// value of the protocol, useful during a rotation; null otherwise
+    /// </summary>
+    public string? KeyIdHex { get; }
+
     #endregion
 
     #region Delegates
@@ -122,6 +128,28 @@ public sealed class SecureChannelException : AuthenticationException
     {
         // Setting
         Reason = reason;
+    }
+
+    /// <summary>
+    /// Constructor of a key id that is not pinned
+    /// </summary>
+    /// <param name="keyId">Key id the peer named, 32 bytes</param>
+    public SecureChannelException(ReadOnlySpan<byte> keyId)
+        : this(SecureChannelFailure.UnknownKey, Convert.ToHexString(keyId))
+    {
+    }
+
+    /// <summary>
+    /// Constructor
+    /// </summary>
+    /// <param name="reason">Reason of the failure</param>
+    /// <param name="keyIdHex">Key id named by the peer, in hexadecimal</param>
+    private SecureChannelException(SecureChannelFailure reason, string keyIdHex)
+        : base($"The secure channel failed: {reason} (key id {keyIdHex})")
+    {
+        // Setting
+        Reason = reason;
+        KeyIdHex = keyIdHex;
     }
 
     /// <summary>

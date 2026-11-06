@@ -222,6 +222,42 @@ public sealed class KeyScheduleTests
         Bytes(SignedMessage).ShouldBe(SecureHandshake.BuildSignedData(SecureHandshake.ServerSignatureLabel, Bytes(TranscriptHash)));
     }
 
+    /// <summary>
+    /// The signed data of the client has its own label, and a signature computed by OpenSSL over it verifies
+    /// </summary>
+    [Fact]
+    public void TheClientLabelIsTheOneComputedElsewhere()
+    {
+        // Arranging
+        using ECDsa key = ECDsa.Create(P256.ReadPoint(Bytes(SigningPoint)));
+        SigningPublicKey publicKey = SigningPublicKey.FromKey(key);
+
+        // Checks
+        SecureHandshake.BuildSignedData(SecureHandshake.ClientSignatureLabel, Bytes(TranscriptHash)).ShouldBe(Bytes(ClientSignedMessage));
+        publicKey.Verify(Bytes(ClientSignedMessage), Bytes(ClientSignature)).ShouldBeTrue();
+        publicKey.Verify(Bytes(SignedMessage), Bytes(ClientSignature)).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// The transcript hashes the hashes of both certificates, then the messages in their order, as computed elsewhere
+    /// </summary>
+    [Fact]
+    public void TheTranscriptIsComposedAsComputedElsewhere()
+    {
+        // Arranging the messages of the vector
+        byte[] m1 = Enumerable.Range(0, 135).Select(index => (byte)index).ToArray();
+        byte[] m2 = Enumerable.Range(0, 199).Select(index => (byte)(index * 7 % 256)).ToArray();
+        byte[] m3 = Enumerable.Range(100, 64).Select(index => (byte)index).ToArray();
+        byte[] certS = Bytes(TranscriptServerCertificate);
+        byte[] certC = Bytes(TranscriptClientCertificate);
+
+        // Checks
+        Convert.ToHexString(SecureHandshake.HashTranscript(certS, certC, m1, m2.AsMemory(0, 135))).ShouldBe(TranscriptT2);
+        Convert.ToHexString(SecureHandshake.HashTranscript(certS, certC, m1, m2)).ShouldBe(TranscriptT3);
+        Convert.ToHexString(SecureHandshake.HashTranscript(certS, certC, m1, m2, m3)).ShouldBe(TranscriptTh);
+        Convert.ToHexString(SecureHandshake.HashTranscript(certC, certS, m1, m2, m3)).ShouldNotBe(TranscriptTh);
+    }
+
     #endregion
 
     #endregion
