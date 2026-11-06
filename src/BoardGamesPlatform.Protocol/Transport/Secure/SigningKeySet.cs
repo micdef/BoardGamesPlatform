@@ -220,6 +220,15 @@ public sealed class SigningKeySet
     }
 
     /// <summary>
+    /// Method used to release the signing key of a set that was refused before any connection used it
+    /// </summary>
+    internal void ReleaseSigningKey()
+    {
+        // Releasing the private key: nobody holds this set
+        _signingKey.Dispose();
+    }
+
+    /// <summary>
     /// Method used to sign with the signing key of the tier
     /// </summary>
     /// <param name="data">Data to sign</param>

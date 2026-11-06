@@ -9,6 +9,7 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using BoardGamesPlatform.Protocol.Logging;
 using BoardGamesPlatform.Protocol.Transport.Tls;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -55,6 +56,11 @@ public sealed partial class SigningKeys : IDisposable
     /// </summary>
     public static readonly TimeSpan CheckInterval = TimeSpan.FromMinutes(1);
 
+    /// <summary>
+    /// Shortest time between two logs of files that stay refused
+    /// </summary>
+    public static readonly TimeSpan RefusalRepeat = TimeSpan.FromMinutes(5);
+
     #endregion
 
     #region Variables
@@ -98,6 +104,21 @@ public sealed partial class SigningKeys : IDisposable
     /// Timer of the periodic check
     /// </summary>
     private ITimer? _timer;
+
+    /// <summary>
+    /// Pace of the logs of the refused files, told again while they stay refused
+    /// </summary>
+    private readonly LogPace _refusalPace;
+
+    /// <summary>
+    /// Last reason why the files were refused; null once keys are taken; under <see cref="_reloadLock"/>
+    /// </summary>
+    private Exception? _lastRefusal;
+
+    /// <summary>
+    /// Time stamp of the clock when the keys in use were taken
+    /// </summary>
+    private long _lastTaken;
 
     #endregion
 
@@ -161,6 +182,8 @@ public sealed partial class SigningKeys : IDisposable
         _tlsCertificate = tlsCertificate;
         _timeProvider = timeProvider;
         _logger = logger;
+        _refusalPace = new LogPace(RefusalRepeat, timeProvider);
+        _lastTaken = timeProvider.GetTimestamp();
     }
 
     #endregion
@@ -202,8 +225,16 @@ public sealed partial class SigningKeys : IDisposable
     /// Method used to log changed files refused, the current keys being kept
     /// </summary>
     /// <param name="exception">Why the files were refused</param>
-    [LoggerMessage(EventId = 9060, Level = LogLevel.Error, Message = "The changed key files of the secure channel were refused; the current keys are kept")]
-    private partial void LogReloadFailed(Exception exception);
+    /// <param name="sinceTaken">Time since the keys in use were taken</param>
+    [LoggerMessage(EventId = 9060, Level = LogLevel.Error, Message = "The key files of the secure channel are refused; the keys taken {SinceTaken} ago are kept until the files are fixed")]
+    private partial void LogReloadFailed(Exception exception, TimeSpan sinceTaken);
+
+    /// <summary>
+    /// Method used to log a listener of the removed keys that failed, its connections maybe still open
+    /// </summary>
+    /// <param name="exception">Failure of the listener</param>
+    [LoggerMessage(EventId = 9063, Level = LogLevel.Error, Message = "A removed key of the peer could not be told to the connections: some may stay open until the tier restarts")]
+    private partial void LogRemovalNotTold(Exception exception);
 
     /// <summary>
     /// Method used to read the content of a key file
@@ -262,12 +293,24 @@ public sealed partial class SigningKeys : IDisposable
     /// <returns>
     /// The keys, normalized, in the order of the file
     /// </returns>
-    /// <exception cref="InvalidOperationException">If a line is not a public key of P-256</exception>
+    /// <exception cref="InvalidOperationException">If the file is not text in UTF-8 (ASCII, with or without a byte order mark), or a line is not
+    /// a public key of P-256</exception>
     internal static List<SigningPublicKey> ReadPeerKeys(byte[] content, string path)
     {
+        // Reading the text as UTF-8, which ASCII is, a byte order mark skipped; any other encoding (UTF-16 of an old PowerShell) is refused
+        string text;
+        try
+        {
+            text = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true).GetString(content).TrimStart('﻿');
+        }
+        catch (DecoderFallbackException exception)
+        {
+            throw new InvalidOperationException($"The public keys of the peer {path} are not text in UTF-8 or ASCII", exception);
+        }
+
         // Reading each line, the blank ones and the comments skipped
         List<SigningPublicKey> keys = new List<SigningPublicKey>();
-        string[] lines = Encoding.ASCII.GetString(content).Split('\n');
+        string[] lines = text.Split('\n');
         for (int index = 0; index < lines.Length; index++)
         {
             string line = lines[index].Trim();
@@ -371,8 +414,28 @@ public sealed partial class SigningKeys : IDisposable
     /// </remarks>
     private void CheckPeriodically()
     {
-        // Taking changed files
-        ReloadIfChanged();
+        // Taking changed files; anything unexpected is logged, never thrown into the timer, where it would stop the process
+        try
+        {
+            ReloadIfChanged();
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            RememberRefusal(exception);
+        }
+    }
+
+    /// <summary>
+    /// Method used to remember a refused reload and log it, at most once every <see cref="RefusalRepeat"/> while the files stay refused, with
+    /// the time since the last keys taken: the operator is told again until the files are fixed; under <see cref="_reloadLock"/> or the timer
+    /// </summary>
+    /// <param name="exception">[Cannot be null] Why the files were refused</param>
+    private void RememberRefusal(Exception exception)
+    {
+        // Remembering, then logging at the pace of the refusals
+        _lastRefusal = exception;
+        if (_refusalPace.TryEnter(out _))
+            LogReloadFailed(exception, _timeProvider.GetElapsedTime(_lastTaken));
     }
 
     #endregion
@@ -427,7 +490,15 @@ public sealed partial class SigningKeys : IDisposable
         SigningKeySet current = Load(files, signingKeyContent, peerKeysContent, generation: 0);
         files.Seen(signingKeyTime, SHA256.HashData(signingKeyContent), peerKeysTime, SHA256.HashData(peerKeysContent));
         SigningKeys keys = new SigningKeys(files, current, tlsCertificate, timeProvider, logger);
-        keys.RefuseCertificateKey(current);
+        try
+        {
+            keys.RefuseCertificateKey(current);
+        }
+        catch
+        {
+            current.ReleaseSigningKey();
+            throw;
+        }
         string peerKeyIds = string.Join(", ", current.PeerKeys.Select(key => key.KeyIdHex));
         keys.LogLoaded(current.OwnKey.KeyIdHex, peerKeyIds);
 
@@ -530,13 +601,19 @@ public sealed partial class SigningKeys : IDisposable
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
-                LogReloadFailed(exception);
+                // Missing or unreadable now: tried again at the next check, the refusal told again at its pace
+                RememberRefusal(exception);
                 return;
             }
             byte[] signingKeyHash = SHA256.HashData(signingKeyContent);
             byte[] peerKeysHash = SHA256.HashData(peerKeysContent);
             if (!_files.HasChanged(signingKeyTime, signingKeyHash, peerKeysTime, peerKeysHash))
+            {
+                // Unchanged files that were refused: still refused, told again at the pace of the refusals
+                if (_lastRefusal is not null)
+                    RememberRefusal(_lastRefusal);
                 return;
+            }
 
             // Loading and checking them; the current keys stay when they are refused, until the files change once more
             _files.Seen(signingKeyTime, signingKeyHash, peerKeysTime, peerKeysHash);
@@ -546,16 +623,21 @@ public sealed partial class SigningKeys : IDisposable
             {
                 next = Load(_files, signingKeyContent, peerKeysContent, previous.Generation + 1);
                 if (IsCertificateKey(next, _tlsCertificate()))
+                {
+                    next.ReleaseSigningKey();
                     throw new InvalidOperationException("The signing key of the secure channel is the key of the TLS certificate of the tier: they must be distinct");
+                }
             }
-            catch (Exception exception)
+            catch (Exception exception) when (exception is not OutOfMemoryException)
             {
-                LogReloadFailed(exception);
+                RememberRefusal(exception);
                 return;
             }
 
             // Using them for the next connections, then telling what changed
             _current = next;
+            _lastRefusal = null;
+            _lastTaken = _timeProvider.GetTimestamp();
             List<SigningPublicKey> added = next.PeerKeys.Where(key => !previous.HasPeerKey(key)).ToList();
             removed = previous.PeerKeys.Where(key => !next.HasPeerKey(key)).ToList();
             if (added.Count > 0 || removed.Count > 0)
@@ -568,9 +650,22 @@ public sealed partial class SigningKeys : IDisposable
                 LogSigningKeyTaken(next.OwnKey.KeyIdHex);
         }
 
-        // Telling the connections of the removed keys, outside the lock
-        if (removed.Count > 0)
-            PeerKeysRemoved?.Invoke(this, new PeerKeysRemovedEventArgs(removed.AsReadOnly()));
+        // Telling the connections of the removed keys, outside the lock, each listener on its own: one that fails never keeps the next ones
+        // from closing their connections, nor stops the tier
+        if (removed.Count == 0)
+            return;
+        PeerKeysRemovedEventArgs removedKeys = new PeerKeysRemovedEventArgs(removed.AsReadOnly());
+        foreach (EventHandler<PeerKeysRemovedEventArgs> handler in PeerKeysRemoved?.GetInvocationList().Cast<EventHandler<PeerKeysRemovedEventArgs>>() ?? Enumerable.Empty<EventHandler<PeerKeysRemovedEventArgs>>())
+        {
+            try
+            {
+                handler(this, removedKeys);
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException)
+            {
+                LogRemovalNotTold(exception);
+            }
+        }
     }
 
     /// <summary>
@@ -637,15 +732,41 @@ public sealed partial class SigningKeys : IDisposable
     /// <summary>
     /// Files of the keys and what was last taken of them
     /// </summary>
-    /// <param name="SigningKeyPath">PEM file of the signing key</param>
-    /// <param name="Password">Password of the signing key</param>
-    /// <param name="PeerKeysPath">File of the public keys of the peer</param>
-    private sealed record SourceFiles(string SigningKeyPath, string Password, string PeerKeysPath)
+    private sealed class SourceFiles
     {
         /// <summary>
         /// No file: keys given as keys
         /// </summary>
         public static readonly SourceFiles None = new SourceFiles(string.Empty, string.Empty, string.Empty);
+
+        /// <summary>
+        /// Constructor
+        /// </summary>
+        /// <param name="signingKeyPath">PEM file of the signing key</param>
+        /// <param name="password">Password of the signing key</param>
+        /// <param name="peerKeysPath">File of the public keys of the peer</param>
+        public SourceFiles(string signingKeyPath, string password, string peerKeysPath)
+        {
+            // Setting
+            SigningKeyPath = signingKeyPath;
+            Password = password;
+            PeerKeysPath = peerKeysPath;
+        }
+
+        /// <summary>
+        /// PEM file of the signing key
+        /// </summary>
+        public string SigningKeyPath { get; }
+
+        /// <summary>
+        /// Password of the signing key
+        /// </summary>
+        public string Password { get; }
+
+        /// <summary>
+        /// File of the public keys of the peer
+        /// </summary>
+        public string PeerKeysPath { get; }
 
         /// <summary>
         /// Time of the last write of the signing key last taken

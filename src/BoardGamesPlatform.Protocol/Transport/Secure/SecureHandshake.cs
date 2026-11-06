@@ -166,17 +166,12 @@ internal static class SecureHandshake
     /// <summary>
     /// Method used to hash the leaf certificate of an end, as the TLS session gives it
     /// </summary>
-    /// <param name="certificate">Certificate of the session, or null</param>
+    /// <param name="certificate">[Cannot be null] Certificate of the session</param>
     /// <returns>
     /// The SHA-256 of its DER
     /// </returns>
-    /// <exception cref="SecureChannelException">If the session gives no certificate</exception>
-    private static byte[] HashCertificate(X509Certificate? certificate)
+    internal static byte[] HashCertificate(X509Certificate certificate)
     {
-        // Check: with mutual TLS and no resumption, both ends always have one
-        if (certificate is null)
-            throw new SecureChannelException(SecureChannelFailure.NoCertificate);
-
         // Function's return
         return SHA256.HashData(certificate.GetRawCertData());
     }
@@ -216,7 +211,7 @@ internal static class SecureHandshake
     /// <returns>
     /// The SHA-256 of all of them
     /// </returns>
-    private static byte[] HashTranscript(byte[] serverCertificateHash, byte[] clientCertificateHash, params ReadOnlyMemory<byte>[] parts)
+    internal static byte[] HashTranscript(byte[] serverCertificateHash, byte[] clientCertificateHash, params ReadOnlyMemory<byte>[] parts)
     {
         // Hashing the parts one after the other
         using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -287,10 +282,11 @@ internal static class SecureHandshake
         // Checking the point itself, then the key id against the pinned keys
         if (!P256.IsValidPoint(message.Slice(PointOffset, P256.PointLength)))
             throw new SecureChannelException(SecureChannelFailure.Malformed);
-        SigningPublicKey? peerKey = keys.FindPeerKey(message.Slice(KeyIdOffset, SigningPublicKey.KeyIdLength));
+        ReadOnlySpan<byte> keyId = message.Slice(KeyIdOffset, SigningPublicKey.KeyIdLength);
+        SigningPublicKey? peerKey = keys.FindPeerKey(keyId);
 
         // Function's return
-        return peerKey ?? throw new SecureChannelException(SecureChannelFailure.UnknownKey);
+        return peerKey ?? throw new SecureChannelException(keyId);
     }
 
     /// <summary>
@@ -383,8 +379,10 @@ internal static class SecureHandshake
         HandshakeEntropy entropy, Func<SigningPublicKey, bool> isStillPinned, CancellationToken cancellationToken)
     {
         // Hashing the certificates of the session, then sending M1
-        byte[] serverCertificateHash = HashCertificate(serverCertificate);
-        byte[] clientCertificateHash = HashCertificate(clientCertificate);
+        X509Certificate server = serverCertificate ?? throw new SecureChannelException(SecureChannelFailure.NoCertificate);
+        X509Certificate client = clientCertificate ?? throw new SecureChannelException(SecureChannelFailure.NoCertificate);
+        byte[] serverCertificateHash = HashCertificate(server);
+        byte[] clientCertificateHash = HashCertificate(client);
         byte[] clientNonce = entropy.CreateNonce();
         using ECDiffieHellman ephemeralKey = entropy.CreateEphemeralKey();
         byte[] clientHello = new byte[ClientHelloLength];
@@ -396,7 +394,7 @@ internal static class SecureHandshake
         byte[] serverHello = new byte[ServerHelloLength];
         await ReadMessageAsync(stream, serverHello, cancellationToken).ConfigureAwait(false);
         SigningPublicKey serverKey = ReadHello(serverHello, keys);
-        RefuseCertificateKey(serverKey, serverCertificate!);
+        RefuseCertificateKey(serverKey, server);
         ReadOnlyMemory<byte> serverFields = serverHello.AsMemory(0, HelloLength);
         ReadOnlySpan<byte> serverSignature = serverHello.AsSpan(HelloLength, P256.SignatureLength);
         if (!P256.IsValidSignature(serverSignature))
@@ -440,12 +438,14 @@ internal static class SecureHandshake
         HandshakeEntropy entropy, Func<SigningPublicKey, bool> isStillPinned, CancellationToken cancellationToken)
     {
         // Hashing the certificates of the session, then reading M1 and checking it, the key of the client against its certificate
-        byte[] serverCertificateHash = HashCertificate(serverCertificate);
-        byte[] clientCertificateHash = HashCertificate(clientCertificate);
+        X509Certificate server = serverCertificate ?? throw new SecureChannelException(SecureChannelFailure.NoCertificate);
+        X509Certificate client = clientCertificate ?? throw new SecureChannelException(SecureChannelFailure.NoCertificate);
+        byte[] serverCertificateHash = HashCertificate(server);
+        byte[] clientCertificateHash = HashCertificate(client);
         byte[] clientHello = new byte[ClientHelloLength];
         await ReadMessageAsync(stream, clientHello, cancellationToken).ConfigureAwait(false);
         SigningPublicKey clientKey = ReadHello(clientHello, keys);
-        RefuseCertificateKey(clientKey, clientCertificate!);
+        RefuseCertificateKey(clientKey, client);
 
         // Answering M2, signed over the transcript so far
         byte[] serverNonce = entropy.CreateNonce();
