@@ -8,6 +8,7 @@
 // Using
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using BoardGamesPlatform.Protocol.Transport.Secure;
 using BoardGamesPlatform.Protocol.Transport.Tls;
 using Microsoft.Extensions.Time.Testing;
 
@@ -44,6 +45,11 @@ public sealed class AuthorityCommandsTests : IDisposable
     private const string CertificatePassword = "tier-password-of-the-tests";
 
     /// <summary>
+    /// Password of the signing keys of the tests
+    /// </summary>
+    private const string SigningKeyPassword = "signing-key-password-of-the-tests";
+
+    /// <summary>
     /// Suffix of the deployment used by the tests
     /// </summary>
     private const string Suffix = "bgp.test";
@@ -63,7 +69,8 @@ public sealed class AuthorityCommandsTests : IDisposable
     private readonly Dictionary<string, string> _passwords = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         { AuthorityCommands.AuthorityPasswordVariable, AuthorityPassword },
-        { AuthorityCommands.CertificatePasswordVariable, CertificatePassword }
+        { AuthorityCommands.CertificatePasswordVariable, CertificatePassword },
+        { AuthorityCommands.SigningKeyPasswordVariable, SigningKeyPassword }
     };
 
     /// <summary>
@@ -394,6 +401,42 @@ public sealed class AuthorityCommandsTests : IDisposable
         Run("install", "--key", InFolder("second", "back.key"), "--certificate", InFolder("back", "back.crt"), "--authority", InFolder("ca", AuthorityCommands.AuthorityCertificateFile),
             "--out", InFolder("second", "back.pfx")).ShouldBe(1);
         File.Exists(InFolder("second", "back.pfx")).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// The signing key of a tier opens with its password, and its public line is its normalized public key, named by the key id shown
+    /// </summary>
+    [Fact]
+    public void ASigningKeyAndItsPublicLineMatch()
+    {
+        // Acting
+        Run("signing-key", "--role", "veryback", "--out", InFolder("keys")).ShouldBe(0, _error.ToString());
+
+        // Checks
+        using ECDsa key = ECDsa.Create();
+        key.ImportFromEncryptedPem(File.ReadAllText(InFolder("keys", "veryback-signing.key")), SigningKeyPassword);
+        SigningPublicKey publicKey = SigningPublicKey.FromBase64(File.ReadAllText(InFolder("keys", "veryback-signing.pub")));
+        publicKey.ShouldBe(SigningPublicKey.FromKey(key));
+        _output.ToString().ShouldContain(publicKey.KeyIdHex);
+    }
+
+    /// <summary>
+    /// Only the Back and the Very Back get a signing key, and an existing key is never overwritten
+    /// </summary>
+    [Fact]
+    public void ASigningKeyIsRefusedForTheGatewayAndOverExistingFiles()
+    {
+        // Acting
+        int gateway = Run("signing-key", "--role", "gateway", "--out", InFolder("keys"));
+        int first = Run("signing-key", "--role", "back", "--out", InFolder("keys"));
+        string written = File.ReadAllText(InFolder("keys", "back-signing.key"));
+        int again = Run("signing-key", "--role", "back", "--out", InFolder("keys"));
+
+        // Checks
+        gateway.ShouldBe(2);
+        first.ShouldBe(0);
+        again.ShouldBe(2);
+        File.ReadAllText(InFolder("keys", "back-signing.key")).ShouldBe(written);
     }
 
     /// <summary>
