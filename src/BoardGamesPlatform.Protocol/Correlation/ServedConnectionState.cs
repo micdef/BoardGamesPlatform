@@ -356,11 +356,20 @@ internal sealed class ServedConnectionState : IDisposable
     /// <para><b>Behavior:</b> the cancellation runs the callbacks the handler registered on its token, which may block: run in its own task,
     /// it never stalls the read loop, so that the pings, the other cancellations and the requests of the client are still received. A
     /// callback that fails ends the service with its exception, as it did in the read loop. <see cref="WhenCancellationsEndedAsync"/> waits
-    /// for these tasks, before the state is released.</para>
+    /// for these tasks, before the state is released, so a callback must not block for ever (the contract of the handler, see
+    /// <see cref="RequestServer"/>). A cancellation of a request that is not in progress starts no task: a client cannot make the server start
+    /// tasks for nothing.</para>
     /// </remarks>
     /// <param name="correlationId">Correlation identifier of the request to cancel</param>
     public void StartCancelRequest(ulong correlationId)
     {
+        // Nothing to cancel: the request ended, is already being canceled, or never existed
+        lock (_requestsLock)
+        {
+            if (!_requests.TryGetValue(correlationId, out RequestInProgress? request) || request.IsCanceling)
+                return;
+        }
+
         // Starting the cancellation in its own task, and keeping it so that the end of the service waits for it
         Task cancellation = Task.Run(() =>
         {
