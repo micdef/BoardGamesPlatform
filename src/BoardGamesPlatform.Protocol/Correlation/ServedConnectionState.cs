@@ -76,6 +76,11 @@ internal sealed class ServedConnectionState : IDisposable
     /// </summary>
     private ITimer? _drainDeadline;
 
+    /// <summary>
+    /// Cancellations asked by the client and not yet awaited, each in its own task; read and written under <see cref="_requestsLock"/>
+    /// </summary>
+    private readonly List<Task> _cancellations = new List<Task>();
+
     #endregion
 
     #region Delegates
@@ -342,6 +347,64 @@ internal sealed class ServedConnectionState : IDisposable
             if (release)
                 request.Source.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Method used to cancel one request in progress, at the demand of the client, outside the read loop
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> the cancellation runs the callbacks the handler registered on its token, which may block: run in its own task,
+    /// it never stalls the read loop, so that the pings, the other cancellations and the requests of the client are still received. A
+    /// callback that fails ends the service with its exception, as it did in the read loop. <see cref="WhenCancellationsEndedAsync"/> waits
+    /// for these tasks, before the state is released, so a callback must not block for ever (the contract of the handler, see
+    /// <see cref="RequestServer"/>). A cancellation of a request that is not in progress starts no task: a client cannot make the server start
+    /// tasks for nothing.</para>
+    /// </remarks>
+    /// <param name="correlationId">Correlation identifier of the request to cancel</param>
+    public void StartCancelRequest(ulong correlationId)
+    {
+        // Nothing to cancel: the request ended, is already being canceled, or never existed
+        lock (_requestsLock)
+        {
+            if (!_requests.TryGetValue(correlationId, out RequestInProgress? request) || request.IsCanceling)
+                return;
+        }
+
+        // Starting the cancellation in its own task, and keeping it so that the end of the service waits for it
+        Task cancellation = Task.Run(() =>
+        {
+            try
+            {
+                CancelRequest(correlationId);
+            }
+            catch (Exception exception)
+            {
+                Fail(exception);
+            }
+        });
+        lock (_requestsLock)
+        {
+            _cancellations.RemoveAll(task => task.IsCompleted);
+            _cancellations.Add(cancellation);
+        }
+    }
+
+    /// <summary>
+    /// Method used to wait for the cancellations started by <see cref="StartCancelRequest"/>
+    /// </summary>
+    /// <returns>
+    /// A task that completes once every cancellation started so far has ended; it never fails, a failure being recorded by the cancellation
+    /// itself
+    /// </returns>
+    public Task WhenCancellationsEndedAsync()
+    {
+        // Reading the cancellations started so far
+        Task[] cancellations;
+        lock (_requestsLock)
+            cancellations = _cancellations.ToArray();
+
+        // Function's return
+        return Task.WhenAll(cancellations);
     }
 
     /// <summary>
