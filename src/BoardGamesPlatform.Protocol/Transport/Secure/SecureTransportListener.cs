@@ -6,6 +6,7 @@
  */
 
 // Using
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Security;
 using BoardGamesPlatform.Protocol.Logging;
@@ -79,9 +80,10 @@ public sealed class SecureTransportListener : ITransportListener
     private readonly long _hardLimit;
 
     /// <summary>
-    /// Pace of the logs of the handshakes that fail, which a peer can trigger at will
+    /// Pace of the logs of the handshakes that fail, which a peer can trigger at will, one per level and reason so that a frequent reason
+    /// never hides a rare one
     /// </summary>
-    private readonly LogPace _failurePace;
+    private readonly ConcurrentDictionary<string, LogPace> _failurePaces = new ConcurrentDictionary<string, LogPace>(StringComparer.Ordinal);
 
     /// <summary>
     /// Open connections, closed for a removed key or their age
@@ -179,7 +181,6 @@ public sealed class SecureTransportListener : ITransportListener
         _timeProvider = timeProvider;
         _entropy = entropy;
         _hardLimit = hardLimit;
-        _failurePace = new LogPace(LogPace.DefaultInterval, timeProvider);
         _registry = new SecureConnectionRegistry(keys, maxAge, timeProvider, logger);
     }
 
@@ -239,10 +240,12 @@ public sealed class SecureTransportListener : ITransportListener
 
         // Running the handshake of the channel; the connection is registered as soon as the key of its peer is known
         SecureConnectionRegistry.Entry? entry = null;
+        SessionSecrets? secrets = null;
+        SecureRecordStream? stream = null;
         try
         {
             SigningKeySet keys = _keys.GetForNewConnection();
-            SessionSecrets secrets = await SecureHandshake.RunServerAsync(session, keys, tls.LocalCertificate, tls.RemoteCertificate, _entropy, key =>
+            secrets = await SecureHandshake.RunServerAsync(session, keys, tls.LocalCertificate, tls.RemoteCertificate, _entropy, key =>
             {
                 entry = _registry.Register(key);
 
@@ -250,9 +253,9 @@ public sealed class SecureTransportListener : ITransportListener
                 return _keys.IsPinned(key);
             }, cancellationToken).ConfigureAwait(false);
             SigningPublicKey peerKey = secrets.PeerKey;
-            SecureRecordStream stream = new SecureRecordStream(session, secrets, isClient: false, _hardLimit, SecureRecordStream.DefaultRenewalThreshold,
+            stream = new SecureRecordStream(session, secrets, isClient: false, _hardLimit, SecureRecordStream.DefaultRenewalThreshold,
                 reason => SecureChannelLog.RecordFailed(_logger, remoteEndPoint, reason));
-            SecureTransportConnection connection = new SecureTransportConnection(established, stream, peerKey, MaxAge, _timeProvider, entry!.Remove);
+            SecureTransportConnection connection = new SecureTransportConnection(established, stream, peerKey, MaxAge, _timeProvider, _logger, entry!.Remove);
             if (!entry.Attach(connection))
                 throw new SecureChannelException(SecureChannelFailure.PeerKeyRemoved);
             SecureChannelLog.Opened(_logger, remoteEndPoint, peerKey.KeyIdHex);
@@ -262,14 +265,19 @@ public sealed class SecureTransportListener : ITransportListener
         }
         catch (Exception exception)
         {
-            // Logging the failure at its pace (a cancellation is the deadline or the stop, told by the caller), then releasing the session; the
-            // accepted connection stays to its caller
+            // Logging the failure at the pace of its reason (a cancellation is the deadline or the stop, told by the caller), so that frequent
+            // reasons never hide a rare one; then erasing the keys and releasing the session, the accepted connection staying to its caller
             entry?.Remove();
-            if (exception is not OperationCanceledException && _failurePace.TryEnter(out int heldBack))
+            if (exception is not OperationCanceledException)
             {
-                (string reason, LogLevel level) = SecureChannelLog.Describe(exception);
-                SecureChannelLog.ServerRefused(_logger, level, exception, remoteEndPoint, reason, heldBack);
+                (string category, string reason, LogLevel level) = SecureChannelLog.Describe(exception);
+                if (_failurePaces.GetOrAdd(category, _ => new LogPace(LogPace.DefaultInterval, _timeProvider)).TryEnter(out int heldBack))
+                    SecureChannelLog.ServerRefused(_logger, level, exception, remoteEndPoint, reason, heldBack);
             }
+            if (stream is not null)
+                await stream.DisposeAsync().ConfigureAwait(false);
+            else
+                secrets?.Dispose();
             try
             {
                 await session.DisposeAsync().ConfigureAwait(false);

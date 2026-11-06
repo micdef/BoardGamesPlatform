@@ -71,7 +71,7 @@ Keep `platform-ca.pfx` and its password on one machine, off the network when pos
 | Password of the PFX | The `Environment` value of the service in the registry, writable by the administrators only | An `EnvironmentFile=` of the unit, owned by `root`, mode `0600` (`Tls__CertificatePassword=…`), or `LoadCredential=`; **never** `Environment=` in the unit, whose variables are exposed to unprivileged clients through D-Bus ([systemd.exec](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html)) |
 | Root key `platform-ca.pfx` and `issued.csv` | The folder of the authority readable by its administrator only (`icacls <folder> /inheritance:r /grant:r "<administrator>:F"`) | Written mode `0600` by the tool; keep the folder `0700` |
 | Signing key `<role>-signing.key` (Back, Very Back) | Readable by the account of the service, writable by the administrators only: `icacls back-signing.key /inheritance:r /grant:r "NT SERVICE\<service>:R" /grant:r "Administrators:F"` | Owned by `root`, group of the service, mode `0640`: the service reads it and never writes it |
-| Public keys of the peer (the file of `Handshake:PeerPublicKeysPath`) | **A trust anchor**: whoever writes it adds a key, taken within a minute. Readable by the account of the service, writable by the administrators only, as the signing key | Owned by `root`, mode `0644` or `0640` with the group of the service |
+| Public keys of the peer (the file of `Handshake:PeerPublicKeysPath`) | **A trust anchor**: whoever writes it adds a key, taken within a minute. Text in ASCII or UTF-8 (a byte order mark is accepted), never UTF-16: on Windows PowerShell 5, write it with `Set-Content -Encoding ascii`, not `Out-File`. To revoke a key, remove its line, never the file: a missing file keeps the current keys. Readable by the account of the service, writable by the administrators only, as the signing key | Owned by `root`, mode `0644` or `0640` with the group of the service |
 | Password of the signing key | As the password of the PFX (`Handshake__SigningKeyPassword=…`), and never the same password | As the password of the PFX |
 
 A key file is replaced **atomically**: write the new content to a temporary file in the same folder, created with the rights above (`install -o root -g <group> -m 640 …` on Fedora, then `restorecon` after the move), then move it over the old one (`mv`, or `Move-Item -Force` on Windows), so that a tier never reads a file half written.
@@ -136,7 +136,7 @@ Rotation of the key of a tier, without a cut of the link:
 3. Replace the signing key of the tier by the new one; the tier takes it within a minute (event 9059).
 4. Once the tier logs the new key, remove the old public key from the file of the peer: the connections opened with it are closed (event 9061), and the link opens new ones at once.
 
-To **revoke** a key (a tier lost, a key stolen), remove its line from the file of the peer: within a minute, every connection opened with it is closed, and no new one opens. Each step can also be done with a restart instead of waiting for the check.
+To **revoke** a key (a tier lost, a key stolen), remove its line from the file of the peer (never delete the file: a missing file keeps the current keys, logged every 5 minutes): within a minute, every connection opened with it is closed, and no new one opens. Each step can also be done with a restart instead of waiting for the check.
 
 ## Development
 
@@ -169,6 +169,10 @@ The tests generate their certificates at run time with the same code as the tool
 | 9060 | Error | Changed key files were refused; the current keys are kept |
 | 9061 | Information | A connection is closed because the key of its peer was removed |
 | 9062 | Information | The Very Back closed a connection older than 48 hours, never renewed |
+| 9063 | Error | A removed key could not be told to the connections: some may stay open until the tier restarts (restart it) |
+| 9064 | Warning | The close record of a connection closed for a removed key or its age could not be sent; the connection is cut |
+| 9065 | Warning | The Back could not close a connection after the Very Back was refused |
+| 9009, 9010 | Warning, Error | The Back could not renew its connection to the Very Back: a failure of the network (9009), or a refusal by a key, a certificate or the protocol (9010) to fix before the current connection reaches its limit |
 
 The refusals (9031, 9033, 9051) are logged once every 10 seconds at most, the next entry giving the number held back, so that a peer that fails handshakes in a loop cannot flood the logs.
 

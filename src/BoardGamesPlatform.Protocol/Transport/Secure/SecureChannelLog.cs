@@ -149,6 +149,16 @@ internal static partial class SecureChannelLog
     public static partial void RecordLimitReached(ILogger logger, string remoteEndPoint);
 
     /// <summary>
+    /// Method used to log a connection that could not be closed after a refused handshake
+    /// </summary>
+    /// <param name="logger">[Cannot be null] Logger of the tier</param>
+    /// <param name="exception">Failure of the close</param>
+    /// <param name="host">Host connected to</param>
+    /// <param name="port">Port connected to</param>
+    [LoggerMessage(EventId = 9065, Level = LogLevel.Warning, Message = "The connection to {Host}:{Port} could not be closed after its refused handshake")]
+    public static partial void CloseFailed(ILogger logger, Exception exception, string host, int port);
+
+    /// <summary>
     /// Method used to log a record refused, at the level of its reason
     /// </summary>
     /// <param name="logger">[Cannot be null] Logger of the tier</param>
@@ -168,13 +178,18 @@ internal static partial class SecureChannelLog
     /// </summary>
     /// <param name="exception">[Cannot be null] Failure</param>
     /// <returns>
-    /// The reason to log, and its level
+    /// The category of the failure, from a closed list (the key of the pace of its logs, so that a peer cannot make it grow), the reason to
+    /// log (the category, with the unknown key id when there is one), and its level
     /// </returns>
-    public static (string Reason, LogLevel Level) Describe(Exception exception)
+    public static (string Category, string Reason, LogLevel Level) Describe(Exception exception)
     {
         // A failure outside the channel: the keys of this tier, or the connection itself
         if (exception is not SecureChannelException secure)
-            return exception is InvalidOperationException ? ("the keys of this tier cannot be used", LogLevel.Error) : ("connection failed", LogLevel.Warning);
+        {
+            return exception is InvalidOperationException
+                ? ("keys", "the keys of this tier cannot be used", LogLevel.Error)
+                : ("connection", "connection failed", LogLevel.Warning);
+        }
 
         // Function's return: the reasons of the specification, with their levels; a sign of tampering or of a broken setup is an error
         LogLevel level = secure.Reason switch
@@ -186,7 +201,8 @@ internal static partial class SecureChannelLog
             SecureChannelFailure.PeerKeyRemoved => LogLevel.Information,
             _ => LogLevel.Warning
         };
-        return (secure.Reason.ToString(), level);
+        string category = secure.Reason.ToString();
+        return (category, secure.KeyIdHex is null ? category : $"{category} (key id {secure.KeyIdHex})", level);
     }
 
     #endregion

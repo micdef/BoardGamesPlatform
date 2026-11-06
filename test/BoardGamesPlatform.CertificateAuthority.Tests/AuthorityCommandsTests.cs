@@ -421,6 +421,31 @@ public sealed class AuthorityCommandsTests : IDisposable
     }
 
     /// <summary>
+    /// A signing key is refused with the password of the PFX, which the tier would refuse at startup
+    /// </summary>
+    [Fact]
+    public void ASigningKeyWithThePasswordOfThePfxIsRefused()
+    {
+        // Arranging: the password of the PFX in its variable, equal to the one given to the signing key
+        string? before = Environment.GetEnvironmentVariable(AuthorityCommands.CertificatePasswordVariable);
+        Environment.SetEnvironmentVariable(AuthorityCommands.CertificatePasswordVariable, SigningKeyPassword);
+        try
+        {
+            // Acting
+            int exitCode = Run("signing-key", "--role", "back", "--out", InFolder("same"));
+
+            // Checks
+            exitCode.ShouldBe(2);
+            _error.ToString().ShouldContain("must differ");
+            File.Exists(InFolder("same", "back-signing.key")).ShouldBeFalse();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(AuthorityCommands.CertificatePasswordVariable, before);
+        }
+    }
+
+    /// <summary>
     /// Only the Back and the Very Back get a signing key, and an existing key is never overwritten
     /// </summary>
     [Fact]

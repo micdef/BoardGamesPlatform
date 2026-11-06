@@ -164,6 +164,11 @@ public sealed class RequestClient : IAsyncDisposable
     private Exception? _closeReason;
 
     /// <summary>
+    /// Whether the client no longer takes new requests (a connection being replaced); under <see cref="_stateLock"/>
+    /// </summary>
+    private bool _isDraining;
+
+    /// <summary>
     /// Whether <see cref="DisposeAsync"/> has been called (0: no, 1: yes)
     /// </summary>
     private int _isDisposed;
@@ -551,6 +556,8 @@ public sealed class RequestClient : IAsyncDisposable
         {
             if (_closeReason is not null)
                 throw CreateClosedException();
+            if (_isDraining)
+                throw new RequestNotSentException();
             correlationId = (ulong)Interlocked.Increment(ref _lastCorrelationId);
             _pendingRequests[correlationId] = request;
         }
@@ -657,6 +664,20 @@ public sealed class RequestClient : IAsyncDisposable
         }
     }
 
+
+    /// <summary>
+    /// Method used to stop taking new requests, the ones in progress going on: the connection is being replaced
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> a request asked afterwards fails with a <see cref="RequestNotSentException"/> before anything of it is registered or
+    /// written, so that its caller may send it elsewhere; a request registered before is counted by <see cref="PendingRequestCount"/>.</para>
+    /// </remarks>
+    public void StopAccepting()
+    {
+        // Setting, under the lock of the registrations
+        lock (_stateLock)
+            _isDraining = true;
+    }
 
     /// <summary>
     /// Method used to close the client and its connection; the pending requests fail with an <see cref="ObjectDisposedException"/>

@@ -218,9 +218,9 @@ public sealed partial class TlsTransportListener : ITransportListener
         // Establishing the connection below first, then running the handshake on it, the certificate of the client being required and checked;
         // the session is released if it fails
         string remoteEndPoint = accepted.RemoteEndPoint.ToString() ?? "unknown";
+        SslStreamCertificateContext context = _credentials.GetContextForNewConnection();
         ITransportConnection established = await _inner.EstablishAsync(accepted, cancellationToken).ConfigureAwait(false);
         SslStream stream = new SslStream(established.Stream, leaveInnerStreamOpen: true);
-        SslStreamCertificateContext context = _credentials.GetContextForNewConnection();
         string? refusal = null;
         string thumbprint = string.Empty;
         try

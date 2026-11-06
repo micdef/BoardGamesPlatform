@@ -322,7 +322,7 @@ public sealed class SecureTransportTests : IDisposable
     /// <returns>
     /// A task that completes once checked
     /// </returns>
-    [Fact]
+    [Fact(Timeout = 20000)]
     public async Task TheBackAndTheVeryBackTalkThroughTheChannelAsync()
     {
         // Arranging the tiers as delivered, from the files of the tests
@@ -338,7 +338,7 @@ public sealed class SecureTransportTests : IDisposable
         await using ITransportConnection client = await connector.ConnectAsync("127.0.0.1", listener.LocalEndPoint.Port, token);
         await using ITransportConnection server = await accepting;
         byte[] large = new byte[40_000];
-        Random.Shared.NextBytes(large);
+        new Random(42).NextBytes(large);
         await client.Stream.WriteAsync(large, token);
         await client.Stream.FlushAsync(token);
         byte[] received = new byte[large.Length];
@@ -364,7 +364,7 @@ public sealed class SecureTransportTests : IDisposable
     /// <returns>
     /// A task that completes once checked
     /// </returns>
-    [Fact]
+    [Fact(Timeout = 20000)]
     public async Task AValidCertificateWithoutTheSigningKeyIsRefusedAsync()
     {
         // Arranging: an impostor of each role, with a valid certificate of its role and a signing key of its own
@@ -379,7 +379,7 @@ public sealed class SecureTransportTests : IDisposable
         Task<ITransportConnection> acceptingImpostorBack = AcceptAsync(veryBack);
         Task<ITransportConnection> acceptingBack = AcceptAsync(impostorVeryBack);
         SecureChannelException refusedServer = await Should.ThrowAsync<SecureChannelException>(back.ConnectAsync("127.0.0.1", impostorVeryBack.LocalEndPoint.Port, token));
-        await Should.ThrowAsync<Exception>(impostorBack.ConnectAsync("127.0.0.1", veryBack.LocalEndPoint.Port, token));
+        (await Should.ThrowAsync<SecureChannelException>(impostorBack.ConnectAsync("127.0.0.1", veryBack.LocalEndPoint.Port, token))).Reason.ShouldBe(SecureChannelFailure.PeerClosed);
         SecureChannelException refusedClient = await Should.ThrowAsync<SecureChannelException>(acceptingImpostorBack);
         await Should.ThrowAsync<Exception>(acceptingBack);
 
@@ -396,7 +396,7 @@ public sealed class SecureTransportTests : IDisposable
     /// <returns>
     /// A task that completes once checked
     /// </returns>
-    [Fact]
+    [Fact(Timeout = 20000)]
     public async Task APartyInTheMiddleWithItsOwnCertificatesIsRefusedAsync()
     {
         // Arranging: the party in the middle holds valid certificates of both roles, but not the ones of the real tiers
@@ -424,7 +424,7 @@ public sealed class SecureTransportTests : IDisposable
     /// <returns>
     /// A task that completes once checked
     /// </returns>
-    [Fact]
+    [Fact(Timeout = 20000)]
     public async Task APartyWithTheStolenCertificatesOnlyRelaysRecordsAsync()
     {
         // Arranging: the party in the middle shows the real certificates of both tiers
@@ -448,6 +448,8 @@ public sealed class SecureTransportTests : IDisposable
 
             // Checks: the request arrives, and the party in the middle never saw it
             received.ShouldBe(secret);
+            recorded.Length.ShouldBeGreaterThan(SecureHandshake.ClientHelloLength + SecureHandshake.ClientSignatureLength);
+            Convert.ToHexString(recorded.ToArray()).ShouldContain(Convert.ToHexString("BGPS"u8));
             Convert.ToHexString(recorded.ToArray()).ShouldNotContain(Convert.ToHexString(secret.AsSpan(0, 16)));
         }
         await relay;
@@ -459,7 +461,7 @@ public sealed class SecureTransportTests : IDisposable
     /// <returns>
     /// A task that completes once checked
     /// </returns>
-    [Fact]
+    [Fact(Timeout = 20000)]
     public async Task AServerWithoutTheChannelIsRefusedAsync()
     {
         // Arranging: a TLS server that reads a frame header, refuses it as the protocol does, and closes
@@ -487,7 +489,7 @@ public sealed class SecureTransportTests : IDisposable
     /// <returns>
     /// A task that completes once checked
     /// </returns>
-    [Fact]
+    [Fact(Timeout = 20000)]
     public async Task ARemovedKeyClosesTheEstablishedConnectionAsync()
     {
         // Arranging: the Very Back loads its keys from files, the Back's key pinned with another one
@@ -519,7 +521,7 @@ public sealed class SecureTransportTests : IDisposable
     /// <returns>
     /// A task that completes once checked
     /// </returns>
-    [Fact]
+    [Fact(Timeout = 20000)]
     public async Task AnOldConnectionIsClosedByTheServerAsync()
     {
         // Arranging: an age limit of one check, on a fake clock

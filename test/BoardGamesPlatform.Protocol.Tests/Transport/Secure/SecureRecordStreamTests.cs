@@ -289,33 +289,106 @@ public sealed class SecureRecordStreamTests
     }
 
     /// <summary>
-    /// The hard limit refuses a record beyond it, on the sender and on the receiver; the renewal is due before it
+    /// The hard limit refuses a data record beyond it, on the sender and on the receiver, and keeps its last sequence number for the close
+    /// record, so that a connection at its limit still ends cleanly; the renewal is due before it
     /// </summary>
     /// <returns>
     /// A task that completes once checked
     /// </returns>
     [Fact]
-    public async Task TheHardLimitRefusesTheNextRecordAsync()
+    public async Task TheHardLimitKeepsTheLastRecordForTheCloseAsync()
     {
-        // Arranging a limit of 3 records, the renewal due at 2
+        // Arranging a limit of 4 records (3 data records and the close), the renewal due at 2
         using MemoryStream below = new MemoryStream();
-        await using SecureRecordStream client = new SecureRecordStream(below, CreateSecrets(), isClient: true, hardLimit: 3, renewalThreshold: 2);
         CancellationToken token = TestContext.Current.CancellationToken;
+        bool dueAfterOne;
+        bool dueAfterTwo;
+        SecureChannelException failure;
+        await using (SecureRecordStream client = new SecureRecordStream(below, CreateSecrets(), isClient: true, hardLimit: 4, renewalThreshold: 2))
+        {
+            // Acting: three data records, a fourth refused, then the close record
+            await client.WriteAsync(new byte[] { 1 }, token);
+            dueAfterOne = client.IsRenewalDue;
+            await client.WriteAsync(new byte[] { 2 }, token);
+            dueAfterTwo = client.IsRenewalDue;
+            await client.WriteAsync(new byte[] { 3 }, token);
+            failure = await Should.ThrowAsync<SecureChannelException>(client.WriteAsync(new byte[] { 4 }, token).AsTask());
+        }
+        byte[] threeAndClose;
+        using (MemoryStream complete = new MemoryStream())
+        {
+            await using SecureRecordStream client = new SecureRecordStream(complete, CreateSecrets(), isClient: true, hardLimit: 4);
+            await client.WriteAsync(new byte[] { 1 }, token);
+            await client.WriteAsync(new byte[] { 2 }, token);
+            await client.WriteAsync(new byte[] { 3 }, token);
+            await client.WriteCloseAsync(token);
+            threeAndClose = complete.ToArray();
+        }
 
-        // Acting
-        await client.WriteAsync(new byte[1], token);
-        bool dueAfterOne = client.IsRenewalDue;
-        await client.WriteAsync(new byte[1], token);
-        bool dueAfterTwo = client.IsRenewalDue;
-        await client.WriteAsync(new byte[1], token);
-        SecureChannelException failure = await Should.ThrowAsync<SecureChannelException>(client.WriteAsync(new byte[1], token).AsTask());
-        SecureChannelException received = await Should.ThrowAsync<SecureChannelException>(ReadAsServerAsync(below.ToArray(), hardLimit: 2));
-
-        // Checks
+        // Checks: the sender refused the fourth data record; a receiver with the same limit reads the three and the clean end, one with a
+        // smaller limit refuses the third data record
         dueAfterOne.ShouldBeFalse();
         dueAfterTwo.ShouldBeTrue();
         failure.Reason.ShouldBe(SecureChannelFailure.RecordLimitReached);
-        received.Reason.ShouldBe(SecureChannelFailure.RecordLimitReached);
+        (await ReadAsServerAsync(threeAndClose, hardLimit: 4)).ShouldBe(new byte[] { 1, 2, 3 });
+        (await Should.ThrowAsync<SecureChannelException>(ReadAsServerAsync(threeAndClose, hardLimit: 3))).Reason.ShouldBe(SecureChannelFailure.RecordLimitReached);
+    }
+
+    /// <summary>
+    /// A stream whose read or write failed is broken for good: the next calls fail as a lost connection, and a disposal under a call is a
+    /// closed connection, never an ObjectDisposedException
+    /// </summary>
+    /// <returns>
+    /// A task that completes once checked
+    /// </returns>
+    [Fact]
+    public async Task AFailureBreaksTheStreamForGoodAsync()
+    {
+        // Arranging a stream whose first record is broken
+        byte[] written = await WriteAsClientAsync(SecureRecordStream.DefaultHardLimit, Bytes(Record0Plaintext));
+        written[5] ^= 0x01;
+        await using SecureRecordStream server = new SecureRecordStream(new MemoryStream(written), CreateSecrets(), isClient: false);
+        CancellationToken token = TestContext.Current.CancellationToken;
+
+        // Acting
+        await Should.ThrowAsync<SecureChannelException>(server.ReadAsync(new byte[10], token).AsTask());
+        IOException read = await Should.ThrowAsync<IOException>(server.ReadAsync(new byte[10], token).AsTask());
+        IOException write = await Should.ThrowAsync<IOException>(server.WriteAsync(new byte[1], token).AsTask());
+        await server.DisposeAsync();
+        IOException afterDispose = await Should.ThrowAsync<IOException>(server.WriteAsync(new byte[1], token).AsTask());
+
+        // Checks
+        server.IsSound.ShouldBeFalse();
+        read.InnerException.ShouldBeOfType<SecureChannelException>();
+        write.InnerException.ShouldBeOfType<SecureChannelException>();
+        afterDispose.Message.ShouldContain("closed");
+    }
+
+    /// <summary>
+    /// Writes of the exact sizes at the borders of a record read back the same
+    /// </summary>
+    /// <param name="size">Size of the write</param>
+    /// <returns>
+    /// A task that completes once checked
+    /// </returns>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(16_383)]
+    [InlineData(16_384)]
+    [InlineData(16_385)]
+    [InlineData(65_536)]
+    [InlineData(65_548)]
+    public async Task WritesAtTheBordersOfARecordReadBackTheSameAsync(int size)
+    {
+        // Arranging
+        byte[] data = new byte[size];
+        new Random(size).NextBytes(data);
+
+        // Acting
+        byte[] written = await WriteAsClientAsync(SecureRecordStream.DefaultHardLimit, data);
+
+        // Check
+        (await ReadAsServerAsync(written)).ShouldBe(data);
     }
 
     /// <summary>

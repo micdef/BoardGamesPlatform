@@ -162,6 +162,11 @@ internal sealed class SecureRecordStream : Stream
     private bool _hasSentClose;
 
     /// <summary>
+    /// First failure that broke the stream; null while it is sound
+    /// </summary>
+    private Exception? _brokenBy;
+
+    /// <summary>
     /// Whether the stream was disposed (0: no, 1: yes)
     /// </summary>
     private int _isDisposed;
@@ -216,6 +221,16 @@ internal sealed class SecureRecordStream : Stream
     /// </summary>
     public bool IsRenewalDue => Interlocked.Read(ref _sendSequence) >= _renewalThreshold || Interlocked.Read(ref _receiveSequence) >= _renewalThreshold;
 
+    /// <summary>
+    /// Whether the close record of this end was sent
+    /// </summary>
+    public bool HasSentClose => Volatile.Read(ref _hasSentClose);
+
+    /// <summary>
+    /// Whether the stream can still carry records: not disposed, and not broken by an earlier failure
+    /// </summary>
+    public bool IsSound => Volatile.Read(ref _isDisposed) == 0 && Volatile.Read(ref _brokenBy) is null;
+
     #endregion
 
     #region Delegates
@@ -237,9 +252,19 @@ internal sealed class SecureRecordStream : Stream
     /// <param name="hardLimit">Hard limit of the records of a direction (smaller in the tests only)</param>
     /// <param name="renewalThreshold">Records of a direction from which a renewal is due (smaller in the tests only)</param>
     /// <param name="onFailure">Called with the reason of a record refused; null for nothing</param>
+    /// <exception cref="ArgumentNullException">If the stream or the secrets are null</exception>
+    /// <exception cref="ArgumentOutOfRangeException">If the hard limit is below 2</exception>
     public SecureRecordStream(Stream inner, SessionSecrets secrets, bool isClient, long hardLimit = DefaultHardLimit, long renewalThreshold = DefaultRenewalThreshold,
         Action<SecureChannelFailure>? onFailure = null)
     {
+        // Checks
+        if (inner is null)
+            throw new ArgumentNullException(nameof(inner), $"The value of the parameter: {nameof(inner)} cannot be null");
+        if (secrets is null)
+            throw new ArgumentNullException(nameof(secrets), $"The value of the parameter: {nameof(secrets)} cannot be null");
+        if (hardLimit < 2)
+            throw new ArgumentOutOfRangeException(nameof(hardLimit), $"The value of the parameter: {nameof(hardLimit)} must keep one record for the close, so 2 at least");
+
         // Setting: the client sends with the keys client → server, the server with the keys server → client
         _inner = inner;
         _sendCipher = new AesGcm(isClient ? secrets.ClientToServerKey : secrets.ServerToClientKey, TagLength);
@@ -328,7 +353,7 @@ internal sealed class SecureRecordStream : Stream
         if (length > MaxRecordLength)
             throw new SecureChannelException(SecureChannelFailure.RecordAuthenticationFailed);
         long sequence = _receiveSequence;
-        if (sequence >= _hardLimit)
+        if (sequence >= _hardLimit || (length > 0 && sequence >= _hardLimit - 1))
             throw new SecureChannelException(SecureChannelFailure.RecordLimitReached);
 
         // Reading the ciphertext and the tag, then opening the record with the nonce of its sequence number
@@ -359,6 +384,50 @@ internal sealed class SecureRecordStream : Stream
     }
 
     /// <summary>
+    /// Method used to refuse a call on a stream that is closed, or broken by an earlier failure
+    /// </summary>
+    /// <exception cref="IOException">If the stream is closed or broken: the connection is unusable, as when its socket fails</exception>
+    private void ThrowIfUnusable()
+    {
+        // Checks: an IOException, as for a lost connection, so that the callers end the connection the usual way
+        if (Volatile.Read(ref _isDisposed) == 1)
+            throw new IOException("The secure channel of the connection is closed");
+        if (Volatile.Read(ref _brokenBy) is { } cause)
+            throw new IOException("The secure channel of the connection failed earlier; the connection must be closed", cause);
+    }
+
+    /// <summary>
+    /// Method used to break the stream after a failure that may have left it inside a record, and tell the failure of the channel
+    /// </summary>
+    /// <param name="exception">[Cannot be null] Failure</param>
+    /// <returns>
+    /// The exception to throw: the failure itself, or an <see cref="IOException"/> when the stream was disposed during the call
+    /// </returns>
+    private Exception Break(Exception exception)
+    {
+        // Breaking the stream for every later call, the first failure kept as the cause
+        Interlocked.CompareExchange(ref _brokenBy, exception, null);
+
+        // Telling a refusal of the channel to the connection, for its logs; a failure of the log never hides the refusal
+        if (exception is SecureChannelException secure)
+        {
+            try
+            {
+                _onFailure?.Invoke(secure.Reason);
+            }
+            catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
+            {
+                // The refusal itself is thrown below: nothing of it is lost
+            }
+        }
+
+        // Function's return: a stream disposed under a call is a closed connection for the caller
+        return exception is ObjectDisposedException && Volatile.Read(ref _isDisposed) == 1
+            ? new IOException("The secure channel of the connection was closed during the call", exception)
+            : exception;
+    }
+
+    /// <summary>
     /// Method used to seal and write one record; under <see cref="_writeLock"/>
     /// </summary>
     /// <param name="plaintext">Plaintext of the record, up to <see cref="MaxRecordLength"/> bytes; empty for the close record</param>
@@ -367,11 +436,13 @@ internal sealed class SecureRecordStream : Stream
     /// A task that completes once the record is written
     /// </returns>
     /// <exception cref="SecureChannelException">If the hard limit of records is reached</exception>
+    /// <exception cref="IOException">If the stream below fails</exception>
     private async Task WriteRecordAsync(ReadOnlyMemory<byte> plaintext, CancellationToken cancellationToken)
     {
-        // Refusing a record beyond the hard limit
+        // Refusing a record beyond the hard limit; the last sequence number is kept for the close record, so that a connection that reaches
+        // the limit still ends cleanly
         long sequence = _sendSequence;
-        if (sequence >= _hardLimit)
+        if (sequence >= _hardLimit || (plaintext.Length > 0 && sequence >= _hardLimit - 1))
             throw new SecureChannelException(SecureChannelFailure.RecordLimitReached);
 
         // Sealing the record: its length, its ciphertext, then its tag
@@ -402,15 +473,21 @@ internal sealed class SecureRecordStream : Stream
     /// <exception cref="IOException">If the stream below fails</exception>
     public async Task WriteCloseAsync(CancellationToken cancellationToken = default)
     {
-        // Writing it once, after any record being written
+        // Writing it once, after any record being written, on a stream that is still sound
+        ThrowIfUnusable();
         await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (_hasSentClose)
                 return;
+            ThrowIfUnusable();
             _hasSentClose = true;
             await WriteRecordAsync(ReadOnlyMemory<byte>.Empty, cancellationToken).ConfigureAwait(false);
             await _inner.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            throw Break(exception);
         }
         finally
         {
@@ -429,12 +506,13 @@ internal sealed class SecureRecordStream : Stream
     /// <inheritdoc/>
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
-        // Nothing asked, nothing read
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _isDisposed) == 1, this);
+        // Nothing asked, nothing read; a stream closed or broken reads nothing more
+        ThrowIfUnusable();
         if (buffer.Length == 0)
             return 0;
 
-        // Opening the next record when the last one is given entirely; the close record of the peer is the end of the stream
+        // Opening the next record when the last one is given entirely; the close record of the peer is the end of the stream. Any failure,
+        // a cancellation included, may leave the stream inside a record: it breaks the stream for good
         while (_plaintextCount == 0)
         {
             if (_hasReceivedClose)
@@ -443,10 +521,9 @@ internal sealed class SecureRecordStream : Stream
             {
                 await ReadRecordAsync(cancellationToken).ConfigureAwait(false);
             }
-            catch (SecureChannelException exception)
+            catch (Exception exception) when (exception is not OutOfMemoryException)
             {
-                _onFailure?.Invoke(exception.Reason);
-                throw;
+                throw Break(exception);
             }
         }
 
@@ -479,24 +556,30 @@ internal sealed class SecureRecordStream : Stream
     /// <inheritdoc/>
     public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
     {
-        // Nothing to write, no record
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _isDisposed) == 1, this);
+        // Nothing to write, no record; a stream closed or broken writes nothing more
+        ThrowIfUnusable();
         if (buffer.Length == 0)
             return;
 
-        // Writing the records one after the other, none after the close record
+        // Writing the records one after the other, none after the close record; a failure while writing, a cancellation included, may leave
+        // a part of a record below: it breaks the stream for good
         await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (_hasSentClose)
                 throw new InvalidOperationException("The close record was sent: nothing can be written after it");
+            ThrowIfUnusable();
             for (int offset = 0; offset < buffer.Length; offset += MaxRecordLength)
-                await WriteRecordAsync(buffer.Slice(offset, Math.Min(MaxRecordLength, buffer.Length - offset)), cancellationToken).ConfigureAwait(false);
-        }
-        catch (SecureChannelException exception)
-        {
-            _onFailure?.Invoke(exception.Reason);
-            throw;
+            {
+                try
+                {
+                    await WriteRecordAsync(buffer.Slice(offset, Math.Min(MaxRecordLength, buffer.Length - offset)), cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is not OutOfMemoryException)
+                {
+                    throw Break(exception);
+                }
+            }
         }
         finally
         {
@@ -557,7 +640,9 @@ internal sealed class SecureRecordStream : Stream
             CryptographicOperations.ZeroMemory(_sendIv);
             CryptographicOperations.ZeroMemory(_receiveIv);
             CryptographicOperations.ZeroMemory(_plaintext);
-            _writeLock.Dispose();
+
+            // The lock of the writes is never disposed: a write may still wait for it or release it, and a semaphore whose wait handle nobody
+            // asked for holds no system resource
         }
         base.Dispose(disposing);
     }

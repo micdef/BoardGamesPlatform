@@ -164,7 +164,7 @@ The link client shares one connection between all its callers.
 - During the delay, calls fail at once with `link.unavailable`, without touching the network.
 - A connection that opens lets the next attempt go at once, but the failures in a row are only forgotten once it answers a request (an error code of the peer included). A connection lost before any response counts as a failure to open: a peer in a crash loop (it accepts the handshake, then dies at the first request) is reconnected with the back-off, not on every call.
 - A request in flight on a lost connection fails with `link.unavailable`. No request is ever retried automatically, since the peer may already have handled it (idempotency comes with 0.14.0).
-- Renewal (from 0.6.0, the secure channel): a connection that asks for it (2²³ records on a direction, or 24 hours) is replaced by the next call: the new connection takes the next requests, and the old one is closed once its requests ended, within the request timeout, so that no request fails. When the new connection cannot be opened, the old one stays in use, and the renewal is tried again after one minute.
+- Renewal (from 0.6.0, the secure channel): a connection that asks for it (2²³ records on a direction, or 24 hours) is replaced in the background, the callers never waiting for it: the new connection takes the next requests, and the old one takes no new request (one refused that way, never sent, is sent again on the new one) and is closed once its requests ended, within the request timeout, so that no request fails. When the new connection cannot be opened, the old one stays in use, and the renewal is tried again after one minute.
 
 ## Logs
 
@@ -172,7 +172,7 @@ The protocol logs through the logger of the tier that uses it, with event ids re
 
 | Class | Event ids |
 |-------|-----------|
-| `LinkClient` | 9001-9009 |
+| `LinkClient` | 9001-9010 |
 | `LinkServer` | 9011-9019, 9040-9043 |
 | `OperationDispatcher` | 9021-9026 |
 | `TlsTransportListener` | 9031-9033 |

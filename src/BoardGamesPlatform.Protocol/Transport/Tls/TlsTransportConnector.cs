@@ -186,10 +186,10 @@ public sealed partial class TlsTransportConnector : ITransportConnector
     public async Task<ITransportConnection> ConnectAsync(string host, int port, CancellationToken cancellationToken = default)
     {
         // Opening the TCP connection, then the session on it; the connection is closed if the session fails
+        SslStreamCertificateContext context = _credentials.GetContextForNewConnection();
         ITransportConnection connection = await _inner.ConnectAsync(host, port, cancellationToken).ConfigureAwait(false);
         SslStream stream = new SslStream(connection.Stream, leaveInnerStreamOpen: true);
         string expected = PlatformIdentity.GetDnsName(_serverRole, _credentials.Suffix);
-        SslStreamCertificateContext context = _credentials.GetContextForNewConnection();
         string? refusal = null;
         try
         {

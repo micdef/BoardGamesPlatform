@@ -617,6 +617,8 @@ internal sealed class AuthorityCommands
         string publicKeyPath = Path.Combine(directory, $"{roleName}-signing.pub");
         RefuseExisting(keyPath, publicKeyPath);
         string password = ReadPassword(SigningKeyPasswordVariable, "New password of the signing key of the tier", isNew: true);
+        if (password == Environment.GetEnvironmentVariable(CertificatePasswordVariable))
+            throw new UsageException($"The password of the signing key must differ from the one of the PFX ({CertificatePasswordVariable}): the tier refuses to start otherwise");
 
         // Creating the key, written encrypted, and its normalized public key, one line for the file of the peer
         using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);

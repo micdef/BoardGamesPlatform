@@ -124,6 +124,7 @@ try
 catch
 {
     Write-Error $_ -ErrorAction Continue
+    Write-Error "The development certificates may be left half made: run the script again with -Force" -ErrorAction Continue
     exit 1
 }
 finally

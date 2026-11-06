@@ -213,6 +213,8 @@ public sealed class SecureTransportConnector : ITransportConnector, IDisposable
         // Opening the TLS session first; the secure channel only runs inside one
         ITransportConnection established = await _inner.ConnectAsync(host, port, cancellationToken).ConfigureAwait(false);
         SecureConnectionRegistry.Entry? entry = null;
+        SessionSecrets? secrets = null;
+        SecureRecordStream? stream = null;
         try
         {
             if (established is not TlsTransportConnection { Stream: SslStream session } tls)
@@ -220,7 +222,7 @@ public sealed class SecureTransportConnector : ITransportConnector, IDisposable
 
             // Running the handshake of the channel; the connection is registered as soon as the key of its peer is known
             SigningKeySet keys = _keys.GetForNewConnection();
-            SessionSecrets secrets = await SecureHandshake.RunClientAsync(session, keys, tls.RemoteCertificate, tls.LocalCertificate, _entropy, key =>
+            secrets = await SecureHandshake.RunClientAsync(session, keys, tls.RemoteCertificate, tls.LocalCertificate, _entropy, key =>
             {
                 entry = _registry.Register(key);
 
@@ -229,9 +231,9 @@ public sealed class SecureTransportConnector : ITransportConnector, IDisposable
             }, cancellationToken).ConfigureAwait(false);
             SigningPublicKey peerKey = secrets.PeerKey;
             string remoteEndPoint = established.RemoteEndPoint.ToString() ?? $"{host}:{port}";
-            SecureRecordStream stream = new SecureRecordStream(session, secrets, isClient: true, _hardLimit, _renewalThreshold,
+            stream = new SecureRecordStream(session, secrets, isClient: true, _hardLimit, _renewalThreshold,
                 reason => SecureChannelLog.RecordFailed(_logger, remoteEndPoint, reason));
-            SecureTransportConnection connection = new SecureTransportConnection(established, stream, peerKey, RenewalAge, _timeProvider, entry!.Remove);
+            SecureTransportConnection connection = new SecureTransportConnection(established, stream, peerKey, RenewalAge, _timeProvider, _logger, entry!.Remove);
             if (!entry.Attach(connection))
                 throw new SecureChannelException(SecureChannelFailure.PeerKeyRemoved);
             SecureChannelLog.Opened(_logger, remoteEndPoint, peerKey.KeyIdHex);
@@ -241,14 +243,30 @@ public sealed class SecureTransportConnector : ITransportConnector, IDisposable
         }
         catch (Exception exception)
         {
-            // Logging the refusal (a cancellation is the deadline of the caller, told by it), then closing the connection in any case
+            // Logging the refusal (a cancellation is the deadline of the caller, told by it), then erasing the keys and closing the connection in
+            // any case; a failure of that close is logged, and never hides the refusal
             entry?.Remove();
             if (exception is not OperationCanceledException)
             {
-                (string reason, LogLevel level) = SecureChannelLog.Describe(exception);
+                (_, string reason, LogLevel level) = SecureChannelLog.Describe(exception);
                 SecureChannelLog.ClientRefused(_logger, level, exception, host, port, reason);
             }
-            await established.DisposeAsync().ConfigureAwait(false);
+            if (stream is not null)
+                await stream.DisposeAsync().ConfigureAwait(false);
+            else
+                secrets?.Dispose();
+            try
+            {
+                await established.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception disposeFailure) when (disposeFailure is not OutOfMemoryException)
+            {
+                SecureChannelLog.CloseFailed(_logger, disposeFailure, host, port);
+            }
+
+            // Keys of this tier that cannot be used now are a refusal of the link for the caller (link.unavailable), as any refused peer
+            if (exception is InvalidOperationException)
+                throw new System.Security.Authentication.AuthenticationException("The keys of the secure channel of this tier cannot be used now", exception);
             throw;
         }
     }

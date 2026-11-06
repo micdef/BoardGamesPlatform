@@ -149,6 +149,26 @@ public sealed class LinkRenewalTests
     }
 
     /// <summary>
+    /// Method used to wait until a condition holds, the renewal running in the background
+    /// </summary>
+    /// <param name="condition">[Cannot be null] Condition</param>
+    /// <returns>
+    /// A task that completes once the condition holds
+    /// </returns>
+    /// <exception cref="TimeoutException">If it does not hold within 5 seconds</exception>
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        // Checking every few milliseconds
+        DateTime end = DateTime.UtcNow.AddSeconds(5);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > end)
+                throw new TimeoutException("The condition did not hold within 5 seconds");
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+        }
+    }
+
+    /// <summary>
     /// Method used to send one ping
     /// </summary>
     /// <param name="client">[Cannot be null] Link client</param>
@@ -180,10 +200,11 @@ public sealed class LinkRenewalTests
         RenewableConnector connector = new RenewableConnector();
         await using (LinkClient client = new LinkClient("127.0.0.1", port, TimeSpan.FromSeconds(5), "the peer", connector, _logger))
         {
-            // Acting: a first call, then the connection asks for a renewal, then a second call
+            // Acting: a first call, then the connection asks for a renewal: the next call starts it in the background, without waiting for it
             await PingAsync(client);
             connector.Opened[0].IsRenewalDue = true;
             await PingAsync(client);
+            await WaitUntilAsync(() => connector.Opened.Count == 2);
             await connector.Opened[0].Disposed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
             // Checks
@@ -217,8 +238,10 @@ public sealed class LinkRenewalTests
             _isGated = true;
             Task<PingResponse> inFlight = PingAsync(client);
 
-            // Acting: a renewal while the ping waits, then a second ping on the new connection
+            // Acting: a renewal while the ping waits, then a second ping, the renewal done in the background
             connector.Opened[0].IsRenewalDue = true;
+            await PingAsync(client);
+            await WaitUntilAsync(() => connector.Opened.Count == 2);
             await PingAsync(client);
             bool closedEarly = connector.Opened[0].Disposed.Task.IsCompleted;
             _gate.SetResult();
@@ -253,11 +276,12 @@ public sealed class LinkRenewalTests
             await PingAsync(client);
             connector.Opened[0].IsRenewalDue = true;
 
-            // Acting
+            // Acting: the renewal tried in the background fails, the calls going on on the old connection
             await PingAsync(client);
+            await WaitUntilAsync(() => _logger.Entries.Any(entry => entry.Message.Contains("renewal", StringComparison.Ordinal)));
             await PingAsync(client);
 
-            // Checks: the renewal was tried once, the old connection still serves
+            // Checks: the renewal was tried once (the next try waits a minute), the old connection still serves
             connector.Attempts.ShouldBe(2);
             connector.Opened[0].Disposed.Task.IsCompleted.ShouldBeFalse();
         }

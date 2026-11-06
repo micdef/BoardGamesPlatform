@@ -130,8 +130,17 @@ internal sealed partial class SecureConnectionRegistry : IDisposable
     /// <param name="maxAge">Age from which a connection is closed; null for none</param>
     /// <param name="timeProvider">[Cannot be null] Clock of the check of the ages</param>
     /// <param name="logger">[Cannot be null] Logger of the tier</param>
+    /// <exception cref="ArgumentNullException">If a parameter that cannot be null is null</exception>
     public SecureConnectionRegistry(SigningKeys keys, TimeSpan? maxAge, TimeProvider timeProvider, ILogger logger)
     {
+        // Checks
+        if (keys is null)
+            throw new ArgumentNullException(nameof(keys), $"The value of the parameter: {nameof(keys)} cannot be null");
+        if (timeProvider is null)
+            throw new ArgumentNullException(nameof(timeProvider), $"The value of the parameter: {nameof(timeProvider)} cannot be null");
+        if (logger is null)
+            throw new ArgumentNullException(nameof(logger), $"The value of the parameter: {nameof(logger)} cannot be null");
+
         // Setting, then watching the removed keys and the ages
         _keys = keys;
         _maxAge = maxAge;
@@ -182,7 +191,7 @@ internal sealed partial class SecureConnectionRegistry : IDisposable
         {
             foreach (Entry entry in _entries.Where(entry => removed.RemovedKeys.Contains(entry.PeerKey)))
             {
-                entry.IsRevoked = true;
+                entry.Revoke();
                 if (entry.Connection is not null)
                     toClose.Add(entry.Connection);
             }
@@ -266,48 +275,70 @@ internal sealed partial class SecureConnectionRegistry : IDisposable
     #endregion
 
     /// <summary>
-    /// Entry of one connection
+    /// Entry of one connection, from the moment the key of its peer is known
     /// </summary>
-    /// <param name="registry">Registry of the entry</param>
-    /// <param name="peerKey">Pinned key of the peer</param>
-    internal sealed class Entry(SecureConnectionRegistry registry, SigningPublicKey peerKey)
+    internal sealed class Entry
     {
+        /// <summary>
+        /// Register of the entry
+        /// </summary>
+        private readonly SecureConnectionRegistry _registry;
+
+        /// <summary>
+        /// Whether the key of the peer was removed; under the lock of the register
+        /// </summary>
+        private bool _isRevoked;
+
+        /// <summary>
+        /// Constructor
+        /// </summary>
+        /// <param name="registry">[Cannot be null] Register of the entry</param>
+        /// <param name="peerKey">[Cannot be null] Pinned key of the peer</param>
+        public Entry(SecureConnectionRegistry registry, SigningPublicKey peerKey)
+        {
+            // Setting
+            _registry = registry;
+            PeerKey = peerKey;
+        }
+
         /// <summary>
         /// Pinned key of the peer
         /// </summary>
-        public SigningPublicKey PeerKey { get; } = peerKey;
+        public SigningPublicKey PeerKey { get; }
 
         /// <summary>
-        /// Connection, once attached; under the lock of the registry
+        /// Connection, once attached; under the lock of the register
         /// </summary>
         public SecureTransportConnection? Connection { get; private set; }
 
         /// <summary>
-        /// Whether the key of the peer was removed; under the lock of the registry
+        /// Method used to mark the entry of a removed key; under the lock of the register
         /// </summary>
-        public bool IsRevoked { get; set; }
+        public void Revoke()
+        {
+            // Setting
+            _isRevoked = true;
+        }
 
         /// <summary>
-        /// Method used to attach the connection built at the end of the handshake; closed at once when its key was removed meanwhile
+        /// Method used to attach the connection built at the end of the handshake, unless its key was removed meanwhile
         /// </summary>
         /// <param name="connection">[Cannot be null] Connection of the entry</param>
         /// <returns>
-        /// True when the connection may be used; false when it was closed for a removed key
+        /// True when the connection may be used; false when its key was removed during the handshake: the caller closes it
         /// </returns>
         public bool Attach(SecureTransportConnection connection)
         {
             // Attaching, unless the key was removed during the handshake
             bool isRevoked;
-            lock (registry._lock)
+            lock (_registry._lock)
             {
-                Connection = connection;
-                isRevoked = IsRevoked;
+                isRevoked = _isRevoked;
+                if (!isRevoked)
+                    Connection = connection;
             }
             if (isRevoked)
-            {
-                registry.LogClosedForRemovedKey(connection.RemoteName, PeerKey.KeyIdHex);
-                _ = connection.CloseForAsync();
-            }
+                _registry.LogClosedForRemovedKey(connection.RemoteName, PeerKey.KeyIdHex);
 
             // Function's return
             return !isRevoked;
@@ -319,8 +350,8 @@ internal sealed partial class SecureConnectionRegistry : IDisposable
         public void Remove()
         {
             // Removing it
-            lock (registry._lock)
-                registry._entries.Remove(this);
+            lock (_registry._lock)
+                _registry._entries.Remove(this);
         }
     }
 }
