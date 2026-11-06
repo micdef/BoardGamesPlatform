@@ -245,10 +245,10 @@ public sealed partial class SqlProjectFileTests
                 problems.Add($"{file}: the header sections are not in the order {string.Join(", ", _procedureSections)}");
 
             Match declaration = ProcedureDeclarationPattern().Match(text);
-            string folderSchema = file.Split('\\')[1];
-            // The paths of the project use "\" (SSDT), which only Windows reads as a separator: the name is cut by hand, so that the test
-            // gives the same result on Linux
-            string fileName = Path.GetFileNameWithoutExtension(file[(file.LastIndexOf('\\') + 1)..]);
+            // Cut at "\", the separator of the project (SSDT), on every system
+            string[] parts = file.Split('\\');
+            string folderSchema = parts[1];
+            string fileName = Path.GetFileNameWithoutExtension(parts[^1]);
             if (!declaration.Success)
             {
                 problems.Add($"{file}: no CREATE PROCEDURE [Schema].[Name]");
