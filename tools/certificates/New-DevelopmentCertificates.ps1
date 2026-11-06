@@ -2,8 +2,9 @@
 # │ File         │ tools/certificates/New-DevelopmentCertificates.ps1           │
 # │ Purpose      │ Creates the certificates of a developer machine with the     │
 # │              │ offline authority of the platform: a development root, then  │
-# │              │ the PFX of the Gateway, the Back and the Very Back, and sets │
-# │              │ the password of the PFX in the user secrets of each tier.    │
+# │              │ the PFX of the Gateway, the Back and the Very Back, and the  │
+# │              │ signing keys of the Back and the Very Back (secure channel), │
+# │              │ and sets their passwords in the user secrets of each tier.   │
 # │ Rules        │ 1. Development only: the root, its key and the PFX are       │
 # │              │    written in .certificates/dev (ignored by Git), never on a │
 # │              │    server. A server gets its certificate from the real       │
@@ -11,9 +12,10 @@
 # │              │ 2. An existing folder is refused, unless -Force: it is then  │
 # │              │    deleted and created again, with a new root.               │
 # │              │ 3. The passwords are drawn at random and given to the tool   │
-# │              │    by its environment variables; the one of the PFX goes to  │
-# │              │    the user secrets (piped, never on a command line), or to  │
-# │              │    the console with -SkipUserSecrets.                        │
+# │              │    by its environment variables; the one of the PFX and the  │
+# │              │    one of the signing keys (always distinct) go to the user  │
+# │              │    secrets (piped, never on a command line), or to the       │
+# │              │    console with -SkipUserSecrets.                            │
 # │              │ 4. The tool is built before an existing folder is deleted.   │
 # │ Usage        │ pwsh tools/certificates/New-DevelopmentCertificates.ps1      │
 # │              │     [-Suffix bgp.internal] [-Force] [-SkipUserSecrets]       │
@@ -75,6 +77,7 @@ function New-Password
 # Step 3: random passwords, given to the tool through its environment variables only
 $env:BOARDGAMESPLATFORM_CA_PASSWORD = New-Password
 $env:BOARDGAMESPLATFORM_CERTIFICATE_PASSWORD = New-Password
+$env:BOARDGAMESPLATFORM_SIGNING_KEY_PASSWORD = New-Password
 
 try
 {
@@ -89,32 +92,45 @@ try
     Copy-Item -LiteralPath (Join-Path $authority 'platform-ca.crt') -Destination (Join-Path $output 'platform-ca.crt')
     Remove-Item -LiteralPath $requests -Recurse -Force
 
-    # Step 5: the password of the PFX in the user secrets of each tier, read by its Development settings (or on the console when asked)
+    # Step 5: the signing keys of the secure channel of the Back -> Very Back link, each public key being the file of its peer
+    foreach ($role in 'back', 'veryback')
+    {
+        Invoke-Authority @('signing-key', '--role', $role, '--out', $output)
+    }
+
+    # Step 6: the passwords in the user secrets of each tier, read by its Development settings (or on the console when asked)
     if ($SkipUserSecrets)
     {
         Write-Host "Password of the PFX, to set as Tls:CertificatePassword of each tier: $env:BOARDGAMESPLATFORM_CERTIFICATE_PASSWORD"
+        Write-Host "Password of the signing keys, to set as Handshake:SigningKeyPassword of the Back and the Very Back: $env:BOARDGAMESPLATFORM_SIGNING_KEY_PASSWORD"
     }
     else
     {
-        # The password is piped as JSON, never given on the command line (it would show in the list of the processes)
-        $secret = @{ 'Tls:CertificatePassword' = $env:BOARDGAMESPLATFORM_CERTIFICATE_PASSWORD } | ConvertTo-Json -Compress
+        # The passwords are piped as JSON, never given on the command line (they would show in the list of the processes); the Gateway has
+        # no secure channel, so no signing key
         foreach ($tier in 'Gateway', 'Back', 'VeryBack')
         {
+            $values = [ordered]@{ 'Tls:CertificatePassword' = $env:BOARDGAMESPLATFORM_CERTIFICATE_PASSWORD }
+            if ($tier -ne 'Gateway') { $values['Handshake:SigningKeyPassword'] = $env:BOARDGAMESPLATFORM_SIGNING_KEY_PASSWORD }
             $tierProject = Join-Path $RepositoryRoot "src\BoardGamesPlatform.$tier\BoardGamesPlatform.$tier.csproj"
-            $secret | dotnet user-secrets set --project $tierProject | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "The user secret of the $tier could not be set" }
+            foreach ($name in $values.Keys)
+            {
+                @{ $name = $values[$name] } | ConvertTo-Json -Compress | dotnet user-secrets set --project $tierProject | Out-Null
+                if ($LASTEXITCODE -ne 0) { throw "The user secret $name of the $tier could not be set" }
+            }
         }
     }
 }
 catch
 {
     Write-Error $_ -ErrorAction Continue
+    Write-Error "The development certificates may be left half made: run the script again with -Force" -ErrorAction Continue
     exit 1
 }
 finally
 {
     # The passwords never stay in the session
-    Remove-Item Env:\BOARDGAMESPLATFORM_CA_PASSWORD, Env:\BOARDGAMESPLATFORM_CERTIFICATE_PASSWORD -ErrorAction SilentlyContinue
+    Remove-Item Env:\BOARDGAMESPLATFORM_CA_PASSWORD, Env:\BOARDGAMESPLATFORM_CERTIFICATE_PASSWORD, Env:\BOARDGAMESPLATFORM_SIGNING_KEY_PASSWORD -ErrorAction SilentlyContinue
 }
 
 Write-Host "Development certificates of *.$Suffix written to $output."

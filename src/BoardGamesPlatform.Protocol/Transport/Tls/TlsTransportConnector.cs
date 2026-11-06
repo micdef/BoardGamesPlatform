@@ -186,6 +186,7 @@ public sealed partial class TlsTransportConnector : ITransportConnector
     public async Task<ITransportConnection> ConnectAsync(string host, int port, CancellationToken cancellationToken = default)
     {
         // Opening the TCP connection, then the session on it; the connection is closed if the session fails
+        SslStreamCertificateContext context = _credentials.GetContextForNewConnection();
         ITransportConnection connection = await _inner.ConnectAsync(host, port, cancellationToken).ConfigureAwait(false);
         SslStream stream = new SslStream(connection.Stream, leaveInnerStreamOpen: true);
         string expected = PlatformIdentity.GetDnsName(_serverRole, _credentials.Suffix);
@@ -196,7 +197,7 @@ public sealed partial class TlsTransportConnector : ITransportConnector
             {
                 TargetHost = expected,
                 EnabledSslProtocols = SslProtocols.Tls13,
-                ClientCertificateContext = _credentials.GetContextForNewConnection(),
+                ClientCertificateContext = context,
                 CertificateRevocationCheckMode = System.Security.Cryptography.X509Certificates.X509RevocationMode.NoCheck,
                 AllowRenegotiation = false,
                 AllowTlsResume = false,
@@ -233,7 +234,7 @@ public sealed partial class TlsTransportConnector : ITransportConnector
         LogOpened(expected, host, port);
 
         // Function's return
-        return new TlsTransportConnection(connection, stream, expected);
+        return new TlsTransportConnection(connection, stream, expected, context.TargetCertificate);
     }
 
     #endregion

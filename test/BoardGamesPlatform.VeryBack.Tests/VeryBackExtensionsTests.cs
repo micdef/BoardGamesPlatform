@@ -176,6 +176,30 @@ public sealed class VeryBackExtensionsTests
         host.Services.GetServices<IHostedService>().OfType<VeryBackListenerService>().Count().ShouldBe(1);
     }
 
+    /// <summary>
+    /// A Very Back without the settings of its secure channel does not build its listener, naming the settings
+    /// </summary>
+    [Fact]
+    public void MissingHandshakeSettingsStopTheStartup()
+    {
+        // Building the host with every setting but the Handshake ones
+        HostApplicationBuilder builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings());
+        Dictionary<string, string?> settings = TestTlsFiles.Shared.AddTo(new Dictionary<string, string?>
+        {
+            ["VeryBack:ListenAddress"] = "127.0.0.1",
+            ["VeryBack:Port"] = "7822",
+            ["ConnectionStrings:Main"] = ReadableConnectionString,
+        }, PlatformRole.VeryBack).Where(setting => !setting.Key.StartsWith("Handshake", StringComparison.Ordinal)).ToDictionary();
+        builder.Configuration.AddInMemoryCollection(settings);
+        builder.Services.AddLogging();
+        builder.AddPlatformVeryBack();
+        using IHost host = builder.Build();
+
+        // Check
+        OptionsValidationException missing = Should.Throw<OptionsValidationException>(() => host.Services.GetServices<IHostedService>().OfType<VeryBackListenerService>().ToArray());
+        missing.Message.ShouldContain("Handshake:PeerPublicKeysPath");
+    }
+
     #endregion
 
     #region Exit code

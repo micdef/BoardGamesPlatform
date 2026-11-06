@@ -218,6 +218,7 @@ public sealed partial class TlsTransportListener : ITransportListener
         // Establishing the connection below first, then running the handshake on it, the certificate of the client being required and checked;
         // the session is released if it fails
         string remoteEndPoint = accepted.RemoteEndPoint.ToString() ?? "unknown";
+        SslStreamCertificateContext context = _credentials.GetContextForNewConnection();
         ITransportConnection established = await _inner.EstablishAsync(accepted, cancellationToken).ConfigureAwait(false);
         SslStream stream = new SslStream(established.Stream, leaveInnerStreamOpen: true);
         string? refusal = null;
@@ -226,7 +227,7 @@ public sealed partial class TlsTransportListener : ITransportListener
         {
             SslServerAuthenticationOptions options = new SslServerAuthenticationOptions
             {
-                ServerCertificateContext = _credentials.GetContextForNewConnection(),
+                ServerCertificateContext = context,
                 ClientCertificateRequired = true,
                 EnabledSslProtocols = SslProtocols.Tls13,
                 CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
@@ -270,7 +271,7 @@ public sealed partial class TlsTransportListener : ITransportListener
         LogAuthenticated(remoteEndPoint, identity, thumbprint);
 
         // Function's return
-        return new TlsTransportConnection(established, stream, identity);
+        return new TlsTransportConnection(established, stream, identity, context.TargetCertificate);
     }
 
     /// <inheritdoc/>

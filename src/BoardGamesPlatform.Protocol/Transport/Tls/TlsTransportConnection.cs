@@ -8,6 +8,7 @@
 // Using
 using System.Net;
 using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
 
 // Static using
 // #N/A
@@ -83,6 +84,16 @@ internal sealed class TlsTransportConnection : ITransportConnection
     /// <inheritdoc/>
     public string? PeerIdentity { get; }
 
+    /// <summary>
+    /// Certificate this end presented in the session, as it was taken for this connection (a reload of the files never changes it)
+    /// </summary>
+    public X509Certificate2 LocalCertificate { get; }
+
+    /// <summary>
+    /// Certificate the peer presented in the session, as the session gives it; null when it gave none
+    /// </summary>
+    public X509Certificate? RemoteCertificate => _stream.RemoteCertificate;
+
     #endregion
 
     #region Delegates
@@ -101,12 +112,14 @@ internal sealed class TlsTransportConnection : ITransportConnection
     /// <param name="inner">[Cannot be null] TCP connection below the session; the connection takes ownership of it</param>
     /// <param name="stream">[Cannot be null] TLS session, authenticated</param>
     /// <param name="peerIdentity">[Cannot be null] Identity of the peer, proven by its certificate</param>
-    public TlsTransportConnection(ITransportConnection inner, SslStream stream, string peerIdentity)
+    /// <param name="localCertificate">[Cannot be null] Certificate this end presented in the session</param>
+    public TlsTransportConnection(ITransportConnection inner, SslStream stream, string peerIdentity, X509Certificate2 localCertificate)
     {
         // Setting
         _inner = inner;
         _stream = stream;
         PeerIdentity = peerIdentity;
+        LocalCertificate = localCertificate;
     }
 
     #endregion
