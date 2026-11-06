@@ -187,7 +187,8 @@ public sealed class TestCertificates : IDisposable
         OidCollection usages = new OidCollection();
         foreach (string usage in usageOids)
             usages.Add(new Oid(usage));
-        request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(usages, false));
+        if (usages.Count > 0)
+            request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(usages, false));
         SubjectAlternativeNameBuilder names = new SubjectAlternativeNameBuilder();
         names.AddDnsName(dnsName);
         request.CertificateExtensions.Add(names.Build());

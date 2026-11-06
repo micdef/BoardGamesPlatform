@@ -214,6 +214,82 @@ public sealed class AuthorityCommandsTests : IDisposable
     }
 
     /// <summary>
+    /// The root and the PFX of a tier are encrypted with 300 000 iterations of key derivation, far above the 2 000 of the default export, and
+    /// still load with the default limits of .NET
+    /// </summary>
+    [Fact]
+    public void ThePfxFilesUseAStrongKeyDerivation()
+    {
+        // Issuing the certificate of the Back
+        string pfx = IssueBack();
+
+        // Checks: both PFX load with the default limits, and not with a limit just below 300 000 iterations
+        Pkcs12LoaderLimits below = new Pkcs12LoaderLimits { MacIterationLimit = 299_999 };
+        foreach ((string path, string password) in new (string, string)[] { (pfx, CertificatePassword), (InFolder("ca", AuthorityCommands.AuthorityKeyFile), AuthorityPassword) })
+        {
+            using (X509CertificateLoader.LoadPkcs12FromFile(path, password, X509KeyStorageFlags.EphemeralKeySet))
+            {
+                // Loaded with the default limits
+            }
+            Should.Throw<Pkcs12LoadLimitExceededException>(() => X509CertificateLoader.LoadPkcs12FromFile(path, password, X509KeyStorageFlags.EphemeralKeySet, below));
+        }
+    }
+
+    /// <summary>
+    /// A certificate is valid from 5 minutes before it is signed, to the second, so that a tier whose clock is a little late accepts it; the
+    /// root too
+    /// </summary>
+    [Fact]
+    public void ACertificateIsValidFromALittleBeforeItIsSigned()
+    {
+        // Issuing the certificate of the Back at a time with a fraction of a second
+        _clock.Advance(TimeSpan.FromMilliseconds(1234));
+        string pfx = IssueBack();
+
+        // Checks
+        DateTimeOffset expected = new DateTimeOffset(2026, 11, 5, 9, 55, 1, TimeSpan.Zero);
+        using X509Certificate2 certificate = X509CertificateLoader.LoadPkcs12FromFile(pfx, CertificatePassword, X509KeyStorageFlags.EphemeralKeySet);
+        using X509Certificate2 root = X509CertificateLoader.LoadCertificateFromFile(InFolder("ca", AuthorityCommands.AuthorityCertificateFile));
+        new DateTimeOffset(certificate.NotBefore.ToUniversalTime(), TimeSpan.Zero).ShouldBe(expected);
+        new DateTimeOffset(root.NotBefore.ToUniversalTime(), TimeSpan.Zero).ShouldBe(expected);
+        new DateTimeOffset(certificate.NotAfter.ToUniversalTime(), TimeSpan.Zero).ShouldBe(expected.AddDays(AuthorityCommands.DefaultValidityDays));
+    }
+
+    /// <summary>
+    /// When the register cannot be written, no certificate is written either: a certificate always appears in the register
+    /// </summary>
+    [Fact]
+    public void ACertificateIsNeverWrittenWithoutItsLineInTheRegister()
+    {
+        // Creating a root and a request, then making the register impossible to write (a folder of its name)
+        Run("init", "--dir", InFolder("ca"), "--name", "Test Root CA").ShouldBe(0, _error.ToString());
+        Run("request", "--dir", InFolder("back"), "--role", "back", "--suffix", Suffix).ShouldBe(0, _error.ToString());
+        Directory.CreateDirectory(InFolder("ca", AuthorityCommands.IssuedFile));
+
+        // Checks: the command fails, and no certificate exists
+        Run("sign", "--dir", InFolder("ca"), "--request", InFolder("back", "back.csr"), "--role", "back", "--suffix", Suffix, "--out", InFolder("back", "back.crt"))
+            .ShouldBe(1);
+        File.Exists(InFolder("back", "back.crt")).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// A file that is not a certificate is refused at install with its name
+    /// </summary>
+    [Fact]
+    public void AFileThatIsNotACertificateIsNamedAtInstall()
+    {
+        // Issuing up to the request, then giving a text file as the certificate
+        Run("init", "--dir", InFolder("ca"), "--name", "Test Root CA").ShouldBe(0, _error.ToString());
+        Run("request", "--dir", InFolder("back"), "--role", "back", "--suffix", Suffix).ShouldBe(0, _error.ToString());
+        File.WriteAllText(InFolder("back", "back.crt"), "not a certificate");
+
+        // Checks
+        Run("install", "--key", InFolder("back", "back.key"), "--certificate", InFolder("back", "back.crt"), "--authority", InFolder("ca", AuthorityCommands.AuthorityCertificateFile),
+            "--out", InFolder("back", "back.pfx")).ShouldBe(1);
+        _error.ToString().ShouldContain(InFolder("back", "back.crt"));
+        File.Exists(InFolder("back", "back.pfx")).ShouldBeFalse();
+    }
+    /// <summary>
     /// The key of the tier is written encrypted, and the root key never leaves its PFX
     /// </summary>
     [Fact]

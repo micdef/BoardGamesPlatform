@@ -100,6 +100,18 @@ internal sealed class AuthorityCommands
     private const int KeyDerivationIterations = 600_000;
 
     /// <summary>
+    /// Number of iterations of the key derivation of a PFX (the root and the PFX of a tier): the highest one .NET loads with its default
+    /// limits (<see cref="Pkcs12LoaderLimits"/>, 300 000 at most), far above the 2 000 of the default export
+    /// </summary>
+    private const int PfxKeyDerivationIterations = 300_000;
+
+    /// <summary>
+    /// Margin given to the clocks: a certificate is valid from this long before it is signed, so that a tier whose clock is a little late does
+    /// not refuse it
+    /// </summary>
+    private static readonly TimeSpan _clockSkew = TimeSpan.FromMinutes(5);
+
+    /// <summary>
     /// Text of the help
     /// </summary>
     private const string Usage = """
@@ -343,6 +355,52 @@ internal sealed class AuthorityCommands
     }
 
     /// <summary>
+    /// Method used to build the encryption of a PFX: AES-256 and SHA-256, with <see cref="PfxKeyDerivationIterations"/> iterations
+    /// </summary>
+    /// <returns>
+    /// The parameters of the encryption
+    /// </returns>
+    private static PbeParameters CreatePfxEncryption()
+    {
+        // Function's return
+        return new PbeParameters(PbeEncryptionAlgorithm.Aes256Cbc, HashAlgorithmName.SHA256, PfxKeyDerivationIterations);
+    }
+
+    /// <summary>
+    /// Method used to cut a time to the second, the precision of the validity of a certificate
+    /// </summary>
+    /// <param name="time">Time to cut</param>
+    /// <returns>
+    /// The time, without its fraction of a second
+    /// </returns>
+    private static DateTimeOffset TruncateToSecond(DateTimeOffset time)
+    {
+        // Function's return
+        return new DateTimeOffset(time.Ticks - (time.Ticks % TimeSpan.TicksPerSecond), time.Offset);
+    }
+
+    /// <summary>
+    /// Method used to load a public certificate, naming the file when it cannot be read
+    /// </summary>
+    /// <param name="path">[Cannot be null] File of the certificate (PEM or DER)</param>
+    /// <returns>
+    /// The certificate, owned by the caller, who disposes it
+    /// </returns>
+    /// <exception cref="CryptographicException">If the file is not a certificate</exception>
+    private static X509Certificate2 LoadCertificate(string path)
+    {
+        try
+        {
+            // Function's return
+            return X509CertificateLoader.LoadCertificateFromFile(path);
+        }
+        catch (CryptographicException exception)
+        {
+            throw new CryptographicException($"The file {path} is not a certificate: {exception.Message}", exception);
+        }
+    }
+
+    /// <summary>
     /// Method used to refuse a command whose output files already exist, before anything is created
     /// </summary>
     /// <param name="paths">[Cannot be null] Files the command will write</param>
@@ -394,11 +452,11 @@ internal sealed class AuthorityCommands
         RefuseExisting(keyPath, certificatePath);
         string password = ReadPassword(AuthorityPasswordVariable, "New password of the root key", isNew: true);
 
-        // Creating the root, then writing its key and its public certificate
-        DateTimeOffset now = _timeProvider.GetUtcNow();
-        using X509Certificate2 root = CertificateIssuer.CreateRoot(name, now, now.AddYears(years));
+        // Creating the root, valid from a little before now (see _clockSkew), then writing its key and its public certificate
+        DateTimeOffset start = TruncateToSecond(_timeProvider.GetUtcNow() - _clockSkew);
+        using X509Certificate2 root = CertificateIssuer.CreateRoot(name, start, start.AddYears(years));
         Directory.CreateDirectory(directory);
-        WriteNew(keyPath, root.ExportPkcs12(Pkcs12ExportPbeParameters.Pbes2Aes256Sha256, password), isPrivate: true);
+        WriteNew(keyPath, root.ExportPkcs12(CreatePfxEncryption(), password), isPrivate: true);
         WriteNew(certificatePath, Encoding.ASCII.GetBytes(root.ExportCertificatePem()), isPrivate: false);
         _output.WriteLine($"Authority created: {root.Subject}, valid until {root.NotAfter.ToUniversalTime():yyyy-MM-dd} (UTC)");
         _output.WriteLine($"Key (keep it on this machine only): {keyPath}");
@@ -449,14 +507,21 @@ internal sealed class AuthorityCommands
         if (!File.Exists(requestPath))
             throw new UsageException($"The request {requestPath} does not exist");
 
-        // Signing within the validity of the root
+        // Signing within the validity of the root, from a little before now (see _clockSkew), to the second as a certificate holds it
         using X509Certificate2 authority = LoadAuthority(directory);
         DateTimeOffset now = _timeProvider.GetUtcNow();
-        DateTimeOffset notAfter = now.AddDays(days) > authority.NotAfter ? authority.NotAfter : now.AddDays(days);
-        using X509Certificate2 certificate = CertificateIssuer.Sign(authority, File.ReadAllText(requestPath), role, suffix, now, notAfter);
+        DateTimeOffset rootStart = new DateTimeOffset(authority.NotBefore.ToUniversalTime(), TimeSpan.Zero);
+        DateTimeOffset rootEnd = new DateTimeOffset(authority.NotAfter.ToUniversalTime(), TimeSpan.Zero);
+        DateTimeOffset notBefore = TruncateToSecond(now - _clockSkew);
+        if (notBefore < rootStart)
+            notBefore = rootStart;
+        DateTimeOffset notAfter = TruncateToSecond(notBefore.AddDays(days));
+        if (notAfter > rootEnd)
+            notAfter = rootEnd;
+        using X509Certificate2 certificate = CertificateIssuer.Sign(authority, File.ReadAllText(requestPath), role, suffix, notBefore, notAfter);
 
-        // Writing the certificate, then recording it
-        WriteNew(outputPath, Encoding.ASCII.GetBytes(certificate.ExportCertificatePem()), isPrivate: false);
+        // Recording the certificate first, then writing it: a line of the register without its file is a smaller harm than a certificate the
+        // register does not know (the register is where a certificate to refuse is found)
         string thumbprint = certificate.GetCertHashString(HashAlgorithmName.SHA256);
         string issuedPath = Path.Combine(directory, IssuedFile);
         if (!File.Exists(issuedPath))
@@ -464,6 +529,7 @@ internal sealed class AuthorityCommands
         File.AppendAllText(issuedPath, string.Join(',', now.UtcDateTime.ToString("O", CultureInfo.InvariantCulture), certificate.SerialNumber, thumbprint,
             PlatformIdentity.GetRoleName(role), PlatformIdentity.GetDnsName(role, suffix), certificate.NotBefore.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
             certificate.NotAfter.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture)) + Environment.NewLine);
+        WriteNew(outputPath, Encoding.ASCII.GetBytes(certificate.ExportCertificatePem()), isPrivate: false);
         _output.WriteLine($"Certificate of {PlatformIdentity.GetDnsName(role, suffix)} signed, valid until {certificate.NotAfter.ToUniversalTime():yyyy-MM-dd} (UTC)");
         _output.WriteLine($"Thumbprint (SHA-256): {thumbprint}");
         _output.WriteLine($"Certificate to send back to the tier: {outputPath}");
@@ -489,8 +555,8 @@ internal sealed class AuthorityCommands
         }
 
         // Checking that the certificate comes from the authority, which alone is trusted
-        using X509Certificate2 certificate = X509CertificateLoader.LoadCertificateFromFile(certificatePath);
-        using X509Certificate2 authority = X509CertificateLoader.LoadCertificateFromFile(authorityPath);
+        using X509Certificate2 certificate = LoadCertificate(certificatePath);
+        using X509Certificate2 authority = LoadCertificate(authorityPath);
         using X509Chain chain = new X509Chain();
         chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
         chain.ChainPolicy.CustomTrustStore.Add(authority);
@@ -505,7 +571,7 @@ internal sealed class AuthorityCommands
         using ECDsa key = ECDsa.Create();
         key.ImportFromEncryptedPem(File.ReadAllText(keyPath), password);
         using X509Certificate2 joined = certificate.CopyWithPrivateKey(key);
-        WriteNew(outputPath, joined.ExportPkcs12(Pkcs12ExportPbeParameters.Pbes2Aes256Sha256, password), isPrivate: true);
+        WriteNew(outputPath, joined.ExportPkcs12(CreatePfxEncryption(), password), isPrivate: true);
         _output.WriteLine($"PFX of {certificate.GetNameInfo(X509NameType.DnsName, forIssuer: false)} written: {outputPath}");
         _output.WriteLine($"Delete the key file now that the PFX holds it: {keyPath}");
     }
@@ -580,6 +646,14 @@ internal sealed class AuthorityCommands
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or CryptographicException or ArgumentException)
         {
             _error.WriteLine($"Failed: {exception.Message}");
+
+            // Function's return
+            return 1;
+        }
+        catch (Exception exception)
+        {
+            // Any other failure is a failure of the command too: the exit code tells it, never a crash of the tool
+            _error.WriteLine($"Failed (unexpected {exception.GetType().Name}): {exception.Message}");
 
             // Function's return
             return 1;

@@ -176,6 +176,15 @@ public static class PeerCertificateValidator
                 return $"the certificate {thumbprint} is in the refused list";
             }
 
+            // Requiring the extended usages to be written: a chain accepts a certificate without them for any usage, and the authority of
+            // the platform always writes them
+            X509EnhancedKeyUsageExtension? usages = peer.Extensions.OfType<X509EnhancedKeyUsageExtension>().FirstOrDefault();
+            if (usages is null || !usages.EnhancedKeyUsages.Cast<Oid>().Any(usage => usage.Value == usageOid))
+            {
+                // Function's return
+                return $"the certificate {thumbprint} does not allow the usage of its side of the link";
+            }
+
             // Building its chain on the roots of the platform alone, for the usage of its side
             using X509Chain chain = new X509Chain();
             chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;

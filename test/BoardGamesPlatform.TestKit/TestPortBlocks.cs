@@ -61,6 +61,11 @@ public static class TestPortBlocks
     /// </summary>
     public const int EndToEnd = 5;
 
+    /// <summary>
+    /// Socket protocol tests, second block, locked only once the first one is used up: 17600-17699
+    /// </summary>
+    public const int ProtocolSecond = 6;
+
     #endregion
 
     #region Variables
