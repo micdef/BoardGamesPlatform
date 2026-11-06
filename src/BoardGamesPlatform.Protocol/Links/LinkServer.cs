@@ -35,8 +35,8 @@ namespace BoardGamesPlatform.Protocol.Links;
 /// after <see cref="MaxConsecutiveAcceptFailures"/> failures in a row, <see cref="RunAsync"/> fails the same way.</description></item>
 /// </list>
 /// <para>A connection is disposed when its service ends, whatever the reason; a failure of one connection never reaches the others. Any end
-/// once the stop is requested is a close, not a failure. When the loop ends, the listener is disposed and the service of every connection is
-/// awaited: the stopping token ends them. Beyond <see cref="DefaultMaxConnections"/> connections served at the same time (or the maximum
+/// once the stop is requested is a close, not a failure. When the loop ends, for whatever reason, the listener is disposed, the service of
+/// every connection is canceled and awaited: a lost listener never leaves connections served by a tier that stops. Beyond <see cref="DefaultMaxConnections"/> connections served at the same time (or the maximum
 /// given), a new connection is closed at once and logged. The logs hold the remote end point and the exception; they go through the logger of the tier, with
 /// the event ids 9011 to 9019, reserved for this class (see the coding conventions).</para>
 /// </remarks>
@@ -367,7 +367,7 @@ public sealed partial class LinkServer
     /// </summary>
     /// <param name="stoppingToken">Token canceled when the tier stops</param>
     /// <returns>
-    /// A task that completes once the listener is disposed and every connection served to its end
+    /// A task that completes once the listener is disposed and the service of every connection ended
     /// </returns>
     /// <exception cref="InvalidOperationException">If the server already ran, if the listener is lost without a stop request, or if the
     /// accept failures repeat</exception>
@@ -377,6 +377,8 @@ public sealed partial class LinkServer
         if (Interlocked.Exchange(ref _isRunning, 1) == 1)
             throw new InvalidOperationException("The link server has already run");
 
+        // Services of the connections, canceled when the tier stops and when the loop ends for any other reason
+        using CancellationTokenSource services = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         int consecutiveFailures = 0;
         try
         {
@@ -425,7 +427,7 @@ public sealed partial class LinkServer
                 }
 
                 // Serving the connection in its own task, the services that ended being forgotten
-                _connectionTasks.Add(Task.Run(() => ServeConnectionAsync(connection, stoppingToken), CancellationToken.None));
+                _connectionTasks.Add(Task.Run(() => ServeConnectionAsync(connection, services.Token), CancellationToken.None));
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -434,10 +436,19 @@ public sealed partial class LinkServer
         }
         finally
         {
-            // Closing the listener, then waiting for the service of every connection: the stopping token ends them
-            await _listener.DisposeAsync().ConfigureAwait(false);
-            LogStoppedListening(_name);
-            await Task.WhenAll(_connectionTasks).ConfigureAwait(false);
+            // Closing the listener, then ending the service of every connection and waiting for it: without the cancellation, a listener lost
+            // without a stop request would wait for ever for connections that nothing ends any more. The services are ended even when closing
+            // the listener fails; that failure then ends the run
+            try
+            {
+                await _listener.DisposeAsync().ConfigureAwait(false);
+                LogStoppedListening(_name);
+            }
+            finally
+            {
+                await services.CancelAsync().ConfigureAwait(false);
+                await Task.WhenAll(_connectionTasks).ConfigureAwait(false);
+            }
         }
     }
 
