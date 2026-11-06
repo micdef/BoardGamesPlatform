@@ -2,11 +2,13 @@
  *	@file	test/BoardGamesPlatform.TestKit/TestTlsFiles.cs
  *	@author	Defraene Michaël (AKA Sonic) (co-written by Claude)
  *
- *	@brief	Certificate files of the three roles, written once per test run, and the "Tls" settings that point to them
+ *	@brief	Certificate files of the three roles and signing keys of the secure channel, written once per test run, and the settings that point to them
  */
 
 // Using
+using System.Security.Cryptography;
 using BoardGamesPlatform.Protocol.Transport;
+using BoardGamesPlatform.Protocol.Transport.Secure;
 using BoardGamesPlatform.Protocol.Transport.Tls;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -38,6 +40,11 @@ public sealed class TestTlsFiles
     /// Password of the PFX files of the tests
     /// </summary>
     public const string Password = "password-of-the-test-certificates";
+
+    /// <summary>
+    /// Password of the signing keys of the tests, distinct from the one of the PFX as a tier requires
+    /// </summary>
+    public const string SigningKeyPassword = "password-of-the-test-signing-keys";
 
     #endregion
 
@@ -114,6 +121,15 @@ public sealed class TestTlsFiles
             foreach (PlatformRole role in new PlatformRole[] { PlatformRole.Gateway, PlatformRole.Back, PlatformRole.VeryBack })
                 TestCertificates.WritePfx(certificates.Issue(role), GetCertificatePath(role), Password);
         }
+
+        // Writing the signing key of each end of the secure channel, and its public key, the file of the peer of the other end
+        foreach (PlatformRole role in new PlatformRole[] { PlatformRole.Back, PlatformRole.VeryBack })
+        {
+            using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+            File.WriteAllText(GetSigningKeyPath(role), key.ExportEncryptedPkcs8PrivateKeyPem(SigningKeyPassword,
+                new PbeParameters(PbeEncryptionAlgorithm.Aes256Cbc, HashAlgorithmName.SHA256, 1000)));
+            File.WriteAllText(GetPublicKeyPath(role), SigningPublicKey.FromKey(key).ToBase64() + Environment.NewLine);
+        }
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
             try
@@ -159,7 +175,34 @@ public sealed class TestTlsFiles
     }
 
     /// <summary>
-    /// Method used to get the "Tls" settings of a role, to add to the settings in memory of a host
+    /// Method used to get the signing key of an end of the secure channel
+    /// </summary>
+    /// <param name="role">The Back or the Very Back</param>
+    /// <returns>
+    /// The path of its encrypted PEM file
+    /// </returns>
+    public string GetSigningKeyPath(PlatformRole role)
+    {
+        // Function's return
+        return Path.Combine(Folder, $"{PlatformIdentity.GetRoleName(role)}-signing.key");
+    }
+
+    /// <summary>
+    /// Method used to get the public key of an end of the secure channel, the file of the public keys its peer pins
+    /// </summary>
+    /// <param name="role">The Back or the Very Back</param>
+    /// <returns>
+    /// The path of the file of its public key
+    /// </returns>
+    public string GetPublicKeyPath(PlatformRole role)
+    {
+        // Function's return
+        return Path.Combine(Folder, $"{PlatformIdentity.GetRoleName(role)}-signing.pub");
+    }
+
+    /// <summary>
+    /// Method used to get the "Tls" settings of a role, and the "Handshake" settings of the Back and the Very Back, to add to the settings in
+    /// memory of a host
     /// </summary>
     /// <param name="role">Role of the tier</param>
     /// <returns>
@@ -167,14 +210,24 @@ public sealed class TestTlsFiles
     /// </returns>
     public Dictionary<string, string?> GetSettings(PlatformRole role)
     {
-        // Function's return
-        return new Dictionary<string, string?>
+        // The certificate of the role, then the keys of the secure channel when the role is an end of it
+        Dictionary<string, string?> settings = new Dictionary<string, string?>
         {
             [$"{TlsOptions.SectionName}:{nameof(TlsOptions.IdentitySuffix)}"] = TestCertificates.Suffix,
             [$"{TlsOptions.SectionName}:{nameof(TlsOptions.CertificatePath)}"] = GetCertificatePath(role),
             [$"{TlsOptions.SectionName}:{nameof(TlsOptions.CertificatePassword)}"] = Password,
             [$"{TlsOptions.SectionName}:{nameof(TlsOptions.TrustedRootsPath)}"] = TrustedRootsPath,
         };
+        if (role is PlatformRole.Back or PlatformRole.VeryBack)
+        {
+            PlatformRole peer = role == PlatformRole.Back ? PlatformRole.VeryBack : PlatformRole.Back;
+            settings[$"{HandshakeOptions.SectionName}:{nameof(HandshakeOptions.SigningKeyPath)}"] = GetSigningKeyPath(role);
+            settings[$"{HandshakeOptions.SectionName}:{nameof(HandshakeOptions.SigningKeyPassword)}"] = SigningKeyPassword;
+            settings[$"{HandshakeOptions.SectionName}:{nameof(HandshakeOptions.PeerPublicKeysPath)}"] = GetPublicKeyPath(peer);
+        }
+
+        // Function's return
+        return settings;
     }
 
     /// <summary>
@@ -205,8 +258,30 @@ public sealed class TestTlsFiles
     /// </returns>
     public ITransportConnector CreateConnector(PlatformRole clientRole, PlatformRole serverRole)
     {
+        // Mutual TLS, then the secure channel on the Back → Very Back link, as the tiers do
+        TlsCredentials credentials = LoadCredentials(clientRole);
+        TlsTransportConnector tls = new TlsTransportConnector(new TcpTransportConnector(), credentials, serverRole, NullLogger.Instance);
+        if (clientRole != PlatformRole.Back || serverRole != PlatformRole.VeryBack)
+            return tls;
+
         // Function's return
-        return new TlsTransportConnector(new TcpTransportConnector(), LoadCredentials(clientRole), serverRole, NullLogger.Instance);
+        return new SecureTransportConnector(tls, LoadSigningKeys(PlatformRole.Back, credentials), NullLogger.Instance);
+    }
+
+    /// <summary>
+    /// Method used to load the keys of an end of the secure channel from their files, as the tier does (for a fake tier of the tests)
+    /// </summary>
+    /// <param name="role">The Back or the Very Back</param>
+    /// <param name="credentials">[Cannot be null] TLS credentials of the tier, whose key must differ from the signing key</param>
+    /// <returns>
+    /// The keys
+    /// </returns>
+    public SigningKeys LoadSigningKeys(PlatformRole role, TlsCredentials credentials)
+    {
+        // Function's return
+        PlatformRole peer = role == PlatformRole.Back ? PlatformRole.VeryBack : PlatformRole.Back;
+        return SigningKeys.FromFiles(GetSigningKeyPath(role), SigningKeyPassword, GetPublicKeyPath(peer), Password, () => credentials.Certificate, TimeProvider.System,
+            NullLogger.Instance);
     }
 
     /// <summary>

@@ -211,6 +211,16 @@ public sealed class RequestClient : IAsyncDisposable
     /// </summary>
     public Exception? CloseReason => Volatile.Read(ref _closeReason);
 
+    /// <summary>
+    /// Whether the connection should be replaced by a new one before its limits (see <see cref="ITransportConnection.IsRenewalDue"/>)
+    /// </summary>
+    public bool IsRenewalDue => _connection.IsRenewalDue;
+
+    /// <summary>
+    /// Number of requests waiting for their response, so that a connection being replaced is closed once they ended
+    /// </summary>
+    public int PendingRequestCount => _pendingRequests.Count;
+
     #endregion
 
     #region Delegates

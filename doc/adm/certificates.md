@@ -70,6 +70,11 @@ Keep `platform-ca.pfx` and its password on one machine, off the network when pos
 | PFX of a tier | Readable by the account of the service only: `icacls back.pfx /inheritance:r /grant:r "NT SERVICE\<service>:R" /grant:r "Administrators:F"` (a folder created under `C:\` gives read rights to every user by inheritance) | Owned by the account of the service, mode `0400`: `chown <account>: back.pfx` then `chmod 0400 back.pfx` |
 | Password of the PFX | The `Environment` value of the service in the registry, writable by the administrators only | An `EnvironmentFile=` of the unit, owned by `root`, mode `0600` (`Tls__CertificatePassword=…`), or `LoadCredential=`; **never** `Environment=` in the unit, whose variables are exposed to unprivileged clients through D-Bus ([systemd.exec](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html)) |
 | Root key `platform-ca.pfx` and `issued.csv` | The folder of the authority readable by its administrator only (`icacls <folder> /inheritance:r /grant:r "<administrator>:F"`) | Written mode `0600` by the tool; keep the folder `0700` |
+| Signing key `<role>-signing.key` (Back, Very Back) | Readable by the account of the service, writable by the administrators only: `icacls back-signing.key /inheritance:r /grant:r "NT SERVICE\<service>:R" /grant:r "Administrators:F"` | Owned by `root`, group of the service, mode `0640`: the service reads it and never writes it |
+| Public keys of the peer (the file of `Handshake:PeerPublicKeysPath`) | **A trust anchor**: whoever writes it adds a key, taken within a minute. Readable by the account of the service, writable by the administrators only, as the signing key | Owned by `root`, mode `0644` or `0640` with the group of the service |
+| Password of the signing key | As the password of the PFX (`Handshake__SigningKeyPassword=…`), and never the same password | As the password of the PFX |
+
+A key file is replaced **atomically**: write the new content to a temporary file in the same folder, created with the rights above (`install -o root -g <group> -m 640 …` on Fedora, then `restorecon` after the move), then move it over the old one (`mv`, or `Move-Item -Force` on Windows), so that a tier never reads a file half written.
 
 The exact commands per host are written with the native installation (0.25.0); the password moves to the vault of the platform in 0.7.0.
 
@@ -114,9 +119,28 @@ A new root (expiry, compromise of the root key):
 3. Replace the PFX of every tier with its new certificate.
 4. Once every tier runs on a new certificate, remove the old root from the file. If the old root key was compromised, skip the transition: replace everything at once and accept the interruption.
 
+## Signing keys of the secure channel (Back → Very Back)
+
+From 0.6.0 the Back → Very Back link adds a secure channel inside TLS ([secure-channel.md](../dev/secure-channel.md)): each tier signs its handshake with a key of its own, and pins the public key of the other. A valid certificate alone never reaches the Very Back.
+
+Setting it up, on each of the two machines:
+
+1. Make the signing key of the tier: `signing-key --role back --out <folder>` on the Back, `--role veryback` on the Very Back; the password comes from `BOARDGAMESPLATFORM_SIGNING_KEY_PASSWORD` or the prompt. The tool shows the key id.
+2. Copy the `.pub` file of each tier to the other: it is public, but it decides who is trusted, so copy it by a channel you trust and compare the key id shown by the tool with the one logged by the peer (event 9057).
+3. Set the `Handshake` section of each tier: `SigningKeyPath` (its `.key`), `PeerPublicKeysPath` (the file of the public keys of the other), and the password in `Handshake__SigningKeyPassword`.
+
+Rotation of the key of a tier, without a cut of the link:
+
+1. Make the new key, with the same password as the current one (the password is read at startup only).
+2. Add its public key as a new line of the file of the peer (at most 4 keys); the peer takes it within a minute.
+3. Replace the signing key of the tier by the new one; the tier takes it within a minute (event 9059).
+4. Once the tier logs the new key, remove the old public key from the file of the peer: the connections opened with it are closed (event 9061), and the link opens new ones at once.
+
+To **revoke** a key (a tier lost, a key stolen), remove its line from the file of the peer: within a minute, every connection opened with it is closed, and no new one opens. Each step can also be done with a restart instead of waiting for the check.
+
 ## Development
 
-`pwsh tools/certificates/New-DevelopmentCertificates.ps1` creates a development root and the PFX of the three tiers in `.certificates/dev` (ignored by Git), and sets their password in the user secrets of each tier; the `appsettings.Development.json` files already point to these files. See [tools/certificates/README.md](../../tools/certificates/README.md). These certificates are for a developer machine only: a server always gets its certificate by the steps above.
+`pwsh tools/certificates/New-DevelopmentCertificates.ps1` creates a development root and the PFX of the three tiers in `.certificates/dev` (ignored by Git), the signing keys of the Back and the Very Back with their `.pub` files, and sets their passwords in the user secrets of each tier; the `appsettings.Development.json` files already point to these files. See [tools/certificates/README.md](../../tools/certificates/README.md). These certificates are for a developer machine only: a server always gets its certificate by the steps above.
 
 The tests generate their certificates at run time with the same code as the tool: no private key is ever committed.
 
@@ -133,8 +157,19 @@ The tests generate their certificates at run time with the same code as the tool
 | 9037 | Information | The certificate of the tier is loaded, with its thumbprint and its expiry |
 | 9038 | Error | Changed certificate files were refused; the current certificate is kept |
 | 9039 | Error | The certificate of the tier has expired: its peers refuse every new connection |
-| 9040 | Debug | A connection failed its establishment (TLS), logged by the listener as 9031 or 9033 |
+| 9040 | Debug | A connection failed its establishment (TLS or secure channel), logged by the listener as 9031, 9033 or 9051 |
+| 9051 | Warning or Error | The Very Back refuses a handshake of the secure channel, with the reason (`unknownKey` with the key id, `badSignature`, …) |
+| 9052 | Warning or Error | The Back refuses the Very Back in the secure channel, with the reason |
+| 9053 | Information | A secure channel is opened, with the key id of the peer |
+| 9054 | Error | A record was refused (tampering or a bug): the connection is closed |
+| 9055 | Warning | A connection reached the limit of records of its keys: closed, and a new one makes new keys |
+| 9057 | Information | The keys of the secure channel are loaded: the key id of the tier and the ones of its peer |
+| 9058 | Warning | The public keys of the peer changed, with the key ids added and removed |
+| 9059 | Information | A new signing key is taken for the new connections |
+| 9060 | Error | Changed key files were refused; the current keys are kept |
+| 9061 | Information | A connection is closed because the key of its peer was removed |
+| 9062 | Information | The Very Back closed a connection older than 48 hours, never renewed |
 
-The refusals (9031, 9033) are logged once every 10 seconds at most, the next entry giving the number held back, so that a peer that fails handshakes in a loop cannot flood the logs.
+The refusals (9031, 9033, 9051) are logged once every 10 seconds at most, the next entry giving the number held back, so that a peer that fails handshakes in a loop cannot flood the logs.
 
 The password is never logged.

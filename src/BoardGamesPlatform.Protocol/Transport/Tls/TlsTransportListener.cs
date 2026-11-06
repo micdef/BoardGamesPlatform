@@ -220,13 +220,14 @@ public sealed partial class TlsTransportListener : ITransportListener
         string remoteEndPoint = accepted.RemoteEndPoint.ToString() ?? "unknown";
         ITransportConnection established = await _inner.EstablishAsync(accepted, cancellationToken).ConfigureAwait(false);
         SslStream stream = new SslStream(established.Stream, leaveInnerStreamOpen: true);
+        SslStreamCertificateContext context = _credentials.GetContextForNewConnection();
         string? refusal = null;
         string thumbprint = string.Empty;
         try
         {
             SslServerAuthenticationOptions options = new SslServerAuthenticationOptions
             {
-                ServerCertificateContext = _credentials.GetContextForNewConnection(),
+                ServerCertificateContext = context,
                 ClientCertificateRequired = true,
                 EnabledSslProtocols = SslProtocols.Tls13,
                 CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
@@ -270,7 +271,7 @@ public sealed partial class TlsTransportListener : ITransportListener
         LogAuthenticated(remoteEndPoint, identity, thumbprint);
 
         // Function's return
-        return new TlsTransportConnection(established, stream, identity);
+        return new TlsTransportConnection(established, stream, identity, context.TargetCertificate);
     }
 
     /// <inheritdoc/>

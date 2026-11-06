@@ -9,13 +9,14 @@ It describes version 1 of the protocol, delivered in 0.4.0. The code is in `src/
 - TLS identifies the **tiers, not the players**: the requests carry no session before 0.10.0, so a tier that holds a valid certificate of its role can call every operation of its peer.
 - A process that can reach the port but holds no certificate can still open connections: it gets one of the 4 places of the handshakes (2 per IP address) for 5 seconds at most, never the place of a served connection, and a newer connection makes room by closing the oldest one. A peer that opens connections without pause, from 2 addresses or more, can still keep the client tier from connecting: keep the listeners on the loopback address or behind a firewall that admits the peer tier only. Behind a NAT or a published Docker port, all the peers may show the same address, which makes the part per address the whole of the places.
 - The largest payload (64 KiB) is part of the contract of each link, checked by the handshake: a change of it is deployed on both ends at the same time, since a client and a server that differ refuse each other (`protocol.limitsMismatch`).
-- A withdrawn certificate is refused through `Tls:RefusedThumbprints` only: there is no revocation list nor OCSP. The authenticated ECDH handshake on the Back → Very Back link comes in 0.6.0, the vault for the passwords of the certificates in 0.7.0.
+- A withdrawn certificate is refused through `Tls:RefusedThumbprints` only: there is no revocation list nor OCSP. The vault for the passwords of the certificates and of the signing keys comes in 0.7.0.
+- From 0.6.0 the Back → Very Back link adds the secure channel inside TLS ([secure-channel.md](secure-channel.md)): an authenticated ECDH handshake with signing keys pinned by each tier, then AES-256-GCM records, so that a valid certificate alone never reaches the Very Back. The Gateway → Back link keeps mutual TLS only.
 
 ## Layers
 
 | Layer | Namespace | Role |
 |-------|-----------|------|
-| Transport | `Protocol.Transport` | A connection hands over a byte stream: plain TCP, or mutual TLS 1.3 over TCP (`Protocol.Transport.Tls`) |
+| Transport | `Protocol.Transport` | A connection hands over a byte stream: plain TCP, mutual TLS 1.3 over TCP (`Protocol.Transport.Tls`), and on the Back → Very Back link the secure channel inside TLS (`Protocol.Transport.Secure`, [secure-channel.md](secure-channel.md)) |
 | Framing | `Protocol.Framing` | Cuts the stream into frames and refuses an oversized frame before reading it |
 | Control | `Protocol.Control` | Handshake, heartbeat and cancellation: the frames that manage the connection itself |
 | Correlation | `Protocol.Correlation` | Several requests in flight on one connection, each response paired with its request |
@@ -134,7 +135,7 @@ Through the tiers, a front that disconnects stops the work of its call in the Ba
 | The client closes when the server has shown no sign of life for more than | 30 seconds, checked at each ping (so within 40 seconds) |
 | The server closes when it has received nothing at all for more than | 45 seconds, checked at every ping interval (so within 55 seconds) |
 
-Any byte received counts, not only a whole frame: a large frame on a slow link is not taken for a silent peer. On the client, a piece of a large frame written counts too (a frame larger than 64 KiB is written in pieces of 64 KiB, which leave only when the server reads, once the buffers of the system are full): a large request on a slow link is not taken for a dead server. A short frame written is never a sign of life, since the system takes its bytes without the server reading them: short requests sent often never keep a silent server alive. While a frame is being written, the client skips its ping instead of waiting behind it; if that write stalls, no sign of life comes and the client closes after its timeout. Each end watches with its own timer, and no read is ever canceled without closing the connection. The write of a ping is bounded by the client heartbeat timeout (30 seconds), so that a peer that no longer reads cannot block the heartbeat.
+Any byte received counts, not only a whole frame: a large frame on a slow link is not taken for a silent peer. On the client, a piece of a large frame written counts too (a frame larger than 64 KiB is written in pieces of 64 KiB, which leave only when the server reads, once the buffers of the system are full): a large request on a slow link is not taken for a dead server. A short frame written is never a sign of life, since the system takes its bytes without the server reading them: short requests sent often never keep a silent server alive. While a frame is being written, the client skips its ping instead of waiting behind it; if that write stalls, no sign of life comes and the client closes after its timeout. Each end watches with its own timer, and no read is ever canceled without closing the connection. The write of a ping is bounded by the client heartbeat timeout (30 seconds), so that a peer that no longer reads cannot block the heartbeat. On the Back → Very Back link, the bytes reach the protocol only once their record of the secure channel is authenticated: there, any authenticated record counts, and a party in the middle cannot fake a sign of life.
 
 ## Limits
 
@@ -163,6 +164,7 @@ The link client shares one connection between all its callers.
 - During the delay, calls fail at once with `link.unavailable`, without touching the network.
 - A connection that opens lets the next attempt go at once, but the failures in a row are only forgotten once it answers a request (an error code of the peer included). A connection lost before any response counts as a failure to open: a peer in a crash loop (it accepts the handshake, then dies at the first request) is reconnected with the back-off, not on every call.
 - A request in flight on a lost connection fails with `link.unavailable`. No request is ever retried automatically, since the peer may already have handled it (idempotency comes with 0.14.0).
+- Renewal (from 0.6.0, the secure channel): a connection that asks for it (2²³ records on a direction, or 24 hours) is replaced by the next call: the new connection takes the next requests, and the old one is closed once its requests ended, within the request timeout, so that no request fails. When the new connection cannot be opened, the old one stays in use, and the renewal is tried again after one minute.
 
 ## Logs
 
@@ -170,11 +172,12 @@ The protocol logs through the logger of the tier that uses it, with event ids re
 
 | Class | Event ids |
 |-------|-----------|
-| `LinkClient` | 9001-9007 |
+| `LinkClient` | 9001-9009 |
 | `LinkServer` | 9011-9019, 9040-9043 |
 | `OperationDispatcher` | 9021-9026 |
 | `TlsTransportListener` | 9031-9033 |
 | `TlsTransportConnector` | 9034-9035 |
 | `TlsCredentials` | 9036-9039 |
+| Secure channel (`Protocol.Transport.Secure`) | 9051-9062, see [secure-channel.md](secure-channel.md#failures) |
 
 On the client, the loss of a connection is logged with its reason (heartbeat timeout, protocol violation, reset by the peer). On the server, the end of a connection that failed is logged with its exception, for example the `TimeoutException` of a drain cut after a client closed.

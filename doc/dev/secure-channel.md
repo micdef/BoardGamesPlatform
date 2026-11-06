@@ -73,7 +73,7 @@ Multi-byte numbers are big-endian.
 
 ### Context of the TLS session
 
-Each end also puts in the transcript what it sees of the TLS session below, without sending it: `certS` = SHA-256 of the certificate of the server, `certC` = SHA-256 of the certificate of the client: the DER of each **leaf** certificate, as the TLS session of the connection gives them (`LocalCertificate`, `RemoteCertificate` of its `SslStream`), never as read from the settings, which a reload may have changed already.
+Each end also puts in the transcript what it sees of the TLS session below, without sending it: `certS` = SHA-256 of the certificate of the server, `certC` = SHA-256 of the certificate of the client: the DER of each **leaf** certificate as the TLS session of the connection used it: for its own end, the certificate of the context taken for that connection (`SslStream.LocalCertificate` is null on a TLS 1.3 client), for the peer, the one the session received (`RemoteCertificate`); never as read again from the settings, which a reload may have changed already.
 When the session gives no certificate for one of the ends, the connection is refused (`noCertificate`); with mutual TLS and no resumption of sessions, it never should.
 Both ends see the same two certificates when TLS is end to end; a party in the middle that ends the TLS sessions with valid certificates of its own makes them differ, and the signatures fail.
 This binds the channel to the certificates of the session (as `tls-server-end-point` of RFC 5929, for both ends), not to the session itself (see [Out of scope](#out-of-scope-residual-risks)).
@@ -217,7 +217,8 @@ The events take the range 9051-9069 of `Protocol.Transport.Secure`:
 | Events | What |
 |--------|------|
 | 9051-9053 | Handshakes refused by the server, by the client, and opened (with the `keyId` of the peer) |
-| 9054-9056 | Records: authentication failed, hard limit reached, renewal asked |
+| 9054-9055 | Records: refused (tag, truncation, byte after the close), hard limit reached |
+| 9056 | Reserved; the renewal itself is logged by the link client (9008 renewed, 9009 renewal failed, the current connection kept) |
 | 9057-9059 | Keys: loaded at startup (own `keyId` and the ones of the peer), list changed (added and removed), signing key taken |
 | 9060-9062 | Keys: changed files refused, connection closed for a removed key, connection closed for its age |
 | 9063-9069 | Reserved |

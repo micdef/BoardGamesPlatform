@@ -47,6 +47,7 @@ dotnet user-secrets set "ConnectionStrings:Main" "<connection string>" --project
 
 - `init` adds a `UserSecretsId` to the project file; it is done once per project, in the pull request that brings its first secret. The Gateway, the Back and the Very Back have one.
 - The password of the development certificates (`Tls:CertificatePassword`) is set in the user secrets of the three tiers by `tools/certificates/New-DevelopmentCertificates.ps1`. To remove it: `dotnet user-secrets remove "Tls:CertificatePassword" --project <project of the tier>`.
+- The password of the development signing keys of the secure channel (`Handshake:SigningKeyPassword`, always distinct from the one of the PFX) is set by the same script in the user secrets of the Back and the Very Back; it is removed the same way.
 - The values are stored **unencrypted** in a JSON file of the user profile (`%APPDATA%\Microsoft\UserSecrets\<id>\secrets.json` on Windows,
   `~/.microsoft/usersecrets/<id>/secrets.json` on Linux). They are for development only: never put a secret of an acceptance or production server there
   ([Microsoft Learn](https://learn.microsoft.com/aspnet/core/security/app-secrets?view=aspnetcore-10.0#use-the-secret-manager-tool)).
@@ -54,7 +55,7 @@ dotnet user-secrets set "ConnectionStrings:Main" "<connection string>" --project
 ## Acceptance and production: environment variables (until 0.7.0)
 
 On the servers, the deployment sets each secret as an environment variable of the service only, never of the whole machine.
-A key `Section:Key` becomes the variable `Section__Key` (double underscore), the form every system accepts, for example `ConnectionStrings__Main` or `Tls__CertificatePassword`.
+A key `Section:Key` becomes the variable `Section__Key` (double underscore), the form every system accepts, for example `ConnectionStrings__Main`, `Tls__CertificatePassword` or `Handshake__SigningKeyPassword` (the Back and the Very Back).
 
 | Host | Where the variables are set | Protection |
 |------|-----------------------------|------------|
