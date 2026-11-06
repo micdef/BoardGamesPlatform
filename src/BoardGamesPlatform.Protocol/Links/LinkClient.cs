@@ -245,6 +245,28 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// <exception cref="ArgumentOutOfRangeException">If the port or a timeout is out of its range</exception>
     public LinkClient(string host, int port, TimeSpan connectTimeout, TimeSpan requestTimeout, string peerName, ITransportConnector connector, ILogger logger,
         TimeProvider? timeProvider = null)
+        : this(host, port, connectTimeout, requestTimeout, peerName, connector, logger, FrameCodec.DefaultMaxPayloadLength, timeProvider)
+    {
+    }
+
+    /// <summary>
+    /// Constructor with the request timeout and the largest payload of the link; opens nothing, the connection opens on the first call
+    /// </summary>
+    /// <param name="host">[Cannot be null or blank] Host name or address of the peer</param>
+    /// <param name="port">Port of the peer, from 1 to 65535</param>
+    /// <param name="connectTimeout">Longest time allowed to open a connection; greater than zero, and at most <see cref="MaxConnectTimeout"/></param>
+    /// <param name="requestTimeout">Longest time a request waits for its response; greater than zero, and at most <see cref="MaxRequestTimeout"/></param>
+    /// <param name="peerName">[Cannot be null or blank] Name of the peer in the logs and the messages, for example "the Very Back"</param>
+    /// <param name="connector">[Cannot be null] Connector used to open the connection</param>
+    /// <param name="logger">[Cannot be null] Logger of the tier that calls</param>
+    /// <param name="maxPayloadLength">Largest payload of a frame of the link, the same as the server's (the handshake refuses another one); from 1
+    /// to <see cref="FrameCodec.HighestMaxPayloadLength"/></param>
+    /// <param name="timeProvider">[Can be null] Clock of the back-off; null for the system clock</param>
+    /// <exception cref="ArgumentNullException">If a parameter is null</exception>
+    /// <exception cref="ArgumentException">If the host or the name is blank</exception>
+    /// <exception cref="ArgumentOutOfRangeException">If the port, a timeout or the largest payload is out of its range</exception>
+    public LinkClient(string host, int port, TimeSpan connectTimeout, TimeSpan requestTimeout, string peerName, ITransportConnector connector, ILogger logger,
+        int maxPayloadLength, TimeProvider? timeProvider = null)
     {
         // Checks
         if (host is null)
@@ -265,6 +287,8 @@ public sealed partial class LinkClient : IAsyncDisposable
             throw new ArgumentNullException(nameof(connector), $"The value of the parameter: {nameof(connector)} cannot be null");
         if (logger is null)
             throw new ArgumentNullException(nameof(logger), $"The value of the parameter: {nameof(logger)} cannot be null");
+        if (maxPayloadLength < 1 || maxPayloadLength > FrameCodec.HighestMaxPayloadLength)
+            throw new ArgumentOutOfRangeException(nameof(maxPayloadLength), $"The value of the parameter: {nameof(maxPayloadLength)} must be between 1 and {FrameCodec.HighestMaxPayloadLength}");
 
         // Setting
         _host = host;
@@ -274,7 +298,7 @@ public sealed partial class LinkClient : IAsyncDisposable
         _peerName = peerName;
         _connector = connector;
         _logger = logger;
-        _codec = new FrameCodec();
+        _codec = new FrameCodec(maxPayloadLength);
         _openingLock = new SemaphoreSlim(1, 1);
         _timeProvider = timeProvider ?? TimeProvider.System;
         _backOffDelay = TimeSpan.Zero;

@@ -282,8 +282,8 @@ public sealed partial class BackListenerService : BackgroundService
     {
         // Routing the operations of the Back, then serving the connections
         ITransportListener listener = _listener ?? throw new InvalidOperationException("The listener is not started");
-        OperationDispatcher dispatcher = new OperationDispatcher(_logger).Register<PingRequest, PingResponse>(BackOperations.Ping, PingAsync);
-        RequestServer server = new RequestServer(new FrameCodec(), dispatcher.HandleAsync);
+        OperationDispatcher dispatcher = new OperationDispatcher(_logger, BackOperations.LinkMaxPayloadLength).Register<PingRequest, PingResponse>(BackOperations.Ping, PingAsync);
+        RequestServer server = new RequestServer(new FrameCodec(BackOperations.LinkMaxPayloadLength), dispatcher.HandleAsync);
         LinkServer linkServer = new LinkServer(listener, server, TierName, _logger, _acceptFailurePause);
         await linkServer.RunAsync(stoppingToken).ConfigureAwait(false);
     }

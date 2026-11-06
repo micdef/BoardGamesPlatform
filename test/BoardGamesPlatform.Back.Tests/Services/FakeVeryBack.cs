@@ -123,7 +123,7 @@ internal sealed class FakeVeryBack : IAsyncDisposable
         // Starting the listener and the link server
         TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next()));
         Port = listener.LocalEndPoint.Port;
-        OperationDispatcher dispatcher = new OperationDispatcher(NullLogger.Instance).Register<PingRequest, PingResponse>(VeryBackOperations.Ping,
+        OperationDispatcher dispatcher = new OperationDispatcher(NullLogger.Instance, VeryBackOperations.LinkMaxPayloadLength).Register<PingRequest, PingResponse>(VeryBackOperations.Ping,
             async (_, cancellationToken) =>
             {
                 // Telling the test, then answering or waiting until the fake stops
@@ -135,7 +135,7 @@ internal sealed class FakeVeryBack : IAsyncDisposable
                 return new PingResponse(PingTime);
             });
         _stopping = new CancellationTokenSource();
-        _running = new LinkServer(listener, new RequestServer(new FrameCodec(), dispatcher.HandleAsync), "the fake Very Back", NullLogger.Instance,
+        _running = new LinkServer(listener, new RequestServer(new FrameCodec(VeryBackOperations.LinkMaxPayloadLength), dispatcher.HandleAsync), "the fake Very Back", NullLogger.Instance,
             LinkServer.DefaultAcceptFailurePause).RunAsync(_stopping.Token);
     }
 

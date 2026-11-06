@@ -10,8 +10,10 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using BoardGamesPlatform.Observability;
+using BoardGamesPlatform.Protocol.Control;
 using BoardGamesPlatform.Protocol.Correlation;
 using BoardGamesPlatform.Protocol.Errors;
+using BoardGamesPlatform.Protocol.Framing;
 using BoardGamesPlatform.Protocol.Links;
 using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
@@ -155,7 +157,8 @@ public sealed class VeryBackListenerServiceTests
     private static async Task<RequestClient> ConnectAsync(VeryBackListenerService service, CancellationToken cancellationToken)
     {
         // Function's return: connected and agreed on the protocol, like the Back
-        return await TestRequestClients.ConnectAsync(LoopbackHost, service.LocalEndPoint.Port, cancellationToken);
+        return await TestRequestClients.ConnectAsync(LoopbackHost, service.LocalEndPoint.Port, new TcpTransportConnector(), VeryBackOperations.LinkMaxPayloadLength,
+            cancellationToken);
     }
 
     /// <summary>
@@ -512,6 +515,46 @@ public sealed class VeryBackListenerServiceTests
 
         // Check
         logger.Entries.Any(entry => entry.Level == LogLevel.Information && entry.Message.Contains("not a loopback address")).ShouldBe(warned);
+    }
+
+    /// <summary>
+    /// The link has a largest payload of its own (M3 of the security review of 0.4.0): a client that offers the 1 MiB of the protocol is
+    /// refused in the handshake, and a frame larger than the link allows closes the connection before its payload is held
+    /// </summary>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    [Fact(Timeout = TestTimeout)]
+    public async Task TheLinkHasALargestPayloadOfItsOwnAsync()
+    {
+        // Starting the service
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        VeryBackListenerService service = await StartServiceAsync(new FakePingProcedure(_ => _fakeTime), cancellationToken);
+        try
+        {
+            // Check: a hello with the largest payload of the protocol is refused, the code telling why
+            RemoteErrorException refused = await Should.ThrowAsync<RemoteErrorException>(() => TestRequestClients.ConnectAsync(LoopbackHost, service.LocalEndPoint.Port,
+                cancellationToken));
+            refused.Code.ShouldBe(ErrorCodes.ProtocolLimitsMismatch);
+
+            // A client of the link announces a frame one byte larger than the link allows (the server may close before the whole frame is written)
+            await using ITransportConnection connection = await new TcpTransportConnector().ConnectAsync(LoopbackHost, service.LocalEndPoint.Port, cancellationToken);
+            FrameCodec codec = new FrameCodec(VeryBackOperations.LinkMaxPayloadLength);
+            await ProtocolHandshake.RunClientAsync(connection, codec, cancellationToken);
+            Exception? writeFailure = await Record.ExceptionAsync(() => new FrameCodec().WriteAsync(connection.Stream, new Frame(1, new byte[VeryBackOperations.LinkMaxPayloadLength + 1]),
+                cancellationToken));
+            Frame? answer = null;
+            Exception? readFailure = await Record.ExceptionAsync(async () => answer = await codec.ReadAsync(connection.Stream, cancellationToken));
+
+            // Checks: the connection is closed without an answer
+            (writeFailure is null or IOException).ShouldBeTrue(writeFailure?.ToString());
+            (readFailure is null or IOException).ShouldBeTrue(readFailure?.ToString());
+            answer.ShouldBeNull();
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+        }
     }
 
     #endregion

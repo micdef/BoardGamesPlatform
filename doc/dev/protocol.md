@@ -46,7 +46,7 @@ Every message is a frame: a 12-byte header, then the payload. All numbers are bi
 | 4 to 11 | Correlation identifier, unsigned 64-bit integer |
 | 12 and after | Payload, exactly as many bytes as announced: UTF-8 JSON |
 
-- The largest payload is 1 MiB by default (16 MiB at most). A frame that announces more is refused before its payload is read.
+- The largest payload is 1 MiB by default (16 MiB at most); each link sets its own, used by both ends: 64 KiB for Gateway → Back (`BackOperations.LinkMaxPayloadLength`) and for Back → Very Back (`VeryBackOperations.LinkMaxPayloadLength`), sized to their operations of a few hundred bytes, so that the memory a peer can make a server hold stays small (connections × requests in progress × largest payload). A frame that announces more is refused before its payload is read.
 - Correlation identifier **0** is reserved for the control messages. A request uses 1, 2, 3… in the order the client gives them.
 - **Connection rule**: after any failure of a read or a write, cancellation included, the position in the stream is unknown, so the connection is closed, never reused.
 
@@ -138,7 +138,7 @@ Any byte received counts, not only a whole frame: a large frame on a slow link i
 
 | Limit | Value | When reached |
 |-------|-------|--------------|
-| Largest payload of a frame | 1 MiB (16 MiB at most) | the frame is refused, the connection closed |
+| Largest payload of a frame | 64 KiB on the links Gateway → Back and Back → Very Back (1 MiB by default, 16 MiB at most) | the frame is refused before its payload is read, the connection closed; a hello with another largest payload is refused (`protocol.limitsMismatch`) |
 | Requests in progress per connection | 64, announced in the handshake (the client never keeps more than 64, whatever the server announces) | the client waits for a free place; the server answers `server.busy` to a request that arrives anyway (for example just after a cancellation, before the server has seen it) |
 | Connections served by a link server | 8 | a new connection is closed at once, before any byte; a connection whose handshake ends then is closed too |
 | Connections in their handshake (TLS, then protocol), not yet served | 4, of which 2 at most from one source (an IP address) | the oldest connection in its handshake of the source (when it holds its 2), else of all, is closed to make room for the new one: a silent or unknown peer never takes the place of a served connection, and must open connections without pause to keep the client tier out (a port it reaches can still be saturated before authentication: the firewall stays the barrier) |
