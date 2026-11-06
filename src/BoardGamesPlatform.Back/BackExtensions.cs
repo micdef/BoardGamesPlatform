@@ -10,6 +10,7 @@ using BoardGamesPlatform.Back.Services;
 using BoardGamesPlatform.Back.Settings;
 using BoardGamesPlatform.Platform.Infrastructure.VeryBack;
 using BoardGamesPlatform.Protocol.Transport;
+using BoardGamesPlatform.Protocol.Transport.Secure;
 using BoardGamesPlatform.Protocol.Transport.Tls;
 using Microsoft.Extensions.Options;
 
@@ -136,11 +137,21 @@ public static class BackExtensions
         builder.Services.AddSingleton(services => TlsCredentials.FromOptions(PlatformRole.Back, services.GetRequiredService<IOptions<TlsOptions>>().Value,
             builder.Environment.ContentRootPath, TimeProvider.System, services.GetRequiredService<ILogger<TlsCredentials>>()));
 
-        // Calling the Very Back over mutual TLS (only the Very Back is accepted as its server), and listening for the Gateway
-        builder.Services.AddSingleton(services => new VeryBackClient(services.GetRequiredService<IOptions<VeryBackClientOptions>>().Value,
+        // Secure channel of the Very Back link: the settings, checked at startup, and the keys, loaded and checked when first needed, with the
+        // TLS settings for the rule "the password of the signing key is never the one of the PFX"
+        builder.Services.AddSingleton<IValidateOptions<HandshakeOptions>, HandshakeOptionsValidator>();
+        builder.Services.AddOptions<HandshakeOptions>().Bind(builder.Configuration.GetSection(HandshakeOptions.SectionName)).ValidateOnStart();
+        builder.Services.AddSingleton(services => SigningKeys.FromOptions(services.GetRequiredService<IOptions<HandshakeOptions>>().Value,
+            services.GetRequiredService<IOptions<TlsOptions>>().Value, services.GetRequiredService<TlsCredentials>(), builder.Environment.ContentRootPath,
+            TimeProvider.System, services.GetRequiredService<ILogger<SigningKeys>>()));
+        builder.Services.AddSingleton(services => new SecureTransportConnector(
             new TlsTransportConnector(new TcpTransportConnector(), services.GetRequiredService<TlsCredentials>(), PlatformRole.VeryBack,
                 services.GetRequiredService<ILogger<VeryBackClient>>()),
-            services.GetRequiredService<ILogger<VeryBackClient>>()));
+            services.GetRequiredService<SigningKeys>(), services.GetRequiredService<ILogger<VeryBackClient>>()));
+
+        // Calling the Very Back over mutual TLS (only the Very Back is accepted as its server) and the secure channel, and listening for the Gateway
+        builder.Services.AddSingleton(services => new VeryBackClient(services.GetRequiredService<IOptions<VeryBackClientOptions>>().Value,
+            services.GetRequiredService<SecureTransportConnector>(), services.GetRequiredService<ILogger<VeryBackClient>>()));
         builder.Services.AddHostedService<BackListenerService>();
 
         // Function's return

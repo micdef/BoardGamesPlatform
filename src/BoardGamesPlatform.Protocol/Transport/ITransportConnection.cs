@@ -55,6 +55,12 @@ public interface ITransportConnection : IAsyncDisposable
     public string? PeerIdentity { get; }
 
     /// <summary>
+    /// Whether the connection should be replaced by a new one before its limits (the records of the secure channel, its age); false for the
+    /// connections that have no such limit
+    /// </summary>
+    public bool IsRenewalDue => false;
+
+    /// <summary>
     /// Method used to stop sending, while still reading what the other end sends
     /// </summary>
     /// <remarks>

@@ -8,6 +8,8 @@
 // Using
 using System.Globalization;
 using System.Security.Authentication;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using BoardGamesPlatform.Back.Contracts;
 using BoardGamesPlatform.Back.Contracts.Ping;
 using BoardGamesPlatform.Back.Services;
@@ -15,6 +17,7 @@ using BoardGamesPlatform.Protocol.Correlation;
 using BoardGamesPlatform.Protocol.Errors;
 using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
+using BoardGamesPlatform.Protocol.Transport.Secure;
 using BoardGamesPlatform.Protocol.Transport.Tls;
 using BoardGamesPlatform.TestKit;
 using Microsoft.Extensions.Configuration;
@@ -199,6 +202,43 @@ public sealed class BackTlsTests
         InvalidOperationException wrongRole = Should.Throw<InvalidOperationException>(() => withAnotherRole.Services.GetServices<IHostedService>().OfType<BackListenerService>().ToArray());
         wrongRole.Message.ShouldContain("cannot be used");
         wrongRole.Message.ShouldNotContain(TestTlsFiles.Password);
+    }
+
+    /// <summary>
+    /// A Back without the settings of its secure channel, or whose signing key is the key of its TLS certificate, does not start
+    /// </summary>
+    [Fact]
+    public void InvalidSigningKeysStopTheStartup()
+    {
+        // Building a Back without the Handshake settings, then with the key of its TLS certificate as its signing key
+        string folder = Directory.CreateTempSubdirectory("bgp-back-keys-").FullName;
+        try
+        {
+            Dictionary<string, string?> withoutHandshake = TestTlsFiles.Shared.GetSettings(PlatformRole.Back)
+                .Where(setting => !setting.Key.StartsWith(HandshakeOptions.SectionName, StringComparison.Ordinal)).ToDictionary();
+            using IHost withoutSettings = BuildHost(TestPorts.Block.Next(), withoutHandshake);
+            using X509Certificate2 certificate = X509CertificateLoader.LoadPkcs12FromFile(TestTlsFiles.Shared.GetCertificatePath(PlatformRole.Back), TestTlsFiles.Password,
+                X509KeyStorageFlags.Exportable);
+            using ECDsa tlsKey = certificate.GetECDsaPrivateKey()!;
+            string tlsKeyPath = Path.Combine(folder, "back-signing.key");
+            File.WriteAllText(tlsKeyPath, tlsKey.ExportEncryptedPkcs8PrivateKeyPem(TestTlsFiles.SigningKeyPassword,
+                new PbeParameters(PbeEncryptionAlgorithm.Aes256Cbc, HashAlgorithmName.SHA256, 1000)));
+            Dictionary<string, string?> sameKey = TestTlsFiles.Shared.GetSettings(PlatformRole.Back);
+            sameKey[$"{HandshakeOptions.SectionName}:{nameof(HandshakeOptions.SigningKeyPath)}"] = tlsKeyPath;
+            using IHost withTheTlsKey = BuildHost(TestPorts.Block.Next(), sameKey);
+
+            // Checks: building the listener fails, naming the settings, or why the keys cannot be used; the password never appears
+            OptionsValidationException missing = Should.Throw<OptionsValidationException>(() => withoutSettings.Services.GetServices<IHostedService>().OfType<BackListenerService>().ToArray());
+            missing.Message.ShouldContain("Handshake:SigningKeyPath");
+            missing.Message.ShouldContain("Handshake:SigningKeyPassword");
+            InvalidOperationException tlsKeyRefused = Should.Throw<InvalidOperationException>(() => withTheTlsKey.Services.GetServices<IHostedService>().OfType<BackListenerService>().ToArray());
+            tlsKeyRefused.Message.ShouldContain("must be distinct");
+            tlsKeyRefused.Message.ShouldNotContain(TestTlsFiles.SigningKeyPassword);
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
     }
 
     #endregion

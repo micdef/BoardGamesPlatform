@@ -723,6 +723,32 @@ public sealed class RequestCorrelationTests
         Should.Throw<ArgumentNullException>(() => new RequestServer(new FrameCodec(), null!));
     }
 
+    /// <summary>
+    /// A client that stops taking requests refuses a new one before anything of it is written, so that it can be sent elsewhere
+    /// </summary>
+    /// <returns>
+    /// A task that completes once checked
+    /// </returns>
+    [Fact(Timeout = TestTimeout)]
+    public async Task AClientThatStopsAcceptingSendsNothingNewAsync()
+    {
+        // Arranging a client in front of a raw server
+        CancellationToken token = TestContext.Current.CancellationToken;
+        (ITransportConnection clientEnd, ITransportConnection serverEnd) = await ConnectAsync(token);
+        await using ITransportConnection raw = serverEnd;
+        await using RequestClient client = new RequestClient(clientEnd, new FrameCodec());
+
+        // Acting
+        client.StopAccepting();
+        await Should.ThrowAsync<RequestNotSentException>(client.SendAsync(new byte[] { 1 }, token));
+        await clientEnd.CloseSendAsync(token);
+        int read = await raw.Stream.ReadAsync(new byte[1], token);
+
+        // Checks: the server received nothing, and the client stays open for the requests already sent
+        read.ShouldBe(0);
+        client.PendingRequestCount.ShouldBe(0);
+    }
+
     #endregion
 
     #endregion

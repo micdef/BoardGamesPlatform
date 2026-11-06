@@ -6,6 +6,7 @@
  */
 
 // Using
+using BoardGamesPlatform.Protocol.Transport.Secure;
 using BoardGamesPlatform.Protocol.Transport.Tls;
 using BoardGamesPlatform.VeryBack.Procedures;
 using BoardGamesPlatform.VeryBack.Services;
@@ -135,6 +136,14 @@ public static class VeryBackExtensions
         builder.Services.AddOptions<TlsOptions>().Bind(builder.Configuration.GetSection(TlsOptions.SectionName)).ValidateOnStart();
         builder.Services.AddSingleton(services => TlsCredentials.FromOptions(PlatformRole.VeryBack, services.GetRequiredService<IOptions<TlsOptions>>().Value,
             builder.Environment.ContentRootPath, TimeProvider.System, services.GetRequiredService<ILogger<TlsCredentials>>()));
+
+        // Secure channel of the Back link: the settings, checked at startup, and the keys, loaded and checked when first needed, with the TLS
+        // settings for the rule "the password of the signing key is never the one of the PFX"
+        builder.Services.AddSingleton<IValidateOptions<HandshakeOptions>, HandshakeOptionsValidator>();
+        builder.Services.AddOptions<HandshakeOptions>().Bind(builder.Configuration.GetSection(HandshakeOptions.SectionName)).ValidateOnStart();
+        builder.Services.AddSingleton(services => SigningKeys.FromOptions(services.GetRequiredService<IOptions<HandshakeOptions>>().Value,
+            services.GetRequiredService<IOptions<TlsOptions>>().Value, services.GetRequiredService<TlsCredentials>(), builder.Environment.ContentRootPath,
+            TimeProvider.System, services.GetRequiredService<ILogger<SigningKeys>>()));
 
         builder.Services.AddSingleton<IPingProcedure, SqlPingProcedure>();
         builder.Services.AddHostedService<VeryBackListenerService>();
