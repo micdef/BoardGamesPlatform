@@ -4,6 +4,7 @@
 
 - [Coding conventions](coding-conventions.md)
 - [Socket protocol](protocol.md): the wire format of the links between the tiers (frames, handshake, control messages, error codes, cancellation, heartbeat, limits, reconnection)
+- [Secure channel](secure-channel.md): the authenticated ECDH handshake and the AES-GCM records of the Back → Very Back link, with their threat model (0.6.0)
 
 ## API reference
 
