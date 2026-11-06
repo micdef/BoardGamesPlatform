@@ -213,10 +213,21 @@ public sealed partial class TlsTransportConnector : ITransportConnector
         }
         catch
         {
+            // Releasing the session, then the connection in any case; a failure of the release must not hide the failure of the handshake
             if (refusal is not null)
                 LogServerRefused(host, port, refusal);
-            await stream.DisposeAsync().ConfigureAwait(false);
-            await connection.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                await stream.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception disposeFailure) when (disposeFailure is IOException or ObjectDisposedException)
+            {
+                // The session is broken already: the failure of the handshake is the one to tell
+            }
+            finally
+            {
+                await connection.DisposeAsync().ConfigureAwait(false);
+            }
             throw;
         }
         LogOpened(expected, host, port);

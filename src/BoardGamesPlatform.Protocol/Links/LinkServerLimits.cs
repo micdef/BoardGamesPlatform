@@ -6,7 +6,7 @@
  */
 
 // Using
-// #N/A
+using BoardGamesPlatform.Protocol.Logging;
 
 // Static using
 // #N/A
@@ -22,7 +22,7 @@ namespace BoardGamesPlatform.Protocol.Links;
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> a peer that can reach the port must not be able to take every place of the tier. The connections still in their
-/// handshake (not yet authenticated) therefore get places of their own, separate from the served ones (authenticated by mutual TLS), and one
+/// handshake (not yet authenticated) therefore get places of their own, separate from the served ones (authenticated by mutual TLS); when they are all taken, the oldest makes room for the new one (see <see cref="LinkServer"/>), and one
 /// source can only hold a part of them; a flood of refusals cannot flood the logs either.</para>
 /// <para><b>Behavior:</b> immutable, checked when built. A source is the IP address of the peer (its port is left out, since a peer chooses
 /// it freely).</para>
@@ -53,7 +53,7 @@ public sealed class LinkServerLimits
     /// <summary>
     /// Shortest time between two logs of a refused connection when none is given
     /// </summary>
-    public static readonly TimeSpan DefaultRefusalLogInterval = TimeSpan.FromSeconds(10);
+    public static readonly TimeSpan DefaultRefusalLogInterval = LogPace.DefaultInterval;
 
     /// <summary>
     /// Limits used by the tiers
