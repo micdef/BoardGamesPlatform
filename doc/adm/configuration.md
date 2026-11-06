@@ -58,7 +58,7 @@ A key `Section:Key` becomes the variable `Section__Key` (double underscore), the
 
 | Host | Where the variables are set | Protection |
 |------|-----------------------------|------------|
-| systemd unit (Linux) | An `EnvironmentFile=` of the unit, for example `/etc/boardgamesplatform/very-back.env` | Owned by `root`, mode `600`: systemd reads it before starting the service |
+| systemd unit (Linux) | An `EnvironmentFile=` of the unit, for example `/etc/boardgamesplatform/very-back.env`, never `Environment=` in the unit itself (its variables are exposed to unprivileged clients through D-Bus) | Owned by `root`, mode `600`: systemd reads it before starting the service |
 | Windows service | The `Environment` value of the service in the registry | Writable by administrators only |
 
 The website and the gateway run as services too (on Kestrel, no IIS): the rows above apply to them. Their reverse proxy holds none of these settings.

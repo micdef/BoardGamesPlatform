@@ -20,13 +20,14 @@ The certificate of the website (the public wildcard behind the reverse proxy) is
 - **No pinning of a leaf certificate.** A tier trusts the root and checks the role; it never pins the thumbprint of its peer, so a renewed certificate is accepted without touching the other tiers. A certificate to withdraw is listed in `Tls:RefusedThumbprints` (see below).
 - **Keys**: ECDSA on the NIST P-256 curve, signed with SHA-256. The root may sign end certificates only (path length 0). A certificate of a tier is valid 365 days by default, 397 at most (the limit of the public authorities), and never beyond the root.
 - **No session resumption**: each connection runs a full handshake, so that the refused list and the validity are checked every time.
+- **Usages required**: a certificate without its extended usages is refused, though a chain alone would accept it for any usage.
 
 ## Prerequisites
 
 | System | Requirement |
 |--------|-------------|
-| Windows | **Windows Server 2022** or Windows 11, or later: TLS 1.3 is supported by Schannel from these versions only, and enabling it on earlier versions is not a safe configuration ([Microsoft Learn](https://learn.microsoft.com/windows/win32/secauthn/protocols-in-tls-ssl--schannel-ssp-#tls-protocol-version-support)). A tier on Windows Server 2019 or older cannot open its links. |
-| Linux | .NET uses OpenSSL; TLS 1.3 needs OpenSSL 1.1.1 or later (the current Fedora releases ship OpenSSL 3). |
+| Windows | **Windows Server 2022** or Windows 11, or later: TLS 1.3 is supported by Schannel from these versions only, and enabling it on earlier versions is not a safe configuration ([Microsoft Learn](https://learn.microsoft.com/windows/win32/secauthn/protocols-in-tls-ssl--schannel-ssp-#tls-protocol-version-support)). A tier on Windows Server 2019 or older refuses to start, and says why. |
+| Linux | .NET uses OpenSSL; TLS 1.3 needs OpenSSL 3 (the current Fedora releases ship it; OpenSSL 1.1.1, the first with TLS 1.3, is no longer supported by its project). Keep it updated with `dnf upgrade --refresh openssl`. |
 
 ## The authority tool
 
@@ -58,7 +59,18 @@ Keep `platform-ca.pfx` and its password on one machine, off the network when pos
 3. **On the machine of the authority**: `sign --dir <authority folder> --request back.csr --role back --suffix bgp.internal --out back.crt`. Note the thumbprint it shows.
 4. Copy `back.crt` and `platform-ca.crt` (both public) back to the machine of the tier.
 5. **On the machine of the tier**: `install --key back.key --certificate back.crt --authority platform-ca.crt --out back.pfx`, then delete `back.key`: the PFX holds it.
-6. Point the settings of the tier to the PFX and to `platform-ca.crt`, and set the password as `Tls__CertificatePassword` for the service (see [configuration.md](configuration.md)).
+6. Give the PFX to the account of the service, readable by it alone (see [Protecting the files](#protecting-the-files)): `install` writes it readable by the user who runs it, an administrator, so the service cannot read it yet and would refuse to start.
+7. Point the settings of the tier to the PFX and to `platform-ca.crt`, and set the password as `Tls__CertificatePassword` for the service (see [Protecting the files](#protecting-the-files) and [configuration.md](configuration.md)).
+
+## Protecting the files
+
+| What | Windows | Fedora |
+|------|---------|--------|
+| PFX of a tier | Readable by the account of the service only: `icacls back.pfx /inheritance:r /grant:r "NT SERVICE\<service>:R" /grant:r "Administrators:F"` (a folder created under `C:\` gives read rights to every user by inheritance) | Owned by the account of the service, mode `0400`: `chown <account>: back.pfx` then `chmod 0400 back.pfx` |
+| Password of the PFX | The `Environment` value of the service in the registry, writable by the administrators only | An `EnvironmentFile=` of the unit, owned by `root`, mode `0600` (`Tls__CertificatePassword=…`), or `LoadCredential=`; **never** `Environment=` in the unit, whose variables are exposed to unprivileged clients through D-Bus ([systemd.exec](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html)) |
+| Root key `platform-ca.pfx` and `issued.csv` | The folder of the authority readable by its administrator only (`icacls <folder> /inheritance:r /grant:r "<administrator>:F"`) | Written mode `0600` by the tool; keep the folder `0700` |
+
+The exact commands per host are written with the native installation (0.25.0); the password moves to the vault of the platform in 0.7.0.
 
 ## Settings
 
@@ -77,9 +89,9 @@ The same section `Tls` in the Gateway, the Back and the Very Back:
 
 ## Renewal
 
-- A certificate of a tier is valid one year by default. From 30 days before its expiry (`Tls:ExpiryWarning`), the tier logs a **warning** each time it loads it (event 9036). `list` on the authority shows the dates of every certificate.
-- To renew, issue a new certificate as above (a new key, a new request), then **replace the PFX file in place**, keeping its path and its password. The tier checks before each new connection whether its PFX or its file of roots changed: the new files are loaded and checked, then used for the next connections, **without a restart**. Established connections keep the certificate they started with until they close.
-- If the new files fail the check (a wrong password, another role, an expired certificate…), the tier logs an **error** (event 9038) and keeps the current certificate: a mistake during a renewal never stops a running tier. Fix the files; the next connection tries them again.
+- A certificate of a tier is valid one year by default. From 30 days before its expiry (`Tls:ExpiryWarning`), the tier logs a **warning** when it loads it and once a day at most afterwards (event 9036), checked every hour even when its links stay open; once it expired, an **error** every hour (event 9039): its peers refuse every new connection. `list` on the authority shows the dates of every certificate.
+- To renew, issue a new certificate as above (a new key, a new request, with the same password in `BOARDGAMESPLATFORM_CERTIFICATE_PASSWORD`), then **replace the PFX file in place**, keeping its path, its password and its rights. The tier checks before each new connection, and every hour, whether its PFX or its file of roots changed: the new files are loaded and checked, then used for the next connections, **without a restart**; the log tells it (event 9037, with the new thumbprint). Established connections keep the certificate they started with until they close.
+- If the new files fail the check (a wrong password, another role, an expired certificate…), the tier logs an **error** (event 9038) and keeps the current certificate: a mistake during a renewal never stops a running tier. Fix the files and save them again: a changed file is tried again. A file that cannot be read yet (a copy in progress, a missing right) is tried again at the next check without being saved again.
 - A new password needs a restart: it is read from the settings at startup.
 
 ## Withdrawing a certificate
@@ -119,5 +131,9 @@ The tests generate their certificates at run time with the same code as the tool
 | 9036 | Warning | The certificate of the tier expires soon: renew it |
 | 9037 | Information | The certificate of the tier is loaded, with its thumbprint and its expiry |
 | 9038 | Error | Changed certificate files were refused; the current certificate is kept |
+| 9039 | Error | The certificate of the tier has expired: its peers refuse every new connection |
+| 9040 | Debug | A connection failed its establishment (TLS), logged by the listener as 9031 or 9033 |
+
+The refusals (9031, 9033) are logged once every 10 seconds at most, the next entry giving the number held back, so that a peer that fails handshakes in a loop cannot flood the logs.
 
 The password is never logged.

@@ -83,7 +83,7 @@ Other UIs   ┘
 - **Done**: a connection without a valid client certificate is refused.
 - **Tests**: valid, missing, wrong-authority and expired certificates. Test certificates are generated at run time; no private key is ever committed.
 - **Branches**: `fix/link-server-lost-listener`, `fix/cancellation-outside-read-loop`, `fix/heartbeat-large-frames`, `feature/certificate-authority`, `feature/mtls-transport`, `feature/tier-tls`, `feature/connection-slots-per-source`, `feature/frame-size-per-link`, `feature/server-write-deadline`, `fix/backoff-reset-after-response`, `docs/certificates-and-rotation`.
-- **Prerequisite**: Windows Server 2022 or Windows 11 or later (TLS 1.3 in Schannel), or Linux with OpenSSL 1.1.1 or later.
+- **Prerequisite**: Windows Server 2022 or Windows 11 or later (TLS 1.3 in Schannel), or Linux with OpenSSL 3.
 
 #### 0.6.0 — Authenticated ECDH handshake, Back ↔ Very Back [SEC]
 
@@ -94,7 +94,7 @@ Other UIs   ┘
 
 #### 0.7.0 — Database foundation [SEC]
 
-- **Content**: schemas, filegroups, temporal tables, immutable audit, table-valued parameter and JSON-result patterns; `DEV_`, `ACC_` and `TEST_` databases; one application SQL user per database with a random password stored in a vault; the deployment script.
+- **Content**: schemas, filegroups, temporal tables, immutable audit, table-valued parameter and JSON-result patterns; `DEV_`, `ACC_` and `TEST_` databases; one application SQL user per database with a random password stored in a vault; the vault also holds the passwords of the PFX of the tiers (`Tls:CertificatePassword`, an environment variable of the service since 0.5.0); the deployment script.
 - **Deployment script**: it drops and recreates a `DEV_` or `TEST_` database, and refuses to drop any database without one of these prefixes.
 - **Done**: `DEV_` is deployed from scratch by one script; the application user can execute procedures but cannot read tables; an update of the audit is rejected.
 - **Tests**: the SQL test suite becomes the standard: one test class per procedure group, audit immutability, permission matrix, temporal history. A new procedure without a test fails the review.
