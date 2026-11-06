@@ -246,7 +246,9 @@ public sealed partial class SqlProjectFileTests
 
             Match declaration = ProcedureDeclarationPattern().Match(text);
             string folderSchema = file.Split('\\')[1];
-            string fileName = Path.GetFileNameWithoutExtension(file);
+            // The paths of the project use "\" (SSDT), which only Windows reads as a separator: the name is cut by hand, so that the test
+            // gives the same result on Linux
+            string fileName = Path.GetFileNameWithoutExtension(file[(file.LastIndexOf('\\') + 1)..]);
             if (!declaration.Success)
             {
                 problems.Add($"{file}: no CREATE PROCEDURE [Schema].[Name]");
