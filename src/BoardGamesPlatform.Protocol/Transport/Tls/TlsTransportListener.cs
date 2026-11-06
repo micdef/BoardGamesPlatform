@@ -11,6 +11,7 @@ using System.Net.Security;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using BoardGamesPlatform.Protocol.Logging;
 using Microsoft.Extensions.Logging;
 
 // Static using
@@ -30,7 +31,9 @@ namespace BoardGamesPlatform.Protocol.Transport.Tls;
 /// <para><b>Behavior:</b> <see cref="AcceptAsync"/> takes the next TCP connection at once; <see cref="EstablishAsync"/> then runs the TLS
 /// handshake, in the task that serves the connection: TLS 1.3 only, the certificate of this tier given to the client, a client certificate
 /// required and checked by <see cref="PeerCertificateValidator"/> for the role expected. A client refused is logged with the reason (event id
-/// 9031), any other failure of the handshake too (9033), and the handshake ends with an <see cref="AuthenticationException"/>. No session is
+/// 9031), any other failure of the handshake too (9033), at most once every <see cref="LogPace.DefaultInterval"/> for both (a peer can fail
+/// handshakes in a loop; the next entry gives the number held back), and the handshake ends with an <see cref="AuthenticationException"/>.
+/// The connection is first established by the listener below (nothing for TCP), so that a layer below TLS is never skipped. No session is
 /// resumed, so that every connection checks the certificate of its client again. The certificate files are taken again before each handshake
 /// when they changed (see <see cref="TlsCredentials"/>).</para>
 /// </remarks>
@@ -65,6 +68,11 @@ public sealed partial class TlsTransportListener : ITransportListener
     /// Logger of the tier
     /// </summary>
     private readonly ILogger _logger;
+
+    /// <summary>
+    /// Pace of the logs of the handshakes that fail, which a peer can trigger at will
+    /// </summary>
+    private readonly LogPace _failurePace;
 
     #endregion
 
@@ -135,6 +143,7 @@ public sealed partial class TlsTransportListener : ITransportListener
         _credentials = credentials;
         _clientRole = clientRole;
         _logger = logger;
+        _failurePace = new LogPace(LogPace.DefaultInterval, credentials.TimeProvider);
     }
 
     #endregion
@@ -154,8 +163,9 @@ public sealed partial class TlsTransportListener : ITransportListener
     /// </summary>
     /// <param name="remoteEndPoint">Address and port of the client</param>
     /// <param name="reason">Why it is refused</param>
-    [LoggerMessage(EventId = 9031, Level = LogLevel.Warning, Message = "Connection from {RemoteEndPoint} refused: {Reason}")]
-    private partial void LogClientRefused(string remoteEndPoint, string reason);
+    /// <param name="heldBack">Number of failed handshakes not logged since the last one logged</param>
+    [LoggerMessage(EventId = 9031, Level = LogLevel.Warning, Message = "Connection from {RemoteEndPoint} refused: {Reason} ({HeldBack} other failed handshakes not logged since the last one)")]
+    private partial void LogClientRefused(string remoteEndPoint, string reason, int heldBack);
 
     /// <summary>
     /// Method used to log a TLS session opened
@@ -171,8 +181,9 @@ public sealed partial class TlsTransportListener : ITransportListener
     /// </summary>
     /// <param name="exception">Why it failed</param>
     /// <param name="remoteEndPoint">Address and port of the client</param>
-    [LoggerMessage(EventId = 9033, Level = LogLevel.Warning, Message = "The TLS handshake with {RemoteEndPoint} failed")]
-    private partial void LogHandshakeFailed(Exception exception, string remoteEndPoint);
+    /// <param name="heldBack">Number of failed handshakes not logged since the last one logged</param>
+    [LoggerMessage(EventId = 9033, Level = LogLevel.Warning, Message = "The TLS handshake with {RemoteEndPoint} failed ({HeldBack} other failed handshakes not logged since the last one)")]
+    private partial void LogHandshakeFailed(Exception exception, string remoteEndPoint, int heldBack);
 
     #endregion
 
@@ -191,7 +202,8 @@ public sealed partial class TlsTransportListener : ITransportListener
     /// <param name="accepted">[Cannot be null] Connection returned by <see cref="AcceptAsync"/></param>
     /// <param name="cancellationToken">Token used to give up, with the deadline of the handshake</param>
     /// <returns>
-    /// The connection to serve, which owns the accepted one; on a failure, the accepted connection stays owned by the caller
+    /// The connection to serve, which owns the accepted one; on a failure, the accepted connection stays owned by the caller (a listener below
+    /// that wraps it must follow the same rule)
     /// </returns>
     /// <exception cref="ArgumentNullException">If the connection is null</exception>
     /// <exception cref="AuthenticationException">If the client is not the tier expected, or the TLS handshake fails</exception>
@@ -203,9 +215,11 @@ public sealed partial class TlsTransportListener : ITransportListener
         if (accepted is null)
             throw new ArgumentNullException(nameof(accepted), $"The value of the parameter: {nameof(accepted)} cannot be null");
 
-        // Running the handshake, the certificate of the client being required and checked; the session is released if it fails
+        // Establishing the connection below first, then running the handshake on it, the certificate of the client being required and checked;
+        // the session is released if it fails
         string remoteEndPoint = accepted.RemoteEndPoint.ToString() ?? "unknown";
-        SslStream stream = new SslStream(accepted.Stream, leaveInnerStreamOpen: true);
+        ITransportConnection established = await _inner.EstablishAsync(accepted, cancellationToken).ConfigureAwait(false);
+        SslStream stream = new SslStream(established.Stream, leaveInnerStreamOpen: true);
         string? refusal = null;
         string thumbprint = string.Empty;
         try
@@ -233,18 +247,30 @@ public sealed partial class TlsTransportListener : ITransportListener
         }
         catch (Exception exception)
         {
-            if (refusal is not null)
-                LogClientRefused(remoteEndPoint, refusal);
-            else if (exception is not OperationCanceledException)
-                LogHandshakeFailed(exception, remoteEndPoint);
-            await stream.DisposeAsync().ConfigureAwait(false);
+            // Logging the failure at its pace (a cancellation is the deadline or the stop, told by the caller), then releasing the session; a
+            // failure of that release must not hide the failure of the handshake
+            if (exception is not OperationCanceledException && _failurePace.TryEnter(out int heldBack))
+            {
+                if (refusal is not null)
+                    LogClientRefused(remoteEndPoint, refusal, heldBack);
+                else
+                    LogHandshakeFailed(exception, remoteEndPoint, heldBack);
+            }
+            try
+            {
+                await stream.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception disposeFailure) when (disposeFailure is IOException or ObjectDisposedException)
+            {
+                // The session is broken already: the failure of the handshake is the one to tell
+            }
             throw;
         }
         string identity = PlatformIdentity.GetDnsName(_clientRole, _credentials.Suffix);
         LogAuthenticated(remoteEndPoint, identity, thumbprint);
 
         // Function's return
-        return new TlsTransportConnection(accepted, stream, identity);
+        return new TlsTransportConnection(established, stream, identity);
     }
 
     /// <inheritdoc/>

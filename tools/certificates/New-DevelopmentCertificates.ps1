@@ -12,7 +12,9 @@
 # │              │    deleted and created again, with a new root.               │
 # │              │ 3. The passwords are drawn at random and given to the tool   │
 # │              │    by its environment variables; the one of the PFX goes to  │
-# │              │    the user secrets, or to the console with -SkipUserSecrets.│
+# │              │    the user secrets (piped, never on a command line), or to  │
+# │              │    the console with -SkipUserSecrets.                        │
+# │              │ 4. The tool is built before an existing folder is deleted.   │
 # │ Usage        │ pwsh tools/certificates/New-DevelopmentCertificates.ps1      │
 # │              │     [-Suffix bgp.internal] [-Force] [-SkipUserSecrets]       │
 # │ Exit code    │ 0 on success, 1 when refused or failed.                      │
@@ -35,26 +37,26 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Step 1: the folder, refused when it exists unless -Force
+# Step 1: the folder, refused when it exists unless -Force (checked first, deleted only once the tool is built)
 $output = Join-Path $RepositoryRoot '.certificates\dev'
+if ((Test-Path -LiteralPath $output) -and -not $Force)
+{
+    Write-Error "The folder $output already exists: run again with -Force to replace the development certificates" -ErrorAction Continue
+    exit 1
+}
+
+# Step 2: the tool of the authority, built once, before anything is deleted, so that a failed build keeps the current certificates
+$project = Join-Path $RepositoryRoot 'src\BoardGamesPlatform.CertificateAuthority\BoardGamesPlatform.CertificateAuthority.csproj'
+dotnet build $project --configuration Release --nologo --verbosity quiet
+if ($LASTEXITCODE -ne 0) { Write-Error 'The certificate authority tool did not build' -ErrorAction Continue; exit 1 }
+$tool = Join-Path $RepositoryRoot 'src\BoardGamesPlatform.CertificateAuthority\bin\Release\net10.0\BoardGamesPlatform.CertificateAuthority.dll'
 if (Test-Path -LiteralPath $output)
 {
-    if (-not $Force)
-    {
-        Write-Error "The folder $output already exists: run again with -Force to replace the development certificates" -ErrorAction Continue
-        exit 1
-    }
     Remove-Item -LiteralPath $output -Recurse -Force
 }
 New-Item -ItemType Directory -Path $output | Out-Null
 $authority = Join-Path $output 'ca'
 $requests = Join-Path $output 'requests'
-
-# Step 2: the tool of the authority, built once
-$project = Join-Path $RepositoryRoot 'src\BoardGamesPlatform.CertificateAuthority\BoardGamesPlatform.CertificateAuthority.csproj'
-dotnet build $project --configuration Release --nologo --verbosity quiet
-if ($LASTEXITCODE -ne 0) { Write-Error 'The certificate authority tool did not build' -ErrorAction Continue; exit 1 }
-$tool = Join-Path $RepositoryRoot 'src\BoardGamesPlatform.CertificateAuthority\bin\Release\net10.0\BoardGamesPlatform.CertificateAuthority.dll'
 
 function Invoke-Authority
 {
@@ -94,10 +96,12 @@ try
     }
     else
     {
+        # The password is piped as JSON, never given on the command line (it would show in the list of the processes)
+        $secret = @{ 'Tls:CertificatePassword' = $env:BOARDGAMESPLATFORM_CERTIFICATE_PASSWORD } | ConvertTo-Json -Compress
         foreach ($tier in 'Gateway', 'Back', 'VeryBack')
         {
             $tierProject = Join-Path $RepositoryRoot "src\BoardGamesPlatform.$tier\BoardGamesPlatform.$tier.csproj"
-            dotnet user-secrets set 'Tls:CertificatePassword' $env:BOARDGAMESPLATFORM_CERTIFICATE_PASSWORD --project $tierProject | Out-Null
+            $secret | dotnet user-secrets set --project $tierProject | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "The user secret of the $tier could not be set" }
         }
     }

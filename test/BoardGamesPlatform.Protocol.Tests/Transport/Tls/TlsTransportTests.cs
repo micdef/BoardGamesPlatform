@@ -187,6 +187,17 @@ public sealed class TlsTransportTests : IDisposable
             options.ClientCertificates = new X509CertificateCollection { certificate };
             options.LocalCertificateSelectionCallback = (_, _, _, _, _) => certificate;
         }
+        else
+        {
+            // No certificate at all, the selection answering none whatever the server asks. On Windows, the credentials of an earlier client of
+            // the process with the same protocols were seen reused, with their certificate: offering TLS 1.2 too (the server takes 1.3 only)
+            // gives this client credentials of its own
+            options.ClientCertificates = new X509CertificateCollection();
+            options.LocalCertificateSelectionCallback = (_, _, _, _, _) => null!;
+#pragma warning disable CA5398 // TLS 1.2 is offered only to keep the credentials of this client apart; the server negotiates TLS 1.3
+            options.EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13;
+#pragma warning restore CA5398
+        }
         await stream.AuthenticateAsClientAsync(options, cancellationToken);
 
         // Function's return
@@ -266,13 +277,8 @@ public sealed class TlsTransportTests : IDisposable
     }
 
     /// <summary>
-    /// A client without a certificate is refused
+    /// A client without a certificate is refused, for that reason
     /// </summary>
-    /// <remarks>
-    /// <para><b>Behavior:</b> the reason is not asserted here: on Windows, a raw client that gives no certificate was seen sending one of an
-    /// earlier connection of the same process (cause not verified), which the server refuses too. That a missing certificate gives the reason
-    /// "no certificate" is proven by <see cref="PeerCertificateValidatorTests"/>; the tiers always present their own certificate.</para>
-    /// </remarks>
     /// <returns>
     /// A task that completes when the check is done
     /// </returns>
@@ -280,7 +286,97 @@ public sealed class TlsTransportTests : IDisposable
     public async Task AClientWithoutCertificateIsRefusedAsync()
     {
         // Check
-        await CheckRefusedAsync(null, "refused", TestContext.Current.CancellationToken);
+        await CheckRefusedAsync(null, "presented no certificate", TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// A client whose certificate is not valid yet is refused
+    /// </summary>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    [Fact(Timeout = TestTimeout)]
+    public async Task AClientNotValidYetIsRefusedAsync()
+    {
+        // Issuing a Gateway certificate valid from tomorrow
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+
+        // Check
+        await CheckRefusedAsync(_certificates.Issue(PlatformRole.Gateway, now.AddDays(1), now.AddDays(20)), "NotTimeValid", TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// A certificate named after the Gateway without any extended usage is refused: a chain alone would accept it for any usage
+    /// </summary>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    [Fact(Timeout = TestTimeout)]
+    public async Task ACertificateWithoutAnyUsageIsRefusedAsync()
+    {
+        // Check
+        await CheckRefusedAsync(_certificates.IssueWithUsages(PlatformRole.Gateway), "does not allow the usage", TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// A server whose certificate comes from another authority is refused by the client, even with the name of the Back
+    /// </summary>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    [Fact(Timeout = TestTimeout)]
+    public async Task AServerOfAnotherAuthorityIsRefusedByTheClientAsync()
+    {
+        // Serving as a Back of another authority, and connecting as the Gateway
+        CancellationToken token = TestContext.Current.CancellationToken;
+        using TestCertificates other = new TestCertificates("Other Root CA");
+        await using TlsTransportListener listener = StartListener(other.CredentialsFor(PlatformRole.Back), PlatformRole.Gateway);
+        Task<ITransportConnection> establishing = AcceptOneAsync(listener, token);
+        TlsTransportConnector connector = new TlsTransportConnector(new TcpTransportConnector(), _certificates.CredentialsFor(PlatformRole.Gateway), PlatformRole.Back, _clientLogger);
+
+        // Checks: the client refuses the server, and logs why
+        await Should.ThrowAsync<AuthenticationException>(() => connector.ConnectAsync("127.0.0.1", listener.LocalEndPoint.Port, token));
+        _clientLogger.Entries.ShouldContain(entry => entry.Level == LogLevel.Warning && entry.Message.Contains("not valid for this link"));
+        await Should.ThrowAsync<Exception>(async () =>
+        {
+            await using ITransportConnection served = await establishing;
+            if (await served.Stream.ReadAsync(new byte[1], token) == 0)
+                throw new IOException("The client ended the session");
+        });
+    }
+
+    /// <summary>
+    /// Handshakes that fail in a loop are logged at a pace: one entry for a burst, the next one giving the number held back
+    /// </summary>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    [Fact(Timeout = TestTimeout)]
+    public async Task FailedHandshakesAreLoggedAtTheirPaceAsync()
+    {
+        // Serving as the Back, and refusing three clients of another authority in a row
+        CancellationToken token = TestContext.Current.CancellationToken;
+        using TestCertificates other = new TestCertificates("Other Root CA");
+        X509Certificate2 stranger = other.Issue(PlatformRole.Gateway);
+        await using TlsTransportListener listener = StartListener(_certificates.CredentialsFor(PlatformRole.Back), PlatformRole.Gateway);
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            Task<ITransportConnection> establishing = AcceptOneAsync(listener, token);
+            try
+            {
+                await using SslStream raw = await OpenRawAsync(listener.LocalEndPoint.Port, stranger, SslProtocols.Tls13, token);
+                int read = await raw.ReadAsync(new byte[1], token);
+                read.ShouldBe(0);
+            }
+            catch (Exception exception) when (exception is AuthenticationException or IOException)
+            {
+                // Refused
+            }
+            await Should.ThrowAsync<AuthenticationException>(() => establishing);
+        }
+
+        // Check: one entry within the interval
+        _serverLogger.Entries.Count(entry => entry.Level == LogLevel.Warning && entry.Message.Contains("refused")).ShouldBe(1);
     }
 
     /// <summary>
@@ -406,7 +502,7 @@ public sealed class TlsTransportTests : IDisposable
     public async Task ACertificateWithoutTheClientUsageIsRefusedAsync()
     {
         // Check
-        await CheckRefusedAsync(_certificates.IssueWithUsages(PlatformRole.Gateway, PlatformIdentity.ServerAuthenticationOid), "NotValidForUsage", TestContext.Current.CancellationToken);
+        await CheckRefusedAsync(_certificates.IssueWithUsages(PlatformRole.Gateway, PlatformIdentity.ServerAuthenticationOid), "does not allow the usage", TestContext.Current.CancellationToken);
     }
 
     /// <summary>
