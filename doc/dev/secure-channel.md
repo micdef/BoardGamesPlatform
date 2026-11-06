@@ -123,7 +123,7 @@ After the handshake, each direction is a sequence of records:
 - **Nonce**: the IV of the direction XOR (four zero bytes ‖ the 64-bit sequence number of the record), as in TLS 1.3. The sequence number starts at 0 in each direction, grows by one per record, and is never sent: a record replayed, reordered or dropped fails its tag.
 - **Associated data**: the two bytes of `length`, so that a changed length fails the tag.
 - **Writes**: a write of zero bytes sends no record; a write of more than 16 384 bytes is cut into records.
-- **Close**: a record of length 0 announces the end of the direction. `CloseSendAsync` writes it, then closes the sending side of TLS; disposing a connection writes it first too (within one second), so that a normal close is never taken for a truncation by the peer. The last sequence number of a direction is kept for it, so that a connection at its hard limit still ends cleanly. After any failure of a read or a write, a cancellation included, the stream is broken for good: the connection is closed. A stream that ends without it is a truncation, not a clean close; any byte after it is a violation.
+- **Close**: a record of length 0 announces the end of the direction. `CloseSendAsync` writes it, then closes the sending side of TLS; disposing a connection writes it first too (within one second), so that a normal close is never taken for a truncation by the peer. The last sequence number of a direction is kept for it, so that a connection at its hard limit still ends cleanly. After a failure of a read, a cancellation included, the reads are broken for good, and after a failure of a write the writes are: the connection is closed, a broken read still sending the close record. A write that would pass the hard limit is refused before anything is written. A stream that ends without it is a truncation, not a clean close; any byte after it is a violation.
 - **Size**: a frame of 64 KiB (the largest payload of the link) takes 5 records. Each end holds one buffer of 16 KiB per direction.
 - **Hard limit**: a direction sends at most 2²⁴ records (about 16.7 million, up to 256 GiB), below the 2^24.5 full-size records that RFC 8446 (section 5.5) allows for AES-GCM with one key. A write beyond it fails, and the connection is closed; the receiving end also refuses a record beyond it.
 - **Renewal before the limit**: the connection tells when it should be replaced, once either direction reached 2²³ records, or once it is 24 hours old. The link client then opens a new connection in the background (the callers keep using the old one meanwhile, and never wait for the renewal) and sends the next requests on it; the old one stops taking new requests (a request refused that way, never sent, is sent again on the new one), lets the requests in flight end, within the request timeout of the link, and is closed, so that no request fails because of the limit. A renewal refused by a key, a certificate or the protocol is logged as an error (9010), a failure of the network as a warning (9009). When the new connection cannot be opened, the old one stays in use until its hard limit. During the overlap, the old and the new connection each take a served place of the server (8 of them): one client never needs more than 2. Nothing is renewed inside a connection: a new connection makes new keys.
@@ -218,11 +218,12 @@ The events take the range 9051-9069 of `Protocol.Transport.Secure`:
 |--------|------|
 | 9051-9053 | Handshakes refused by the server, by the client, and opened (with the `keyId` of the peer) |
 | 9054-9055 | Records: refused (tag, truncation, byte after the close), hard limit reached |
-| 9056 | Reserved; the renewal itself is logged by the link client (9008 renewed, 9009 renewal failed, 9010 renewal refused, the current connection kept) |
+| 9056 | Reserved; the renewal itself is logged by the link client (9008 renewed, 9009 renewal failed, 9010 renewal refused, the current connection kept; 9020, Debug, a request sent again on the new connection) |
 | 9057-9059 | Keys: loaded at startup (own `keyId` and the ones of the peer), list changed (added and removed), signing key taken |
 | 9060-9062 | Keys: changed files refused, connection closed for a removed key, connection closed for its age |
-| 9063-9065 | A removed key not told to the connections, a close record that could not be sent, a connection not closed after a refused handshake |
-| 9066-9069 | Reserved |
+| 9063-9065 | A removed key not told to the connections at once (the periodic check closes them), a close record that could not be sent, a connection not closed after a refused handshake |
+| 9066-9068 | A connection not closed cleanly (its socket released), a periodic check of the connections that failed, the close record of a normal close not sent on a broken connection (Debug) |
+| 9069 | Reserved |
 
 ## Threat model
 

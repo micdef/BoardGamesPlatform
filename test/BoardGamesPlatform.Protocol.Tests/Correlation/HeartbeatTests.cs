@@ -352,18 +352,22 @@ public sealed class HeartbeatTests
         FrameCodec codec = new FrameCodec(FrameCodec.HighestMaxPayloadLength);
         (ITransportConnection clientEnd, ITransportConnection serverEnd) = await ConnectAsync(token);
         await using ITransportConnection raw = serverEnd;
-        await using RequestClient client = new RequestClient(clientEnd, codec, heartbeat: _timings, timeProvider: clock);
+        ObservedConnection observed = new ObservedConnection(clientEnd);
+        await using RequestClient client = new RequestClient(observed, codec, heartbeat: _timings, timeProvider: clock);
         byte[] payload = new byte[FrameCodec.HighestMaxPayloadLength];
         Task<ReadOnlyMemory<byte>> pending = client.SendAsync(payload, token);
 
         // Reading the request 1 MiB per ping interval: the whole write takes more than five times the client timeout. The clock moves only
-        // once a whole MiB is read, so that the client has written pieces since the last move (a read of a few bytes must not move it)
+        // once a whole MiB is read AND the client has written two more pieces since the last move: on Linux, the buffers of the system may
+        // hold several MiB, so a read alone does not prove that the writer ran (under a loaded run, it may not have)
         byte[] piece = new byte[1024 * 1024];
         int total = FrameCodec.HeaderLength + payload.Length;
         int received = 0;
         while (received < total)
         {
+            long writtenBefore = observed.Written;
             received += await raw.Stream.ReadAtLeastAsync(piece, Math.Min(piece.Length, total - received), throwOnEndOfStream: true, token);
+            await observed.WaitForWrittenAsync(Math.Min(total, writtenBefore + (2 * FrameCodec.WriteChunkLength)), token);
             clock.Advance(_timings.PingInterval);
         }
 

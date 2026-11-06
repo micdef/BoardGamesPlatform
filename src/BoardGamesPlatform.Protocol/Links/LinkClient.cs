@@ -56,7 +56,7 @@ namespace BoardGamesPlatform.Protocol.Links;
 /// the connection as well as the wait for the response.</description></item>
 /// <item><description>After <see cref="DisposeAsync"/>, every call throws an <see cref="ObjectDisposedException"/>.</description></item>
 /// <item><description>The logs tell when a connection opens, is lost or is closed by the disposal, with the address of the peer only; they
-/// go through the logger of the tier, with the event ids 9001 to 9010, reserved for this class (see the coding conventions). A connection that asks for a renewal (see <see cref="ITransportConnection.IsRenewalDue"/>) is replaced by a new one in the background, the old one taking no new request and closed once its requests ended.</description></item>
+/// go through the logger of the tier, with the event ids 9001 to 9010 and 9020, reserved for this class (see the coding conventions). A connection that asks for a renewal (see <see cref="ITransportConnection.IsRenewalDue"/>) is replaced by a new one in the background, the old one taking no new request and closed once its requests ended.</description></item>
 /// </list>
 /// </remarks>
 public sealed partial class LinkClient : IAsyncDisposable
@@ -455,6 +455,14 @@ public sealed partial class LinkClient : IAsyncDisposable
     private partial void LogRenewalRefused(Exception exception, string peer, string host, int port);
 
     /// <summary>
+    /// Method used to trace a request sent again on the new connection, the replaced one having refused it before sending anything of it
+    /// </summary>
+    /// <param name="exception">Refusal of the replaced connection</param>
+    /// <param name="peer">Name of the peer</param>
+    [LoggerMessage(EventId = 9020, Level = LogLevel.Debug, Message = "A request to {Peer} was sent again on the new connection: the replaced one refused it before sending it")]
+    private partial void LogRequestSentAgain(Exception exception, string peer);
+
+    /// <summary>
     /// Method used to compute the back-off delay after a number of failures in a row
     /// </summary>
     /// <remarks>
@@ -491,13 +499,14 @@ public sealed partial class LinkClient : IAsyncDisposable
         // Waiting for the end of the connection (the completion never fails)
         await client.Completion.ConfigureAwait(false);
 
-        // Telling the end: a renewal (a replaced connection closed by its retirement), a loss with its cause, or the disposal of the client
-        if (_retired.TryRemove(client, out _) && client.CloseReason is ObjectDisposedException)
-            LogConnectionRenewed(_peerName, _host, _port);
-        else if (Volatile.Read(ref _isDisposed) == 0)
-            LogConnectionLost(client.CloseReason, _peerName, _host, _port);
-        else
+        // Telling the end: the disposal of the client, a renewal (a replaced connection closed by its retirement), or a loss with its cause
+        bool isRetired = _retired.TryRemove(client, out _);
+        if (Volatile.Read(ref _isDisposed) == 1)
             LogConnectionClosed(_peerName, _host, _port);
+        else if (isRetired && client.CloseReason is ObjectDisposedException)
+            LogConnectionRenewed(_peerName, _host, _port);
+        else
+            LogConnectionLost(client.CloseReason, _peerName, _host, _port);
     }
 
     /// <summary>
@@ -684,7 +693,15 @@ public sealed partial class LinkClient : IAsyncDisposable
         }
         catch
         {
-            await connection.DisposeAsync().ConfigureAwait(false);
+            // Closing the connection, a failure of that close logged so that it never hides the first one
+            try
+            {
+                await connection.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception closeFailure) when (closeFailure is not OutOfMemoryException)
+            {
+                LogCloseFailed(closeFailure, _peerName);
+            }
             throw;
         }
     }
@@ -742,15 +759,21 @@ public sealed partial class LinkClient : IAsyncDisposable
                     return;
                 }
 
-                // Using the new connection; the old one is marked as replaced first, then stops taking requests, and is retired
+                // Using the new connection; the old one is marked as replaced first, then stops taking requests, and is retired in any case
                 _retired[old] = 0;
                 _current = client;
-                LogConnectionOpened(_peerName, _host, _port);
-                _ = WatchConnectionAsync(client);
-                old.StopAccepting();
-                if (old.Completion.IsCompleted)
-                    _retired.TryRemove(old, out _);
-                _ = RetireAsync(old);
+                try
+                {
+                    _ = WatchConnectionAsync(client);
+                    LogConnectionOpened(_peerName, _host, _port);
+                }
+                finally
+                {
+                    old.StopAccepting();
+                    if (old.Completion.IsCompleted)
+                        _retired.TryRemove(old, out _);
+                    _ = RetireAsync(old);
+                }
             }
             finally
             {
@@ -760,6 +783,12 @@ public sealed partial class LinkClient : IAsyncDisposable
         catch (OperationCanceledException) when (_disposal.IsCancellationRequested)
         {
             // The client is disposed: nothing to renew
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // Anything unexpected is logged, never lost in the background; the next renewal is tried later
+            Interlocked.Exchange(ref _renewalNotBefore, _timeProvider.GetTimestamp() + (long)(RenewalRetryDelay.TotalSeconds * _timeProvider.TimestampFrequency));
+            LogRenewalFailed(exception, _peerName, _host, _port);
         }
         finally
         {
@@ -896,9 +925,14 @@ public sealed partial class LinkClient : IAsyncDisposable
                 // Function's return
                 return response;
             }
-            catch (RequestNotSentException) when (attempt == 1 && Volatile.Read(ref _isDisposed) == 0)
+            catch (RequestNotSentException exception) when (Volatile.Read(ref _isDisposed) == 1)
+            {
+                throw new ObjectDisposedException(nameof(LinkClient), $"The client of {_peerName} has been disposed: {exception.Message}");
+            }
+            catch (RequestNotSentException exception) when (attempt == 1)
             {
                 // The connection was being replaced, and refused the request before sending anything of it: sent on the new connection
+                LogRequestSentAgain(exception, _peerName);
             }
             catch (RemoteErrorException)
             {
@@ -937,10 +971,17 @@ public sealed partial class LinkClient : IAsyncDisposable
         {
             RequestClient? client = _current;
             _current = null;
-            if (client is not null)
-                await client.DisposeAsync().ConfigureAwait(false);
-            foreach (RequestClient retired in _retired.Keys)
-                await retired.DisposeAsync().ConfigureAwait(false);
+            foreach (RequestClient toClose in _retired.Keys.Prepend(client).OfType<RequestClient>())
+            {
+                try
+                {
+                    await toClose.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is not OutOfMemoryException)
+                {
+                    LogCloseFailed(exception, _peerName);
+                }
+            }
         }
         finally
         {

@@ -24,9 +24,10 @@ namespace BoardGamesPlatform.Protocol.Transport.Secure;
 /// <para><b>Purpose:</b> removing a key revokes it, established connections included; and a server never keeps a connection longer than its
 /// age limit, in case a client never renews it.</para>
 /// <para><b>Behavior:</b> a handshake registers its connection as soon as it knows the key of its peer, before its last check that the key is
-/// still pinned, so that a reload during the handshake is never missed: a key removed meanwhile marks the entry, and the connection is closed
-/// as soon as it is attached. A connection is closed with its close record first (<see cref="SecureTransportConnection.CloseForAsync"/>). The
-/// age is checked every <see cref="SigningKeys.CheckInterval"/> when an age limit is given. The logs use the event ids 9061 and 9062.</para>
+/// still pinned, so that a reload during the handshake is never missed: a key removed meanwhile marks the entry, and its attachment is refused,
+/// the caller closing the connection. A connection is closed with its close record first (<see cref="SecureTransportConnection.CloseForAsync"/>). The
+/// register is also checked every <see cref="SigningKeys.CheckInterval"/>: a connection whose key is no longer pinned is closed (a safety net when a
+/// removal could not be told), and so is one older than the age limit when one is given. The logs use the event ids 9061, 9062 and 9067.</para>
 /// </remarks>
 internal sealed partial class SecureConnectionRegistry : IDisposable
 {
@@ -66,9 +67,9 @@ internal sealed partial class SecureConnectionRegistry : IDisposable
     private readonly HashSet<Entry> _entries = new HashSet<Entry>();
 
     /// <summary>
-    /// Timer of the check of the ages; null without an age limit
+    /// Timer of the periodic check: the keys no longer pinned, and the ages
     /// </summary>
-    private readonly ITimer? _timer;
+    private readonly ITimer _timer;
 
     #endregion
 
@@ -146,8 +147,7 @@ internal sealed partial class SecureConnectionRegistry : IDisposable
         _maxAge = maxAge;
         _logger = logger;
         _keys.PeerKeysRemoved += OnPeerKeysRemoved;
-        if (maxAge is not null)
-            _timer = timeProvider.CreateTimer(_ => CloseTooOld(), null, SigningKeys.CheckInterval, SigningKeys.CheckInterval);
+        _timer = timeProvider.CreateTimer(_ => CheckPeriodically(), null, SigningKeys.CheckInterval, SigningKeys.CheckInterval);
     }
 
     #endregion
@@ -179,6 +179,13 @@ internal sealed partial class SecureConnectionRegistry : IDisposable
     private partial void LogClosedForAge(string remoteEndPoint, TimeSpan maxAge);
 
     /// <summary>
+    /// Method used to log a periodic check of the connections that failed
+    /// </summary>
+    /// <param name="exception">Failure of the check</param>
+    [LoggerMessage(EventId = 9067, Level = LogLevel.Error, Message = "The periodic check of the connections of the secure channel failed; it runs again in a minute")]
+    private partial void LogCheckFailed(Exception exception);
+
+    /// <summary>
     /// Method used to mark the entries of the removed keys, and close their connections
     /// </summary>
     /// <param name="sender">Keys of the tier</param>
@@ -199,26 +206,57 @@ internal sealed partial class SecureConnectionRegistry : IDisposable
 
         // Closing the open ones, outside the lock
         foreach (SecureTransportConnection connection in toClose)
+            CloseForRemovedKey(connection);
+    }
+
+    /// <summary>
+    /// Method used to close a connection whose key was removed; a failure of the log never keeps it open
+    /// </summary>
+    /// <param name="connection">[Cannot be null] Connection to close</param>
+    private void CloseForRemovedKey(SecureTransportConnection connection)
+    {
+        // Logging, then closing in any case (the close never throws)
+        try
         {
             LogClosedForRemovedKey(connection.RemoteName, connection.PeerKey.KeyIdHex);
+        }
+        finally
+        {
             _ = connection.CloseForAsync();
         }
     }
 
     /// <summary>
-    /// Method used to close the connections older than the age limit
+    /// Method used to run the periodic check: the connections whose key is no longer pinned (a safety net when a removal could not be told),
+    /// then the ones older than the age limit
     /// </summary>
-    private void CloseTooOld()
+    /// <remarks>
+    /// <para><b>Behavior:</b> never throws, since it runs on a timer: a failure is logged.</para>
+    /// </remarks>
+    private void CheckPeriodically()
     {
-        // Collecting them, then closing them outside the lock
-        TimeSpan maxAge = _maxAge!.Value;
-        List<SecureTransportConnection> toClose;
-        lock (_lock)
-            toClose = _entries.Select(entry => entry.Connection).OfType<SecureTransportConnection>().Where(connection => connection.IsTooOld(maxAge)).ToList();
-        foreach (SecureTransportConnection connection in toClose)
+        try
         {
-            LogClosedForAge(connection.RemoteName, maxAge);
-            _ = connection.CloseForAsync();
+            // Collecting the connections of a key no longer pinned, and the old ones, then closing them outside the lock
+            List<SecureTransportConnection> notPinned;
+            List<SecureTransportConnection> tooOld;
+            lock (_lock)
+            {
+                List<SecureTransportConnection> open = _entries.Select(entry => entry.Connection).OfType<SecureTransportConnection>().ToList();
+                notPinned = open.Where(connection => !_keys.IsPinned(connection.PeerKey)).ToList();
+                tooOld = _maxAge is { } maxAge ? open.Where(connection => connection.IsTooOld(maxAge)).Except(notPinned).ToList() : new List<SecureTransportConnection>();
+            }
+            foreach (SecureTransportConnection connection in notPinned)
+                CloseForRemovedKey(connection);
+            foreach (SecureTransportConnection connection in tooOld)
+            {
+                LogClosedForAge(connection.RemoteName, _maxAge!.Value);
+                _ = connection.CloseForAsync();
+            }
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            LogCheckFailed(exception);
         }
     }
 
@@ -250,7 +288,7 @@ internal sealed partial class SecureConnectionRegistry : IDisposable
     public void Dispose()
     {
         // Stopping the timer and the event
-        _timer?.Dispose();
+        _timer.Dispose();
         _keys.PeerKeysRemoved -= OnPeerKeysRemoved;
     }
 

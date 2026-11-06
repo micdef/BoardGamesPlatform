@@ -186,7 +186,7 @@ internal static partial class SecureChannelLog
         // A failure outside the channel: the keys of this tier, or the connection itself
         if (exception is not SecureChannelException secure)
         {
-            return exception is InvalidOperationException
+            return exception is SigningKeysUnusableException
                 ? ("keys", "the keys of this tier cannot be used", LogLevel.Error)
                 : ("connection", "connection failed", LogLevel.Warning);
         }

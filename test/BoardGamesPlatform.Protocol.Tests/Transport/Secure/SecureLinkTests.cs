@@ -277,6 +277,45 @@ public sealed class SecureLinkTests : IDisposable
     }
 
     /// <summary>
+    /// A request client that reads its secure connection and is disposed (the end of a retired connection, of the Back) ends it cleanly: the
+    /// canceled read never keeps the close record from being sent
+    /// </summary>
+    /// <returns>
+    /// A task that completes once checked
+    /// </returns>
+    [Fact(Timeout = TestTimeout)]
+    public async Task ADisposedRequestClientEndsItsConnectionCleanlyAsync()
+    {
+        // Arranging a request client on a secure connection, its read loop waiting
+        TlsTransportListener tls = new TlsTransportListener(TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next())), _veryBack,
+            PlatformRole.Back, _serverLogger);
+        await using SecureTransportListener listener = new SecureTransportListener(tls, Keys(_veryBackKey, _backKey, _veryBack), _serverLogger);
+        CancellationToken token = TestContext.Current.CancellationToken;
+        for (int round = 0; round < 10; round++)
+        {
+            Task<ITransportConnection> accepting = Task.Run(async () =>
+            {
+                ITransportConnection accepted = await listener.AcceptAsync(token);
+
+                // Function's return
+                return await listener.EstablishAsync(accepted, token);
+            }, token);
+            ITransportConnection clientEnd = await BackConnector().ConnectAsync("127.0.0.1", listener.LocalEndPoint.Port, token);
+            await using ITransportConnection server = await accepting;
+            RequestClient client = new RequestClient(clientEnd, new FrameCodec());
+            await Task.Delay(20, token);
+
+            // Acting
+            await client.DisposeAsync();
+            int read = await server.Stream.ReadAsync(new byte[1], token);
+
+            // Checks: a clean end, never a refused record
+            read.ShouldBe(0);
+        }
+        _serverLogger.Entries.ShouldNotContain(entry => entry.Message.Contains("was refused", StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// A client that holds a certificate but stays silent after TLS, or never sends its third message, is closed within the handshake timeout
     /// of the link server, and frees its place
     /// </summary>
@@ -384,6 +423,7 @@ public sealed class SecureLinkTests : IDisposable
 
             // Checks: renewed, and the next request still answered
             await WaitUntilAsync(() => _clientLogger.Entries.Count(entry => entry.Message.Contains("Secure channel opened", StringComparison.Ordinal)) >= 2);
+            await WaitUntilAsync(() => _clientLogger.Entries.Any(entry => entry.Message.Contains("renewed", StringComparison.Ordinal)));
             (await client.SendAsync<PingRequest, PingResponse>(BackOperations.Ping, new PingRequest(), token)).ServerTime.ShouldBe(DateTimeOffset.UnixEpoch);
         }
 
@@ -593,6 +633,67 @@ public sealed class SecureLinkTests : IDisposable
             registry.Count.ShouldBe(1);
             entry.Remove();
             registry.Count.ShouldBe(0);
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A key removed at the same time as a handshake ends never leaves a connection open with it: either the connection is refused at its
+    /// attachment, or it is attached and then closed by the removal (many races, run at the same time)
+    /// </summary>
+    /// <returns>
+    /// A task that completes once checked
+    /// </returns>
+    [Fact(Timeout = TestTimeout)]
+    public async Task ARemovalRacingAnAttachmentNeverLeavesTheConnectionOpenAsync()
+    {
+        // Arranging a register over keys loaded from files
+        string folder = Directory.CreateTempSubdirectory("bgp-registry-race-").FullName;
+        CancellationToken token = TestContext.Current.CancellationToken;
+        try
+        {
+            using ECDsa other = SecureChannelTestKeys.CreateSigningKey();
+            string keyPath = Path.Combine(folder, "veryback-signing.key");
+            string peersPath = Path.Combine(folder, "back.pub");
+            string both = SigningPublicKey.FromKey(_backKey).ToBase64() + Environment.NewLine + SigningPublicKey.FromKey(other).ToBase64();
+            string withoutBack = SigningPublicKey.FromKey(other).ToBase64();
+            File.WriteAllText(keyPath, _veryBackKey.ExportEncryptedPkcs8PrivateKeyPem("signing key password",
+                new PbeParameters(PbeEncryptionAlgorithm.Aes256Cbc, HashAlgorithmName.SHA256, 1000)));
+            File.WriteAllText(peersPath, both);
+            using SigningKeys keys = SigningKeys.FromFiles(keyPath, "signing key password", peersPath, "another password", () => _veryBack.Certificate, TimeProvider.System,
+                NullLogger.Instance);
+            using SecureConnectionRegistry registry = new SecureConnectionRegistry(keys, null, TimeProvider.System, NullLogger.Instance);
+
+            for (int round = 0; round < 40; round++)
+            {
+                // The key of the Back pinned again, then a handshake registered with it
+                File.WriteAllText(peersPath, both);
+                keys.ReloadIfChanged();
+                SecureConnectionRegistry.Entry entry = registry.Register(SigningPublicKey.FromKey(_backKey));
+                SessionSecrets secrets = KeySchedule.Derive(Bytes(SharedSecret), Bytes(ClientNonce), Bytes(ServerNonce), Bytes(TranscriptHash),
+                    SigningPublicKey.FromKey(_backKey));
+                FailingConnection inner = new FailingConnection();
+                SecureTransportConnection connection = new SecureTransportConnection(inner, new SecureRecordStream(new MemoryStream(), secrets, isClient: false),
+                    SigningPublicKey.FromKey(_backKey), SecureTransportListener.MaxAge, TimeProvider.System, NullLogger.Instance, entry.Remove);
+
+                // Acting: the removal and the attachment at the same time
+                Task removing = Task.Run(() =>
+                {
+                    File.WriteAllText(peersPath, withoutBack);
+                    keys.ReloadIfChanged();
+                }, token);
+                Task<bool> attaching = Task.Run(() => entry.Attach(connection), token);
+                await Task.WhenAll(removing, attaching);
+
+                // Check: refused, or closed by the removal
+                if (await attaching)
+                    await WaitUntilAsync(() => inner.IsDisposed);
+                else
+                    await connection.DisposeAsync();
+            }
         }
         finally
         {

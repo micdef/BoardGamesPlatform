@@ -313,7 +313,12 @@ public sealed class SecureRecordStreamTests
             dueAfterTwo = client.IsRenewalDue;
             await client.WriteAsync(new byte[] { 3 }, token);
             failure = await Should.ThrowAsync<SecureChannelException>(client.WriteAsync(new byte[] { 4 }, token).AsTask());
+
+            // The same stream still sends its close record, on the sequence number kept for it
+            client.IsSound.ShouldBeTrue();
+            await client.WriteCloseAsync(token);
         }
+        (await ReadAsServerAsync(below.ToArray(), hardLimit: 4)).ShouldBe(new byte[] { 1, 2, 3 });
         byte[] threeAndClose;
         using (MemoryStream complete = new MemoryStream())
         {
@@ -335,8 +340,8 @@ public sealed class SecureRecordStreamTests
     }
 
     /// <summary>
-    /// A stream whose read or write failed is broken for good: the next calls fail as a lost connection, and a disposal under a call is a
-    /// closed connection, never an ObjectDisposedException
+    /// A failed read breaks the reads for good (the next ones fail as a lost connection) but never the writes, so that the close record can
+    /// still be sent; a disposal is a closed connection, never an ObjectDisposedException
     /// </summary>
     /// <returns>
     /// A task that completes once checked
@@ -353,14 +358,14 @@ public sealed class SecureRecordStreamTests
         // Acting
         await Should.ThrowAsync<SecureChannelException>(server.ReadAsync(new byte[10], token).AsTask());
         IOException read = await Should.ThrowAsync<IOException>(server.ReadAsync(new byte[10], token).AsTask());
-        IOException write = await Should.ThrowAsync<IOException>(server.WriteAsync(new byte[1], token).AsTask());
+        bool isSoundAfterRead = server.IsSound;
         await server.DisposeAsync();
         IOException afterDispose = await Should.ThrowAsync<IOException>(server.WriteAsync(new byte[1], token).AsTask());
 
         // Checks
+        isSoundAfterRead.ShouldBeTrue();
         server.IsSound.ShouldBeFalse();
         read.InnerException.ShouldBeOfType<SecureChannelException>();
-        write.InnerException.ShouldBeOfType<SecureChannelException>();
         afterDispose.Message.ShouldContain("closed");
     }
 

@@ -255,8 +255,9 @@ public sealed class SecureTransportListener : ITransportListener
             SigningPublicKey peerKey = secrets.PeerKey;
             stream = new SecureRecordStream(session, secrets, isClient: false, _hardLimit, SecureRecordStream.DefaultRenewalThreshold,
                 reason => SecureChannelLog.RecordFailed(_logger, remoteEndPoint, reason));
-            SecureTransportConnection connection = new SecureTransportConnection(established, stream, peerKey, MaxAge, _timeProvider, _logger, entry!.Remove);
-            if (!entry.Attach(connection))
+            SecureConnectionRegistry.Entry registered = entry ?? throw new InvalidOperationException("The handshake ended without registering its connection");
+            SecureTransportConnection connection = new SecureTransportConnection(established, stream, peerKey, MaxAge, _timeProvider, _logger, registered.Remove);
+            if (!registered.Attach(connection))
                 throw new SecureChannelException(SecureChannelFailure.PeerKeyRemoved);
             SecureChannelLog.Opened(_logger, remoteEndPoint, peerKey.KeyIdHex);
 
@@ -274,10 +275,17 @@ public sealed class SecureTransportListener : ITransportListener
                 if (_failurePaces.GetOrAdd(category, _ => new LogPace(LogPace.DefaultInterval, _timeProvider)).TryEnter(out int heldBack))
                     SecureChannelLog.ServerRefused(_logger, level, exception, remoteEndPoint, reason, heldBack);
             }
-            if (stream is not null)
-                await stream.DisposeAsync().ConfigureAwait(false);
-            else
-                secrets?.Dispose();
+            try
+            {
+                if (stream is not null)
+                    await stream.DisposeAsync().ConfigureAwait(false);
+                else
+                    secrets?.Dispose();
+            }
+            catch (Exception eraseFailure) when (eraseFailure is not OutOfMemoryException)
+            {
+                // Erasing buffers does not fail in practice; the refusal is the failure to tell
+            }
             try
             {
                 await session.DisposeAsync().ConfigureAwait(false);

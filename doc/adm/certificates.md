@@ -169,9 +169,13 @@ The tests generate their certificates at run time with the same code as the tool
 | 9060 | Error | Changed key files were refused; the current keys are kept |
 | 9061 | Information | A connection is closed because the key of its peer was removed |
 | 9062 | Information | The Very Back closed a connection older than 48 hours, never renewed |
-| 9063 | Error | A removed key could not be told to the connections: some may stay open until the tier restarts (restart it) |
+| 9063 | Error | A removed key could not be told to the connections at once: the periodic check closes them within a minute (event 9061) |
 | 9064 | Warning | The close record of a connection closed for a removed key or its age could not be sent; the connection is cut |
 | 9065 | Warning | The Back could not close a connection after the Very Back was refused |
+| 9066 | Warning | A connection closed for a removed key or its age could not be closed cleanly; its socket is released |
+| 9067 | Error | The periodic check of the connections of the secure channel failed; it runs again in a minute |
+| 9068 | Debug | The close record of a normal close could not be sent (the connection was already broken); the peer may log a truncation |
+| 9020 | Debug | The Back sent a request again on its new connection, the replaced one having refused it before sending it |
 | 9009, 9010 | Warning, Error | The Back could not renew its connection to the Very Back: a failure of the network (9009), or a refusal by a key, a certificate or the protocol (9010) to fix before the current connection reaches its limit |
 
 The refusals (9031, 9033, 9051) are logged once every 10 seconds at most, the next entry giving the number held back, so that a peer that fails handshakes in a loop cannot flood the logs.

@@ -19,7 +19,7 @@ using BoardGamesPlatform.Protocol.Transport;
 namespace BoardGamesPlatform.Protocol.Tests.Correlation;
 
 /// <summary>
-/// Connection that counts the bytes read from it
+/// Connection that counts the bytes read from it and written to it
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> a test of the heartbeat on a fake clock must move the clock only once the peer has read what was sent, otherwise the
@@ -139,6 +139,25 @@ internal sealed class ObservedConnection : ITransportConnection
         return _stream.WaitForReadAsync(total, cancellationToken);
     }
 
+    /// <summary>
+    /// Bytes written to the connection so far, once each write ended
+    /// </summary>
+    public long Written => _stream.Written;
+
+    /// <summary>
+    /// Method used to wait until the writer has written at least the number of bytes given, each write ended
+    /// </summary>
+    /// <param name="total">Bytes written since the start of the connection</param>
+    /// <param name="cancellationToken">Token of the test</param>
+    /// <returns>
+    /// A task that completes once that many bytes are written
+    /// </returns>
+    public Task WaitForWrittenAsync(long total, CancellationToken cancellationToken)
+    {
+        // Function's return
+        return _stream.WaitForWrittenAsync(total, cancellationToken);
+    }
+
     /// <inheritdoc/>
     public Task CloseSendAsync(CancellationToken cancellationToken = default)
     {
@@ -185,6 +204,11 @@ internal sealed class ObservedConnection : ITransportConnection
         private long _read;
 
         /// <summary>
+        /// Bytes written so far, once each write ended
+        /// </summary>
+        private long _written;
+
+        /// <summary>
         /// Released at each read, so that a waiter checks the count again; never disposed, since a read may still end after the connection is
         /// closed, and a semaphore whose wait handle is never asked for holds no system resource
         /// </summary>
@@ -224,6 +248,26 @@ internal sealed class ObservedConnection : ITransportConnection
                 await _signal.WaitAsync(cancellationToken);
         }
 
+        /// <summary>
+        /// Bytes written so far, once each write ended
+        /// </summary>
+        public long Written => Interlocked.Read(ref _written);
+
+        /// <summary>
+        /// Method used to wait until the writes reach a total
+        /// </summary>
+        /// <param name="total">Bytes expected</param>
+        /// <param name="cancellationToken">Token of the test</param>
+        /// <returns>
+        /// A task that completes once that many bytes are written
+        /// </returns>
+        public async Task WaitForWrittenAsync(long total, CancellationToken cancellationToken)
+        {
+            // Checking again after each read or write
+            while (Interlocked.Read(ref _written) < total)
+                await _signal.WaitAsync(cancellationToken);
+        }
+
         /// <inheritdoc/>
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
@@ -251,10 +295,12 @@ internal sealed class ObservedConnection : ITransportConnection
         }
 
         /// <inheritdoc/>
-        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            // Function's return
-            return inner.WriteAsync(buffer, cancellationToken);
+            // Writing, then counting and telling the waiters
+            await inner.WriteAsync(buffer, cancellationToken);
+            Interlocked.Add(ref _written, buffer.Length);
+            _signal.Release();
         }
 
         /// <inheritdoc/>

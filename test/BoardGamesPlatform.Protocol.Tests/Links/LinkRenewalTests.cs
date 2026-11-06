@@ -278,7 +278,8 @@ public sealed class LinkRenewalTests
 
             // Acting: the renewal tried in the background fails, the calls going on on the old connection
             await PingAsync(client);
-            await WaitUntilAsync(() => _logger.Entries.Any(entry => entry.Message.Contains("renewal", StringComparison.Ordinal)));
+            await WaitUntilAsync(() => connector.Attempts == 2);
+            await WaitUntilAsync(() => _logger.Entries.Any(entry => entry.Message.Contains("renewal of the connection", StringComparison.Ordinal)));
             await PingAsync(client);
 
             // Checks: the renewal was tried once (the next try waits a minute), the old connection still serves
@@ -286,6 +287,44 @@ public sealed class LinkRenewalTests
             connector.Opened[0].Disposed.Task.IsCompleted.ShouldBeFalse();
         }
         _logger.Entries.ShouldContain(entry => entry.Message.Contains("renewal", StringComparison.Ordinal) && entry.Message.Contains("failed", StringComparison.Ordinal));
+
+        // Stopping the peer
+        await stopping.CancelAsync();
+        await running;
+    }
+
+    /// <summary>
+    /// Disposing the client closes at once a replaced connection still waiting for a request, without waiting for the request timeout
+    /// </summary>
+    /// <returns>
+    /// A task that completes once checked
+    /// </returns>
+    [Fact(Timeout = TestTimeout)]
+    public async Task ADisposedClientClosesItsRetiredConnectionsAtOnceAsync()
+    {
+        // Arranging: a ping waiting on the first connection, replaced in the background
+        using CancellationTokenSource stopping = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        int port = StartPeer(stopping.Token, out Task running);
+        RenewableConnector connector = new RenewableConnector();
+        LinkClient client = new LinkClient("127.0.0.1", port, TimeSpan.FromSeconds(5), "the peer", connector, _logger);
+        await PingAsync(client);
+        _isGated = true;
+        Task<PingResponse> inFlight = PingAsync(client);
+        connector.Opened[0].IsRenewalDue = true;
+        await PingAsync(client);
+        await WaitUntilAsync(() => connector.Opened.Count == 2);
+        bool closedBefore = connector.Opened[0].Disposed.Task.IsCompleted;
+
+        // Acting: disposing while the old connection waits for its request
+        await client.DisposeAsync();
+        bool closedAfter = connector.Opened[0].Disposed.Task.IsCompleted;
+        _gate.SetResult();
+
+        // Checks
+        closedBefore.ShouldBeFalse();
+        closedAfter.ShouldBeTrue();
+        connector.Opened[1].Disposed.Task.IsCompleted.ShouldBeTrue();
+        await Should.ThrowAsync<Exception>(inFlight);
 
         // Stopping the peer
         await stopping.CancelAsync();

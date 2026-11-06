@@ -233,8 +233,9 @@ public sealed class SecureTransportConnector : ITransportConnector, IDisposable
             string remoteEndPoint = established.RemoteEndPoint.ToString() ?? $"{host}:{port}";
             stream = new SecureRecordStream(session, secrets, isClient: true, _hardLimit, _renewalThreshold,
                 reason => SecureChannelLog.RecordFailed(_logger, remoteEndPoint, reason));
-            SecureTransportConnection connection = new SecureTransportConnection(established, stream, peerKey, RenewalAge, _timeProvider, _logger, entry!.Remove);
-            if (!entry.Attach(connection))
+            SecureConnectionRegistry.Entry registered = entry ?? throw new InvalidOperationException("The handshake ended without registering its connection");
+            SecureTransportConnection connection = new SecureTransportConnection(established, stream, peerKey, RenewalAge, _timeProvider, _logger, registered.Remove);
+            if (!registered.Attach(connection))
                 throw new SecureChannelException(SecureChannelFailure.PeerKeyRemoved);
             SecureChannelLog.Opened(_logger, remoteEndPoint, peerKey.KeyIdHex);
 
@@ -251,10 +252,17 @@ public sealed class SecureTransportConnector : ITransportConnector, IDisposable
                 (_, string reason, LogLevel level) = SecureChannelLog.Describe(exception);
                 SecureChannelLog.ClientRefused(_logger, level, exception, host, port, reason);
             }
-            if (stream is not null)
-                await stream.DisposeAsync().ConfigureAwait(false);
-            else
-                secrets?.Dispose();
+            try
+            {
+                if (stream is not null)
+                    await stream.DisposeAsync().ConfigureAwait(false);
+                else
+                    secrets?.Dispose();
+            }
+            catch (Exception eraseFailure) when (eraseFailure is not OutOfMemoryException)
+            {
+                // Erasing buffers does not fail in practice; the refusal is the failure to tell
+            }
             try
             {
                 await established.DisposeAsync().ConfigureAwait(false);
@@ -264,8 +272,9 @@ public sealed class SecureTransportConnector : ITransportConnector, IDisposable
                 SecureChannelLog.CloseFailed(_logger, disposeFailure, host, port);
             }
 
-            // Keys of this tier that cannot be used now are a refusal of the link for the caller (link.unavailable), as any refused peer
-            if (exception is InvalidOperationException)
+            // Keys of this tier that cannot be used now are a refusal of the link for the caller (link.unavailable), as any refused peer; any
+            // other failure keeps its own type and message
+            if (exception is SigningKeysUnusableException)
                 throw new System.Security.Authentication.AuthenticationException("The keys of the secure channel of this tier cannot be used now", exception);
             throw;
         }
