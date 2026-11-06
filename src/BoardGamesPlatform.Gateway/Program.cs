@@ -8,6 +8,7 @@
 // Using
 using BoardGamesPlatform.Gateway;
 using BoardGamesPlatform.Observability;
+using BoardGamesPlatform.Protocol.Transport.Tls;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 
@@ -32,6 +33,9 @@ builder.AddPlatformObservability(
 builder.AddPlatformGateway();
 
 WebApplication app = builder.Build();
+
+// Loading the certificate of the Gateway now, so that a missing or invalid one stops the Gateway before it serves a front (fail closed)
+app.Services.GetRequiredService<TlsCredentials>();
 
 // Exposing a health endpoint, so that a monitoring tool can check that the Gateway answers
 app.MapGet("/health", () => Results.Ok());

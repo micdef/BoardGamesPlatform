@@ -14,6 +14,8 @@ using BoardGamesPlatform.Protocol.Framing;
 using BoardGamesPlatform.Protocol.Links;
 using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
+using BoardGamesPlatform.Protocol.Transport.Tls;
+using BoardGamesPlatform.TestKit;
 using Microsoft.Extensions.Logging.Abstractions;
 
 // Static using
@@ -125,8 +127,9 @@ internal sealed class FakeBack : IAsyncDisposable
     /// </summary>
     private FakeBack()
     {
-        // Listening, then serving with the real link server
-        TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next()));
+        // Listening over mutual TLS as the Back (only the Gateway is accepted), then serving with the real link server
+        TlsTransportListener listener = new TlsTransportListener(TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next())),
+            TestTlsFiles.Shared.LoadCredentials(PlatformRole.Back), PlatformRole.Gateway, NullLogger.Instance);
         Port = listener.LocalEndPoint.Port;
         OperationDispatcher dispatcher = new OperationDispatcher(NullLogger.Instance)
             .Register<PingRequest, PingResponse>(BackOperations.Ping, (_, _) => Task.FromResult(new PingResponse(PingTime)));

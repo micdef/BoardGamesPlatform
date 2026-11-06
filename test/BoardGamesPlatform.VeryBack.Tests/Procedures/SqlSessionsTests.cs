@@ -10,6 +10,7 @@ using System.Data;
 using System.Globalization;
 using BoardGamesPlatform.Protocol.Correlation;
 using BoardGamesPlatform.Protocol.Messages;
+using BoardGamesPlatform.Protocol.Transport.Tls;
 using BoardGamesPlatform.TestKit;
 using BoardGamesPlatform.VeryBack.Contracts;
 using BoardGamesPlatform.VeryBack.Contracts.Ping;
@@ -185,12 +186,12 @@ public sealed class SqlSessionsTests
         // Building the host as Program.cs does, with the real procedure, on a port of the block of this project
         int port = TestPorts.Block.Next();
         HostApplicationBuilder builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings());
-        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        builder.Configuration.AddInMemoryCollection(TestTlsFiles.Shared.AddTo(new Dictionary<string, string?>
         {
             ["VeryBack:ListenAddress"] = LoopbackHost,
             ["VeryBack:Port"] = port.ToString(CultureInfo.InvariantCulture),
             ["ConnectionStrings:Main"] = veryBackConnectionString,
-        });
+        }, PlatformRole.VeryBack));
         builder.Services.AddLogging();
         builder.AddPlatformVeryBack();
         int sessionsWhileRunning;
@@ -201,7 +202,8 @@ public sealed class SqlSessionsTests
             await host.StartAsync(cancellationToken);
 
             // Pinging, then counting while the host still runs: the pool keeps at least one session open
-            await using (RequestClient client = await TestRequestClients.ConnectAsync(LoopbackHost, port, cancellationToken))
+            await using (RequestClient client = await TestRequestClients.ConnectAsync(LoopbackHost, port, TestTlsFiles.Shared.CreateConnector(PlatformRole.Back, PlatformRole.VeryBack),
+                cancellationToken))
             {
                 await client.SendAsync<PingRequest, PingResponse>(VeryBackOperations.Ping, new PingRequest(), cancellationToken);
             }

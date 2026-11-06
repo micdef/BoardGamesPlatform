@@ -12,6 +12,7 @@ using System.Text;
 using BoardGamesPlatform.Observability;
 using BoardGamesPlatform.Protocol.Correlation;
 using BoardGamesPlatform.Protocol.Errors;
+using BoardGamesPlatform.Protocol.Links;
 using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.Protocol.Transport;
 using BoardGamesPlatform.TestKit;
@@ -135,7 +136,8 @@ public sealed class VeryBackListenerServiceTests
     {
         // Creating and starting the service
         VeryBackOptions options = new VeryBackOptions { ListenAddress = LoopbackHost, Port = TestPorts.Block.Next() };
-        VeryBackListenerService service = new VeryBackListenerService(Options.Create(options), procedure, NullLogger<VeryBackListenerService>.Instance);
+        VeryBackListenerService service = new VeryBackListenerService(Options.Create(options), procedure, NullLogger<VeryBackListenerService>.Instance,
+            endPoint => TcpTransportListener.Start(endPoint), LinkServer.DefaultAcceptFailurePause);
         await service.StartAsync(cancellationToken);
 
         // Function's return
@@ -345,7 +347,8 @@ public sealed class VeryBackListenerServiceTests
         try
         {
             VeryBackOptions options = new VeryBackOptions { ListenAddress = LoopbackHost, Port = first.LocalEndPoint.Port };
-            using VeryBackListenerService second = new VeryBackListenerService(Options.Create(options), new FakePingProcedure(_ => _fakeTime), NullLogger<VeryBackListenerService>.Instance);
+            using VeryBackListenerService second = new VeryBackListenerService(Options.Create(options), new FakePingProcedure(_ => _fakeTime), NullLogger<VeryBackListenerService>.Instance,
+                endPoint => TcpTransportListener.Start(endPoint), LinkServer.DefaultAcceptFailurePause);
 
             // Check
             await Should.ThrowAsync<SocketException>(() => second.StartAsync(cancellationToken));
@@ -485,10 +488,10 @@ public sealed class VeryBackListenerServiceTests
     }
 
     /// <summary>
-    /// A listen address that other machines can reach is accepted, with a warning; the loopback address gives none
+    /// A listen address that other machines can reach is accepted, and logged; the loopback address is not
     /// </summary>
     /// <param name="address">Address the listener claims to listen on</param>
-    /// <param name="warned">Whether a warning is expected</param>
+    /// <param name="warned">Whether the log is expected</param>
     /// <returns>
     /// A task that completes when the check is done
     /// </returns>
@@ -497,7 +500,7 @@ public sealed class VeryBackListenerServiceTests
     [InlineData("192.168.1.10", true)]
     [InlineData("127.0.0.1", false)]
     [InlineData("::1", false)]
-    public async Task AnAddressOtherThanLoopbackIsLoggedAsAWarningAsync(string address, bool warned)
+    public async Task AnAddressOtherThanLoopbackIsLoggedAsync(string address, bool warned)
     {
         // Starting the service on an idle listener with that address
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
@@ -508,7 +511,7 @@ public sealed class VeryBackListenerServiceTests
         await service.StopAsync(cancellationToken);
 
         // Check
-        logger.Entries.Any(entry => entry.Level == LogLevel.Warning && entry.Message.Contains("not a loopback address")).ShouldBe(warned);
+        logger.Entries.Any(entry => entry.Level == LogLevel.Information && entry.Message.Contains("not a loopback address")).ShouldBe(warned);
     }
 
     #endregion

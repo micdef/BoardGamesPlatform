@@ -8,6 +8,8 @@
 // Using
 using System.Globalization;
 using BoardGamesPlatform.Back;
+using BoardGamesPlatform.Protocol.Transport.Tls;
+using BoardGamesPlatform.TestKit;
 using BoardGamesPlatform.VeryBack;
 using BoardGamesPlatform.VeryBack.Procedures;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -156,12 +158,12 @@ internal sealed class TierChain : IAsyncDisposable
     {
         // Building the host with the registrations of Program.cs
         HostApplicationBuilder builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings());
-        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        builder.Configuration.AddInMemoryCollection(TestTlsFiles.Shared.AddTo(new Dictionary<string, string?>
         {
             ["VeryBack:ListenAddress"] = "127.0.0.1",
             ["VeryBack:Port"] = port.ToString(CultureInfo.InvariantCulture),
             ["ConnectionStrings:Main"] = connectionString ?? UnusedConnectionString,
-        });
+        }, PlatformRole.VeryBack));
         builder.Services.AddLogging();
         builder.AddPlatformVeryBack();
 
@@ -188,13 +190,13 @@ internal sealed class TierChain : IAsyncDisposable
     {
         // Building the host with the registrations of Program.cs
         HostApplicationBuilder builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings());
-        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        builder.Configuration.AddInMemoryCollection(TestTlsFiles.Shared.AddTo(new Dictionary<string, string?>
         {
             ["Back:ListenAddress"] = "127.0.0.1",
             ["Back:Port"] = port.ToString(CultureInfo.InvariantCulture),
             ["VeryBack:Host"] = "127.0.0.1",
             ["VeryBack:Port"] = veryBackPort.ToString(CultureInfo.InvariantCulture),
-        });
+        }, PlatformRole.Back));
         builder.Services.AddLogging();
         builder.AddPlatformBack();
 

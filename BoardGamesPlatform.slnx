@@ -20,6 +20,8 @@
     <File Path=".github/workflows/ci.yml" />
   </Folder>
   <Folder Name="/tools/">
+    <File Path="tools/certificates/New-DevelopmentCertificates.ps1" />
+    <File Path="tools/certificates/README.md" />
     <File Path="tools/changelog/Merge-ChangelogFragments.ps1" />
     <File Path="tools/database/Deploy-TestDatabase.ps1" />
     <File Path="tools/database/README.md" />
