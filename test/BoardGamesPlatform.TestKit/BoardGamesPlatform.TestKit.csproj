@@ -6,9 +6,10 @@
     <InternalsVisibleTo Include="BoardGamesPlatform.Protocol.Tests" />
   </ItemGroup>
 
-  <!-- Projects: the socket protocol, whose listener interface the fake listener implements -->
+  <!-- Projects: the socket protocol, whose listener interface the fake listener implements, and the certificate authority, whose code builds the certificates of the tests -->
   <ItemGroup>
     <ProjectReference Include="..\..\src\BoardGamesPlatform.Protocol\BoardGamesPlatform.Protocol.csproj" />
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.CertificateAuthority\BoardGamesPlatform.CertificateAuthority.csproj" />
   </ItemGroup>
 
   <!-- Packages (versions in Directory.Packages.props) -->

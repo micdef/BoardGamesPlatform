@@ -356,6 +356,13 @@ public sealed class LinkServerTests
         }
 
         /// <inheritdoc/>
+        public Task<ITransportConnection> EstablishAsync(ITransportConnection accepted, CancellationToken cancellationToken = default)
+        {
+            // Function's return
+            return inner.EstablishAsync(accepted, cancellationToken);
+        }
+
+        /// <inheritdoc/>
         public async ValueTask DisposeAsync()
         {
             // Closing, then failing

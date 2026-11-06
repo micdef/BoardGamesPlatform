@@ -6,6 +6,7 @@
  */
 
 // Using
+using System.Diagnostics;
 using BoardGamesPlatform.Protocol.Control;
 using BoardGamesPlatform.Protocol.Correlation;
 using BoardGamesPlatform.Protocol.Transport;
@@ -26,7 +27,9 @@ namespace BoardGamesPlatform.Protocol.Links;
 /// <remarks>
 /// <para><b>Purpose:</b> one hardened accept loop for every tier that listens, instead of a copy per tier that could drift.</para>
 /// <para><b>Behavior:</b> accepts the connections of a started listener until the stop is requested, and serves each one in its own task: the
-/// handshake first (<see cref="ProtocolHandshake"/>, within its timeout), then the request server. The loop follows the rule of <see cref="ITransportListener"/>, and never ends silently:</para>
+/// connection is first established by the listener (the TLS handshake from 0.5.0), then the protocol is agreed (<see cref="ProtocolHandshake"/>),
+/// both within the one handshake timeout, then the request server answers. A slow or hostile peer therefore never holds the accept loop. The
+/// loop follows the rule of <see cref="ITransportListener"/>, and never ends silently:</para>
 /// <list type="bullet">
 /// <item><description>A disposed listener or a cancellation ends it when the stop is requested.</description></item>
 /// <item><description>The same exceptions without a stop request mean the listener is lost: <see cref="RunAsync"/> fails, so that the tier
@@ -38,7 +41,8 @@ namespace BoardGamesPlatform.Protocol.Links;
 /// once the stop is requested is a close, not a failure. When the loop ends, for whatever reason, the listener is disposed, the service of
 /// every connection is canceled and awaited: a lost listener never leaves connections served by a tier that stops. Beyond <see cref="DefaultMaxConnections"/> connections served at the same time (or the maximum
 /// given), a new connection is closed at once and logged. The logs hold the remote end point and the exception; they go through the logger of the tier, with
-/// the event ids 9011 to 9019, reserved for this class (see the coding conventions).</para>
+/// the event ids 9011 to 9019 and 9040, reserved for this class (see the coding conventions). A connection is logged as accepted once it is
+/// established (authenticated from 0.5.0); a failure of the establishment is logged by the listener, at its pace, and only traced here.</para>
 /// </remarks>
 public sealed partial class LinkServer
 {
@@ -235,6 +239,14 @@ public sealed partial class LinkServer
     private partial void LogAccepted(string remoteEndPoint);
 
     /// <summary>
+    /// Method used to trace a connection that failed its establishment (TLS), which the listener already logged at its pace
+    /// </summary>
+    /// <param name="exception">Why the establishment failed</param>
+    /// <param name="remoteEndPoint">Address and port of the peer</param>
+    [LoggerMessage(EventId = 9040, Level = LogLevel.Debug, Message = "Connection from {RemoteEndPoint} closed: its establishment failed (logged by the listener)")]
+    private partial void LogEstablishmentFailed(Exception exception, string remoteEndPoint);
+
+    /// <summary>
     /// Method used to log the normal end of the service of a connection
     /// </summary>
     /// <param name="remoteEndPoint">Address and port of the peer</param>
@@ -325,20 +337,48 @@ public sealed partial class LinkServer
     /// delays the others. Any end once the stop is requested is a close, not a failure, whatever the exception (a client library may report a
     /// canceled call as an error of its own).</para>
     /// </remarks>
-    /// <param name="connection">[Cannot be null] Accepted connection; disposed by this method</param>
+    /// <param name="accepted">[Cannot be null] Accepted connection; disposed by this method, with the connection established on it</param>
     /// <param name="cancellationToken">Token canceled when the stop is requested</param>
     /// <returns>
     /// A task that completes once the connection is disposed
     /// </returns>
-    private async Task ServeConnectionAsync(ITransportConnection connection, CancellationToken cancellationToken)
+    private async Task ServeConnectionAsync(ITransportConnection accepted, CancellationToken cancellationToken)
     {
         // Reading the remote end point first (read once when the connection was accepted)
-        string remoteEndPoint = connection.RemoteEndPoint.ToString() ?? "unknown";
-        LogAccepted(remoteEndPoint);
+        string remoteEndPoint = "unknown";
+        ITransportConnection connection = accepted;
         try
         {
-            // Agreeing on the protocol with the client, then serving the connection to its end
-            await ProtocolHandshake.RunServerAsync(connection, _server.Codec, _server.MaxConcurrentRequests, _handshakeTimeout, cancellationToken).ConfigureAwait(false);
+            remoteEndPoint = accepted.RemoteEndPoint.ToString() ?? remoteEndPoint;
+
+            // Establishing the connection (TLS), then agreeing on the protocol with the client, both within the handshake timeout; a deadline
+            // that expires is a timeout, not a stop of the tier. A failure of the establishment is logged by the listener, at its pace (a peer
+            // can fail handshakes in a loop): it is only traced here
+            long start = Stopwatch.GetTimestamp();
+            using (CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                deadline.CancelAfter(_handshakeTimeout);
+                try
+                {
+                    connection = await _listener.EstablishAsync(accepted, deadline.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    throw new TimeoutException($"The client did not establish its connection within {_handshakeTimeout}", exception);
+                }
+                catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    LogEstablishmentFailed(exception, remoteEndPoint);
+                    return;
+                }
+            }
+            LogAccepted(remoteEndPoint);
+            TimeSpan left = _handshakeTimeout - Stopwatch.GetElapsedTime(start);
+            if (left <= TimeSpan.Zero)
+                throw new TimeoutException($"The client did not establish its connection within {_handshakeTimeout}");
+            await ProtocolHandshake.RunServerAsync(connection, _server.Codec, _server.MaxConcurrentRequests, left, cancellationToken).ConfigureAwait(false);
+
+            // Serving the connection to its end
             await _server.ServeAsync(connection, cancellationToken).ConfigureAwait(false);
             LogClosed(remoteEndPoint);
         }
@@ -354,6 +394,7 @@ public sealed partial class LinkServer
         }
         finally
         {
+            // Closing the established connection, which owns the accepted one, or the accepted one when nothing was established
             await CloseAsync(connection, remoteEndPoint).ConfigureAwait(false);
         }
     }

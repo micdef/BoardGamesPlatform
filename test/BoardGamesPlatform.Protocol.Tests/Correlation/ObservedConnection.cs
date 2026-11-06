@@ -81,6 +81,9 @@ internal sealed class ObservedConnection : ITransportConnection
     /// <inheritdoc/>
     public EndPoint RemoteEndPoint => _inner.RemoteEndPoint;
 
+    /// <inheritdoc/>
+    public string? PeerIdentity => _inner.PeerIdentity;
+
     #endregion
 
     #region Delegates
@@ -134,6 +137,13 @@ internal sealed class ObservedConnection : ITransportConnection
     {
         // Function's return
         return _stream.WaitForReadAsync(total, cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public Task CloseSendAsync(CancellationToken cancellationToken = default)
+    {
+        // Function's return
+        return _inner.CloseSendAsync(cancellationToken);
     }
 
     /// <inheritdoc/>

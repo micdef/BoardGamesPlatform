@@ -13,13 +13,28 @@ It describes version 1 of the protocol, delivered in 0.4.0. The code is in `src/
 
 | Layer | Namespace | Role |
 |-------|-----------|------|
-| Transport | `Protocol.Transport` | A connection hands over a byte stream (TCP today, TLS from 0.5.0) |
+| Transport | `Protocol.Transport` | A connection hands over a byte stream: plain TCP, or mutual TLS 1.3 over TCP (`Protocol.Transport.Tls`) |
 | Framing | `Protocol.Framing` | Cuts the stream into frames and refuses an oversized frame before reading it |
 | Control | `Protocol.Control` | Handshake, heartbeat and cancellation: the frames that manage the connection itself |
 | Correlation | `Protocol.Correlation` | Several requests in flight on one connection, each response paired with its request |
 | Messages | `Protocol.Messages` | JSON envelopes of the requests and the responses, routed by operation name |
 | Errors | `Protocol.Errors` | Error codes and the exceptions that carry them |
 | Links | `Protocol.Links` | What a tier uses: the link client (connection, reconnection, timeouts) and the link server (accept loop) |
+
+## Transport security: mutual TLS 1.3
+
+Every byte of a link travels in a TLS 1.3 session, and both ends prove who they are with a certificate of the platform authority (`src/BoardGamesPlatform.CertificateAuthority`).
+
+- **Trust**: a tier trusts the roots of the platform only, never the trust store of the system. Several roots may be trusted at the same time, during a change of root.
+- **Identity**: the certificate of a tier holds one DNS name, `<role>.<suffix>` (`gateway`, `back` or `veryback`, then the suffix of the deployment, for example `back.bgp.internal`), and the usages of its sides: TLS server for the Back and the Very Back, TLS client for the Gateway and the Back. The name never depends on the address connected to.
+- **Who accepts whom**: the Back accepts the Gateway only, the Very Back the Back only; the Gateway talks to the Back only, the Back to the Very Back only. A valid certificate of another role is refused: the key of one tier never opens a link meant for another one.
+- **Check of a certificate**: it chains to a trusted root, every certificate of the chain is valid now and allowed for the usage of its side, its only DNS name is the one of the role expected, and its SHA-256 thumbprint is not in the refused list. No revocation is checked and nothing is downloaded: the links run in a closed network, and a compromised certificate is refused by its thumbprint.
+- **Handshake**: TLS 1.3 only (an older version is refused), no renegotiation, and no session resumption, so that every connection checks the certificates again. On the server, the TLS handshake runs in the task of the connection, never in the accept loop, within the same handshake timeout as the protocol handshake below (5 seconds for both): a silent peer never holds the accept loop.
+- **Refusal**: a refused peer is logged with the reason and the thumbprint of its certificate, never with a text the peer chose; the failed handshakes are logged once every 10 seconds at most, the next entry giving the number held back, and the link server only traces them (Debug), so that a peer that fails handshakes in a loop cannot flood the logs. A connection is logged as accepted once it is established. For the caller of a link, a refused peer is `link.unavailable`, like a peer that cannot be reached. In TLS 1.3, the server may refuse the certificate of the client after the client ended its handshake: the client then sees the refusal at its first read, as a failure of the connection.
+- **Renewal**: before each new connection, and every hour, a tier checks whether its PFX or the file of its roots changed. If so, it loads and checks them again, and uses them for the new connections; files that fail the check are logged, and the current certificate is kept until the files change again (files that cannot be read yet, a copy in progress, are tried again at the next check). An established connection keeps the certificate it started with. The hourly check also warns, once a day at most, when the certificate expires within 30 days, and logs an error once it expired, so that a tier whose links stay open still warns.
+- **Prerequisite**: a tier refuses to start on Windows before Windows Server 2022 and Windows 11, which have no TLS 1.3 in Schannel.
+- **Usages**: a certificate must carry its extended usages; one without them is refused, though a chain alone would accept it for any usage.
+- **Closing the sending side** announces the end of the session (close_notify), then sends the end of the TCP stream; the other end reads a clean end and may still answer.
 
 ## Frames
 
@@ -151,7 +166,10 @@ The protocol logs through the logger of the tier that uses it, with event ids re
 | Class | Event ids |
 |-------|-----------|
 | `LinkClient` | 9001-9006 |
-| `LinkServer` | 9011-9019 |
+| `LinkServer` | 9011-9019, 9040 |
 | `OperationDispatcher` | 9021-9026 |
+| `TlsTransportListener` | 9031-9033 |
+| `TlsTransportConnector` | 9034-9035 |
+| `TlsCredentials` | 9036-9039 |
 
 On the client, the loss of a connection is logged with its reason (heartbeat timeout, protocol violation, reset by the peer). On the server, the end of a connection that failed is logged with its exception, for example the `TimeoutException` of a drain cut after a client closed.

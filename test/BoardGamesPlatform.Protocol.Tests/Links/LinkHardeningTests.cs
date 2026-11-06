@@ -7,7 +7,6 @@
 
 // Using
 using System.Net;
-using System.Net.Sockets;
 using BoardGamesPlatform.Back.Contracts;
 using BoardGamesPlatform.Back.Contracts.Ping;
 using BoardGamesPlatform.Protocol.Control;
@@ -269,7 +268,7 @@ public sealed class LinkHardeningTests
         Task serving = new RequestServer(new FrameCodec(), WaitingAsync, heartbeat: HeartbeatSettings.Default, timeProvider: clock).ServeAsync(served, token);
         await new FrameCodec().WriteAsync(raw.Stream, new Frame(1, new byte[] { 1 }), token);
         await started.Task.WaitAsync(token);
-        ((NetworkStream)raw.Stream).Socket.Shutdown(SocketShutdown.Send);
+        await raw.CloseSendAsync(token);
 
         // Letting the server read the end of the stream, then moving the clock past the idle timeout. The only fixed wait of this class: no
         // signal tells that the server has read the end (it takes milliseconds); moved too early, the clock would end the service through the
