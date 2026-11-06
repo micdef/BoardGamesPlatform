@@ -56,6 +56,11 @@ public static class CertificateIssuer
     /// </summary>
     private const string CommonNameOid = "2.5.4.3";
 
+    /// <summary>
+    /// Object identifier of the NIST P-256 curve (secp256r1), the only curve of the platform
+    /// </summary>
+    private const string NistP256Oid = "1.2.840.10045.3.1.7";
+
     #endregion
 
     #region Variables
@@ -130,6 +135,19 @@ public static class CertificateIssuer
 
         // Function's return
         return serial;
+    }
+
+    /// <summary>
+    /// Method used to recognize the NIST P-256 curve, by its object identifier or, when the system gives only a name, by that name
+    /// </summary>
+    /// <param name="curve">Curve of a key</param>
+    /// <returns>
+    /// True when the curve is NIST P-256
+    /// </returns>
+    private static bool IsNistP256(ECCurve curve)
+    {
+        // Function's return: a named curve, P-256 under any of its names
+        return curve.IsNamed && (curve.Oid.Value == NistP256Oid || curve.Oid.FriendlyName is "nistP256" or "ECDSA_P256" or "secp256r1" or "prime256v1");
     }
 
     #endregion
@@ -247,7 +265,8 @@ public static class CertificateIssuer
         CertificateRequest received = CertificateRequest.LoadSigningRequestPem(requestPem, HashAlgorithmName.SHA256);
         using (ECDsa? requestKey = received.PublicKey.GetECDsaPublicKey())
         {
-            if (requestKey is null || requestKey.KeySize != 256)
+            // The curve itself, not only the size: other curves of 256 bits exist (brainpoolP256r1, secp256k1)
+            if (requestKey is null || !IsNistP256(requestKey.ExportParameters(includePrivateParameters: false).Curve))
                 throw new ArgumentException("The key of the request must be ECDSA on the P-256 curve", nameof(requestPem));
         }
         List<X500RelativeDistinguishedName> names = received.SubjectName.EnumerateRelativeDistinguishedNames().ToList();

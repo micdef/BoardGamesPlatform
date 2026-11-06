@@ -75,6 +75,10 @@ public interface ITransportListener : IAsyncDisposable
     /// <summary>
     /// Method used to make an accepted connection ready to carry frames: authenticated on TLS, as it is on plain TCP
     /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> a listener logs its own failures, at a pace a peer cannot flood (the caller only traces them), except a
+    /// cancellation, which the caller tells. A listener that wraps another one establishes the connection below first.</para>
+    /// </remarks>
     /// <param name="accepted">[Cannot be null] Connection returned by <see cref="AcceptAsync"/></param>
     /// <param name="cancellationToken">Token used to give up, with the deadline of the handshake</param>
     /// <returns>

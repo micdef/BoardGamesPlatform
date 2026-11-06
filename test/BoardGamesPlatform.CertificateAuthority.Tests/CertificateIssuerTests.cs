@@ -270,6 +270,23 @@ public sealed class CertificateIssuerTests
     }
 
     /// <summary>
+    /// A request with an ECDSA key of 256 bits on another curve than P-256 is refused: the size alone does not tell the curve
+    /// </summary>
+    [Fact]
+    public void ARequestOnAnotherCurveOfTheSameSizeIsRefused()
+    {
+        // Requesting with a key on brainpoolP256r1, named after the role
+        using X509Certificate2 root = CreateRoot();
+        using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.brainpoolP256r1);
+        key.KeySize.ShouldBe(256);
+        CertificateRequest request = new CertificateRequest($"CN={PlatformIdentity.GetDnsName(PlatformRole.Back, Suffix)}", key, HashAlgorithmName.SHA256);
+
+        // Check
+        Should.Throw<ArgumentException>(() => CertificateIssuer.Sign(root, request.CreateSigningRequestPem(), PlatformRole.Back, Suffix, _now, _now.AddDays(30)))
+            .Message.ShouldContain("P-256");
+    }
+
+    /// <summary>
     /// A validity that is empty, too long, or beyond the root is refused, and so is an authority without its key
     /// </summary>
     [Fact]

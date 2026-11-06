@@ -29,17 +29,23 @@ namespace BoardGamesPlatform.Protocol.Transport.Tls;
 /// and a renewed certificate is taken without restarting the tier.</para>
 /// <para><b>Behavior:</b></para>
 /// <list type="bullet">
-/// <item><description>Loading fails (fail closed) when the certificate has no private key, is not signed by a trusted root, is not valid now,
-/// is not the one of the role of the tier or lacks one of its usages, or is refused.</description></item>
-/// <item><description>Loaded from files (<see cref="FromFiles"/>), the credentials check before each new connection whether the PFX or the file
-/// of the roots changed: if so, they are loaded and checked again, and replace the current ones; when the new ones fail the check, the
-/// current ones are kept and the failure is logged. Established connections keep the certificate they started with.</description></item>
-/// <item><description>A certificate that expires within the warning delay is logged as a warning at each load.</description></item>
+/// <item><description>Loading fails (fail closed) when the system has no TLS 1.3 (Windows before Windows Server 2022 and Windows 11), or
+/// when the certificate has no private key, is not signed by a trusted root, is not valid now, is not the one of the role of the tier or
+/// lacks one of its usages, or is refused.</description></item>
+/// <item><description>Loaded from files (<see cref="FromFiles"/>), the credentials check whether the PFX or the file of the roots changed,
+/// before each new connection and every <see cref="CheckInterval"/>: if so, they are loaded and checked again, and replace the current ones.
+/// When the new files fail the check, the current ones are kept and the failure is logged; the change is tried again when the files change
+/// once more, or at the next check when the files could not be read (a copy in progress). Established connections keep the certificate they
+/// started with; the replaced certificate is not disposed, since they may still use it, and is released by the garbage collector.</description></item>
+/// <item><description>A certificate that expires within the warning delay is logged as a warning when it is loaded, then once a day at most
+/// by the periodic check; an expired one is logged as an error at each check. A tier whose links stay open therefore still warns before
+/// its certificate expires.</description></item>
 /// </list>
-/// <para>The logs go through the logger of the tier, with the event ids 9036 to 9039 (see the coding conventions). The password is never
+/// <para>Disposing the credentials stops the periodic check. The logs go through the logger of the tier, with the event ids 9036 to 9039
+/// (see the coding conventions). The password is never
 /// logged.</para>
 /// </remarks>
-public sealed partial class TlsCredentials
+public sealed partial class TlsCredentials : IDisposable
 {
     #region Members
 
@@ -49,6 +55,21 @@ public sealed partial class TlsCredentials
     /// Warning delay before the expiry of the certificate, when none is given
     /// </summary>
     public static readonly TimeSpan DefaultExpiryWarning = TimeSpan.FromDays(30);
+
+    /// <summary>
+    /// Interval of the periodic check of the files and of the expiry
+    /// </summary>
+    public static readonly TimeSpan CheckInterval = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// Shortest time between two warnings of the same certificate that expires soon
+    /// </summary>
+    public static readonly TimeSpan ExpiryWarningRepeat = TimeSpan.FromDays(1);
+
+    /// <summary>
+    /// First build of Windows with TLS 1.3 in Schannel (Windows Server 2022; Windows 11 comes after it)
+    /// </summary>
+    private const int FirstWindowsBuildWithTls13 = 20348;
 
     #endregion
 
@@ -88,6 +109,21 @@ public sealed partial class TlsCredentials
     /// Current state: the certificate, its context and the roots; replaced as a whole by a reload
     /// </summary>
     private volatile State _state;
+
+    /// <summary>
+    /// Timer of the periodic check; null when the credentials were given as certificates
+    /// </summary>
+    private ITimer? _timer;
+
+    /// <summary>
+    /// Whether the certificate in use was already warned as expiring soon; under <see cref="_reloadLock"/>
+    /// </summary>
+    private bool _hasWarnedExpiry;
+
+    /// <summary>
+    /// Time stamp of the clock of the last warning of the expiry; under <see cref="_reloadLock"/>
+    /// </summary>
+    private long _lastExpiryWarning;
 
     #endregion
 
@@ -220,6 +256,40 @@ public sealed partial class TlsCredentials
     private partial void LogReloadFailed(Exception exception);
 
     /// <summary>
+    /// Method used to log a certificate in use that has expired
+    /// </summary>
+    /// <param name="identity">DNS name of the certificate</param>
+    /// <param name="thumbprint">Its thumbprint</param>
+    /// <param name="notAfter">End of its validity</param>
+    [LoggerMessage(EventId = 9039, Level = LogLevel.Error, Message = "The certificate of {Identity} ({Thumbprint}) expired on {NotAfter:u}: its peers refuse every new connection; renew it")]
+    private partial void LogExpired(string identity, string thumbprint, DateTimeOffset notAfter);
+
+    /// <summary>
+    /// Method used to tell whether a system has TLS 1.3
+    /// </summary>
+    /// <param name="isWindows">Whether the system is Windows</param>
+    /// <param name="version">Version of the system</param>
+    /// <returns>
+    /// True on Windows from build 20348 (Windows Server 2022, Windows 11), and on the other systems (OpenSSL decides there)
+    /// </returns>
+    internal static bool HasTls13(bool isWindows, Version version)
+    {
+        // Function's return
+        return !isWindows || version >= new Version(10, 0, FirstWindowsBuildWithTls13);
+    }
+
+    /// <summary>
+    /// Method used to refuse to start on a system without TLS 1.3, before any certificate is loaded
+    /// </summary>
+    /// <exception cref="InvalidOperationException">If the system has no TLS 1.3</exception>
+    private static void EnsureTls13()
+    {
+        // Check: Schannel offers TLS 1.3 from Windows Server 2022 and Windows 11 only
+        if (!HasTls13(OperatingSystem.IsWindows(), Environment.OSVersion.Version))
+            throw new InvalidOperationException($"The links need TLS 1.3, which Windows offers from Windows Server 2022 and Windows 11 only; this system is {Environment.OSVersion.Version}");
+    }
+
+    /// <summary>
     /// Method used to normalize the refused thumbprints
     /// </summary>
     /// <param name="refusedThumbprints">[Cannot be null] Thumbprints given</param>
@@ -280,7 +350,9 @@ public sealed partial class TlsCredentials
     /// <returns>
     /// The certificate with its key and the roots
     /// </returns>
-    /// <exception cref="InvalidOperationException">If a file is missing, or cannot be read</exception>
+    /// <exception cref="InvalidOperationException">If a file is missing, or is not what it must be (a wrong password included)</exception>
+    /// <exception cref="IOException">If a file cannot be read now (in use, or not readable by the tier)</exception>
+    /// <exception cref="UnauthorizedAccessException">If the tier may not read a file</exception>
     private static (X509Certificate2 Certificate, X509Certificate2Collection Roots) ReadFiles(SourceFiles files)
     {
         // Reading the PFX and the roots; a wrong password or a damaged file says so, without the password
@@ -293,6 +365,10 @@ public sealed partial class TlsCredentials
         {
             certificate = X509CertificateLoader.LoadPkcs12FromFile(files.CertificatePath, files.Password);
         }
+        catch (CryptographicException exception) when (exception.InnerException is IOException or UnauthorizedAccessException)
+        {
+            throw new IOException($"The certificate file {files.CertificatePath} cannot be read now: it may be in use, or not readable by the tier", exception);
+        }
         catch (CryptographicException exception)
         {
             throw new InvalidOperationException($"The certificate file {files.CertificatePath} cannot be opened: wrong password, or not a PFX", exception);
@@ -301,6 +377,11 @@ public sealed partial class TlsCredentials
         try
         {
             roots.ImportFromPemFile(files.TrustedRootsPath);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            certificate.Dispose();
+            throw new IOException($"The file of the trusted roots {files.TrustedRootsPath} cannot be read now: it may be in use, or not readable by the tier", exception);
         }
         catch (CryptographicException exception)
         {
@@ -318,13 +399,52 @@ public sealed partial class TlsCredentials
     /// <param name="state">[Cannot be null] State loaded</param>
     private void LogState(State state)
     {
-        // Telling which certificate is used, and when it must be renewed
+        // Telling which certificate is used, then when it must be renewed, from the start for this certificate
         string identity = PlatformIdentity.GetDnsName(Role, Suffix);
         string thumbprint = PeerCertificateValidator.GetThumbprint(state.Certificate);
         DateTimeOffset notAfter = new DateTimeOffset(state.Certificate.NotAfter.ToUniversalTime(), TimeSpan.Zero);
         LogLoaded(identity, thumbprint, notAfter);
-        if (notAfter - _timeProvider.GetUtcNow() <= _expiryWarning)
-            LogExpiresSoon(identity, thumbprint, notAfter);
+        _hasWarnedExpiry = false;
+        CheckExpiry(state);
+    }
+
+    /// <summary>
+    /// Method used to log a certificate in use that expires soon, once a day at most, or that has expired; under <see cref="_reloadLock"/>
+    /// </summary>
+    /// <param name="state">[Cannot be null] State in use</param>
+    private void CheckExpiry(State state)
+    {
+        // Comparing the end of the validity with now
+        string identity = PlatformIdentity.GetDnsName(Role, Suffix);
+        string thumbprint = PeerCertificateValidator.GetThumbprint(state.Certificate);
+        DateTimeOffset notAfter = new DateTimeOffset(state.Certificate.NotAfter.ToUniversalTime(), TimeSpan.Zero);
+        TimeSpan left = notAfter - _timeProvider.GetUtcNow();
+        if (left <= TimeSpan.Zero)
+        {
+            LogExpired(identity, thumbprint, notAfter);
+            return;
+        }
+        if (left > _expiryWarning || (_hasWarnedExpiry && _timeProvider.GetElapsedTime(_lastExpiryWarning) < ExpiryWarningRepeat))
+            return;
+
+        // Warning, and remembering when
+        LogExpiresSoon(identity, thumbprint, notAfter);
+        _hasWarnedExpiry = true;
+        _lastExpiryWarning = _timeProvider.GetTimestamp();
+    }
+
+    /// <summary>
+    /// Method used to run the periodic check: the files, then the expiry of the certificate in use
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> never throws, since it runs on a timer: a failure would be lost there.</para>
+    /// </remarks>
+    private void CheckPeriodically()
+    {
+        // Taking changed files, then telling how long the certificate in use is still valid
+        ReloadIfChanged();
+        lock (_reloadLock)
+            CheckExpiry(_state);
     }
 
     #endregion
@@ -345,7 +465,7 @@ public sealed partial class TlsCredentials
     /// </returns>
     /// <exception cref="ArgumentNullException">If a parameter is null</exception>
     /// <exception cref="ArgumentException">If the suffix or a thumbprint is invalid</exception>
-    /// <exception cref="InvalidOperationException">If the certificate cannot be used by this tier</exception>
+    /// <exception cref="InvalidOperationException">If the system has no TLS 1.3, or the certificate cannot be used by this tier</exception>
     public static TlsCredentials FromCertificates(PlatformRole role, string suffix, X509Certificate2 certificate, X509Certificate2Collection trustedRoots,
         IEnumerable<string> refusedThumbprints, TimeProvider timeProvider)
     {
@@ -361,7 +481,8 @@ public sealed partial class TlsCredentials
         if (!PlatformIdentity.IsValidSuffix(suffix))
             throw new ArgumentException($"The value of the parameter: {nameof(suffix)} is not a valid suffix", nameof(suffix));
 
-        // Checking the certificate, then building the credentials
+        // Checking the system and the certificate, then building the credentials
+        EnsureTls13();
         HashSet<string> refused = ReadRefused(refusedThumbprints);
         State state = CreateState(role, suffix, certificate, trustedRoots, refused, timeProvider.GetUtcNow());
 
@@ -387,7 +508,10 @@ public sealed partial class TlsCredentials
     /// <exception cref="ArgumentNullException">If a parameter is null</exception>
     /// <exception cref="ArgumentException">If the suffix, a path or a thumbprint is invalid</exception>
     /// <exception cref="ArgumentOutOfRangeException">If the warning delay is negative</exception>
-    /// <exception cref="InvalidOperationException">If a file is missing or unreadable, or the certificate cannot be used by this tier</exception>
+    /// <exception cref="InvalidOperationException">If the system has no TLS 1.3, if a file is missing or is not what it must be, or if the
+    /// certificate cannot be used by this tier</exception>
+    /// <exception cref="IOException">If a file cannot be read (in use, or not readable by the tier)</exception>
+    /// <exception cref="UnauthorizedAccessException">If the tier may not read a file</exception>
     public static TlsCredentials FromFiles(PlatformRole role, string suffix, string certificatePath, string password, string trustedRootsPath, IEnumerable<string> refusedThumbprints,
         TimeSpan expiryWarning, TimeProvider timeProvider, ILogger logger)
     {
@@ -410,6 +534,7 @@ public sealed partial class TlsCredentials
             throw new ArgumentOutOfRangeException(nameof(expiryWarning), $"The value of the parameter: {nameof(expiryWarning)} cannot be negative");
 
         // Reading and checking the files, their change times being kept for the reload
+        EnsureTls13();
         HashSet<string> refused = ReadRefused(refusedThumbprints);
         SourceFiles files = new SourceFiles(Path.GetFullPath(certificatePath), password, Path.GetFullPath(trustedRootsPath));
         DateTime certificateTime = File.GetLastWriteTimeUtc(files.CertificatePath);
@@ -427,7 +552,11 @@ public sealed partial class TlsCredentials
         }
         files.Seen(certificateTime, rootsTime);
         TlsCredentials credentials = new TlsCredentials(role, suffix, state, refused, expiryWarning, files, timeProvider, logger);
-        credentials.LogState(state);
+        lock (credentials._reloadLock)
+            credentials.LogState(state);
+
+        // Starting the periodic check, so that a tier whose links stay open still takes a renewal and warns before the expiry
+        credentials._timer = timeProvider.CreateTimer(_ => credentials.CheckPeriodically(), null, CheckInterval, CheckInterval);
 
         // Function's return
         return credentials;
@@ -446,7 +575,10 @@ public sealed partial class TlsCredentials
     /// </returns>
     /// <exception cref="ArgumentNullException">If a parameter is null</exception>
     /// <exception cref="ArgumentException">If a setting is invalid</exception>
-    /// <exception cref="InvalidOperationException">If a file is missing or unreadable, or the certificate cannot be used by this tier</exception>
+    /// <exception cref="InvalidOperationException">If the system has no TLS 1.3, if a file is missing or is not what it must be, or if the
+    /// certificate cannot be used by this tier</exception>
+    /// <exception cref="IOException">If a file cannot be read (in use, or not readable by the tier)</exception>
+    /// <exception cref="UnauthorizedAccessException">If the tier may not read a file</exception>
     public static TlsCredentials FromOptions(PlatformRole role, TlsOptions options, string contentRoot, TimeProvider timeProvider, ILogger logger)
     {
         // Checks
@@ -461,11 +593,12 @@ public sealed partial class TlsCredentials
     }
 
     /// <summary>
-    /// Method used to take the certificate files again when they changed, before a new connection
+    /// Method used to take the certificate files again when they changed, before a new connection and at each periodic check
     /// </summary>
     /// <remarks>
     /// <para><b>Behavior:</b> never throws: new files that fail the check are logged and the current certificate is kept, so that a mistake
-    /// while renewing never stops a tier that runs.</para>
+    /// while renewing never stops a tier that runs. Files refused are tried again once they change once more; files that could not be read
+    /// (a copy in progress, a missing right) are tried again at the next call.</para>
     /// </remarks>
     public void ReloadIfChanged()
     {
@@ -491,28 +624,43 @@ public sealed partial class TlsCredentials
             if (!_files.HasChanged(certificateTime, rootsTime))
                 return;
 
-            // Loading and checking the new files; the current state stays when they are refused, and the change is not tried again until
-            // the files change once more
-            _files.Seen(certificateTime, rootsTime);
+            // Reading the new files; files that cannot be read now are tried again at the next call, as the change is not marked as seen
+            X509Certificate2 certificate;
+            X509Certificate2Collection roots;
             try
             {
-                (X509Certificate2 certificate, X509Certificate2Collection roots) = ReadFiles(_files);
-                try
-                {
-                    State state = CreateState(Role, Suffix, certificate, roots, _refusedThumbprints, _timeProvider.GetUtcNow());
-                    _state = state;
-                    LogState(state);
-                }
-                catch
-                {
-                    certificate.Dispose();
-                    throw;
-                }
+                (certificate, roots) = ReadFiles(_files);
             }
-            catch (InvalidOperationException exception)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 LogReloadFailed(exception);
+                return;
             }
+            catch (Exception exception)
+            {
+                // Files that are not what they must be: tried again once they change once more
+                _files.Seen(certificateTime, rootsTime);
+                LogReloadFailed(exception);
+                return;
+            }
+
+            // Checking them; the current state stays when they are refused, until the files change once more
+            _files.Seen(certificateTime, rootsTime);
+            State state;
+            try
+            {
+                state = CreateState(Role, Suffix, certificate, roots, _refusedThumbprints, _timeProvider.GetUtcNow());
+            }
+            catch (Exception exception)
+            {
+                certificate.Dispose();
+                LogReloadFailed(exception);
+                return;
+            }
+
+            // Using them for the next connections
+            _state = state;
+            LogState(state);
         }
     }
 
@@ -539,7 +687,14 @@ public sealed partial class TlsCredentials
 
     #region Methods
 
-    // #N/A
+    /// <summary>
+    /// Method used to stop the periodic check
+    /// </summary>
+    public void Dispose()
+    {
+        // Stopping the timer; the certificates stay usable by the connections that hold them
+        _timer?.Dispose();
+    }
 
     #endregion
 
