@@ -47,8 +47,10 @@ namespace BoardGamesPlatform.Protocol.Links;
 /// the delay fails at once with <see cref="ErrorCodes.LinkUnavailable"/>, without touching the network. A connection that opens lets the
 /// next attempt go at once, but the failures in a row are only forgotten once it answers a request (an error code of the peer included): a
 /// connection lost before any response counts as a failure to open, so that a peer in a crash loop (the handshake accepted, then a death at
-/// the first request) is not reconnected on every call. Nothing waits in a queue: a request is either sent or failed, and never retried automatically, since the peer may already
-/// have handled it.</description></item>
+/// the first request) is not reconnected on every call. A connection opens for a call, which sends its request at once, so this includes a
+/// connection whose only requests were given up by their callers before the answer, then lost: the next attempt waits the first delay (0.5
+/// second), a small cost next to a reconnection storm. Nothing waits in a queue: a request is either sent or failed, and never retried
+/// automatically, since the peer may already have handled it.</description></item>
 /// <item><description>A call is stopped by the token of its caller, or by the request timeout, which covers the whole call: the wait for
 /// the connection as well as the wait for the response.</description></item>
 /// <item><description>After <see cref="DisposeAsync"/>, every call throws an <see cref="ObjectDisposedException"/>.</description></item>
@@ -179,6 +181,7 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// the calls, read under the opening lock
     /// </summary>
     private volatile RequestClient? _answered;
+
 
     #endregion
 
@@ -382,11 +385,12 @@ public sealed partial class LinkClient : IAsyncDisposable
     /// <summary>
     /// Method used to log that a connection was lost before it answered any request, which counts as a failure to open
     /// </summary>
+    /// <param name="cause">Why the connection closed, when known</param>
     /// <param name="peer">Name of the peer</param>
     /// <param name="host">Host of the peer</param>
     /// <param name="port">Port of the peer</param>
     [LoggerMessage(EventId = 9007, Level = LogLevel.Warning, Message = "Connection to {Peer} lost before any response ({Host}:{Port}); counted as a failure to open")]
-    private partial void LogConnectionLostUnanswered(string peer, string host, int port);
+    private partial void LogConnectionLostUnanswered(Exception? cause, string peer, string host, int port);
 
     /// <summary>
     /// Method used to compute the back-off delay after a number of failures in a row
@@ -534,7 +538,7 @@ public sealed partial class LinkClient : IAsyncDisposable
                 }
                 else
                 {
-                    LogConnectionLostUnanswered(_peerName, _host, _port);
+                    LogConnectionLostUnanswered(client.CloseReason, _peerName, _host, _port);
                     StartBackOff();
                 }
                 try
@@ -668,9 +672,11 @@ public sealed partial class LinkClient : IAsyncDisposable
         // its work too; a connection lost before the response is a failure of the link (the disposal of this client is not)
         try
         {
-            // Function's return: the connection answered, so the peer works
+            // Sending; an answer proves that the peer works
             TResponse response = await client.SendAsync<TRequest, TResponse>(operation, request, deadline.Token).ConfigureAwait(false);
             _answered = client;
+
+            // Function's return
             return response;
         }
         catch (RemoteErrorException)
