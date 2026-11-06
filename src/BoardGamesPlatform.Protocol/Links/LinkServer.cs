@@ -437,11 +437,18 @@ public sealed partial class LinkServer
         finally
         {
             // Closing the listener, then ending the service of every connection and waiting for it: without the cancellation, a listener lost
-            // without a stop request would wait for ever for connections that nothing ends any more
-            await _listener.DisposeAsync().ConfigureAwait(false);
-            LogStoppedListening(_name);
-            await services.CancelAsync().ConfigureAwait(false);
-            await Task.WhenAll(_connectionTasks).ConfigureAwait(false);
+            // without a stop request would wait for ever for connections that nothing ends any more. The services are ended even when closing
+            // the listener fails; that failure then ends the run
+            try
+            {
+                await _listener.DisposeAsync().ConfigureAwait(false);
+                LogStoppedListening(_name);
+            }
+            finally
+            {
+                await services.CancelAsync().ConfigureAwait(false);
+                await Task.WhenAll(_connectionTasks).ConfigureAwait(false);
+            }
         }
     }
 
