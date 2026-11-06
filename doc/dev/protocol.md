@@ -114,10 +114,10 @@ Through the tiers, a front that disconnects stops the work of its call in the Ba
 | Timing | Value |
 |--------|-------|
 | The client sends a `ping` every | 10 seconds |
-| The client closes when it has received no frame at all for more than | 30 seconds, checked at each ping (so within 40 seconds) |
-| The server closes when it has received no frame at all for more than | 45 seconds, checked at every ping interval (so within 55 seconds) |
+| The client closes when the server has shown no sign of life for more than | 30 seconds, checked at each ping (so within 40 seconds) |
+| The server closes when it has received nothing at all for more than | 45 seconds, checked at every ping interval (so within 55 seconds) |
 
-Any frame counts, a request or a response as well as a ping or a pong. Each end watches with its own timer, and no read is ever canceled without closing the connection. The write of a ping, the wait for the write lock included, is bounded by the client heartbeat timeout (30 seconds), so that a peer that no longer reads cannot block the heartbeat.
+Any byte received counts, not only a whole frame: a large frame on a slow link is not taken for a silent peer. On the client, a piece of a large frame written counts too (a frame larger than 64 KiB is written in pieces of 64 KiB, which leave only when the server reads, once the buffers of the system are full): a large request on a slow link is not taken for a dead server. A short frame written is never a sign of life, since the system takes its bytes without the server reading them: short requests sent often never keep a silent server alive. While a frame is being written, the client skips its ping instead of waiting behind it; if that write stalls, no sign of life comes and the client closes after its timeout. Each end watches with its own timer, and no read is ever canceled without closing the connection. The write of a ping is bounded by the client heartbeat timeout (30 seconds), so that a peer that no longer reads cannot block the heartbeat.
 
 ## Limits
 

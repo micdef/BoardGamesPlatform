@@ -62,6 +62,15 @@ public sealed class FrameCodec
     /// </remarks>
     public const int HighestMaxPayloadLength = 16 * 1024 * 1024;
 
+    /// <summary>
+    /// Largest piece of a frame written in one call, in bytes (64 KiB)
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> a frame larger than this is written piece by piece, so that the writer can tell, after each piece, that the bytes
+    /// keep leaving: on a slow link, the heartbeat then sees a large frame progress instead of a silent peer.</para>
+    /// </remarks>
+    public const int WriteChunkLength = 64 * 1024;
+
     #endregion
 
     #region Variables
@@ -142,7 +151,32 @@ public sealed class FrameCodec
 
     #region Privates
 
-    // #N/A
+    /// <summary>
+    /// Method used to fill a buffer from a stream, telling the caller after each read that returned bytes
+    /// </summary>
+    /// <param name="stream">[Cannot be null] Stream to read from</param>
+    /// <param name="buffer">Buffer to fill</param>
+    /// <param name="onProgress">Called after each read that returned bytes; null when nobody needs it</param>
+    /// <param name="cancellationToken">Token used to cancel the read</param>
+    /// <returns>
+    /// The number of bytes read: the length of the buffer, or less when the stream ended first
+    /// </returns>
+    private static async Task<int> FillAsync(Stream stream, Memory<byte> buffer, Action? onProgress, CancellationToken cancellationToken)
+    {
+        // Reading until the buffer is full or the stream ends
+        int total = 0;
+        while (total < buffer.Length)
+        {
+            int read = await stream.ReadAsync(buffer[total..], cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+                break;
+            total += read;
+            onProgress?.Invoke();
+        }
+
+        // Function's return
+        return total;
+    }
 
     #endregion
 
@@ -155,6 +189,7 @@ public sealed class FrameCodec
     /// <para><b>Behavior:</b> builds the header and the payload into one buffer, writes it in a single call and flushes the stream: a small
     /// frame leaves as one network segment (one TLS record from 0.5.0) instead of two. A payload larger than the maximum is refused before
     /// anything is written. The payload must not be modified until the returned task completes.</para>
+    /// <para>The same as <see cref="WriteAsync(Stream, Frame, Action?, CancellationToken)"/>, without telling the progress.</para>
     /// <para>After an exception, see the connection rule of <see cref="FrameCodec"/>: the connection is closed. A canceled write has an
     /// unknown outcome: the frame may have been sent in full, in part or not at all.</para>
     /// </remarks>
@@ -168,7 +203,36 @@ public sealed class FrameCodec
     /// <exception cref="ObjectDisposedException">If the stream is closed</exception>
     /// <exception cref="NotSupportedException">If the stream cannot be written, or if a TLS stream already runs another write</exception>
     /// <exception cref="InvalidOperationException">If the stream is not ready, for example a TLS stream before its authentication</exception>
-    public async Task WriteAsync(Stream stream, Frame frame, CancellationToken cancellationToken = default)
+    public Task WriteAsync(Stream stream, Frame frame, CancellationToken cancellationToken = default)
+    {
+        // Function's return
+        return WriteAsync(stream, frame, null, cancellationToken);
+    }
+
+    /// <summary>
+    /// Method used to write one frame to a stream, telling the caller when its bytes leave
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> builds the header and the payload into one buffer. A frame up to <see cref="WriteChunkLength"/> bytes, header
+    /// included, is written in a single call, so that a small frame leaves as one network segment (one TLS record from 0.5.0). A larger frame
+    /// is written in pieces of that length, and <paramref name="onProgress"/> is called after each one: the bytes keep leaving, so the peer
+    /// is reading them. The stream is flushed at the end. A payload larger than the maximum is refused before anything is written. The payload
+    /// must not be modified until the returned task completes.</para>
+    /// <para>After an exception, see the connection rule of <see cref="FrameCodec"/>: the connection is closed. A canceled write has an
+    /// unknown outcome: the frame may have been sent in full, in part or not at all.</para>
+    /// </remarks>
+    /// <param name="stream">[Cannot be null] Stream to write to</param>
+    /// <param name="frame">[Cannot be null] Frame to write</param>
+    /// <param name="onProgress">Called after each piece written, the last one included; null when nobody needs it</param>
+    /// <param name="cancellationToken">Token used to cancel the write</param>
+    /// <exception cref="ArgumentNullException">If the stream or the frame is null (before any write)</exception>
+    /// <exception cref="ArgumentException">If the payload is larger than the maximum length (before any write)</exception>
+    /// <exception cref="IOException">If the stream fails while writing, for example when the peer resets the connection</exception>
+    /// <exception cref="OperationCanceledException">If the write is canceled</exception>
+    /// <exception cref="ObjectDisposedException">If the stream is closed</exception>
+    /// <exception cref="NotSupportedException">If the stream cannot be written, or if a TLS stream already runs another write</exception>
+    /// <exception cref="InvalidOperationException">If the stream is not ready, for example a TLS stream before its authentication</exception>
+    public async Task WriteAsync(Stream stream, Frame frame, Action? onProgress, CancellationToken cancellationToken = default)
     {
         // Checks
         if (stream is null)
@@ -184,8 +248,13 @@ public sealed class FrameCodec
         BinaryPrimitives.WriteUInt64BigEndian(buffer.AsSpan(4, 8), frame.CorrelationId);
         frame.Payload.Span.CopyTo(buffer.AsSpan(HeaderLength));
 
-        // Writing the frame in a single call
-        await stream.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+        // Writing the frame in a single call when it is small, else piece by piece, telling the progress after each piece
+        for (int offset = 0; offset < buffer.Length; offset += WriteChunkLength)
+        {
+            int length = Math.Min(WriteChunkLength, buffer.Length - offset);
+            await stream.WriteAsync(buffer.AsMemory(offset, length), cancellationToken).ConfigureAwait(false);
+            onProgress?.Invoke();
+        }
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -198,6 +267,7 @@ public sealed class FrameCodec
     /// of the connection; a stream that ends inside a frame is an error. The payload of the returned frame is a new array, owned by the caller.</para>
     /// <para>After an exception, cancellation included, see the connection rule of <see cref="FrameCodec"/>: the connection is closed, since
     /// its next bytes can no longer be trusted. A canceled read is never retried on the same stream.</para>
+    /// <para>The same as <see cref="ReadAsync(Stream, Action?, CancellationToken)"/>, without telling the progress.</para>
     /// </remarks>
     /// <param name="stream">[Cannot be null] Stream to read from</param>
     /// <param name="cancellationToken">Token used to cancel the read</param>
@@ -213,7 +283,40 @@ public sealed class FrameCodec
     /// <exception cref="ObjectDisposedException">If the stream is closed</exception>
     /// <exception cref="NotSupportedException">If the stream cannot be read, or if a TLS stream already runs another read</exception>
     /// <exception cref="InvalidOperationException">If the stream is not ready, for example a TLS stream before its authentication</exception>
-    public async Task<Frame?> ReadAsync(Stream stream, CancellationToken cancellationToken = default)
+    public Task<Frame?> ReadAsync(Stream stream, CancellationToken cancellationToken = default)
+    {
+        // Function's return
+        return ReadAsync(stream, null, cancellationToken);
+    }
+
+    /// <summary>
+    /// Method used to read the next frame from a stream, telling the caller each time bytes arrive
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> waits until a whole header is received, checks the announced length against the maximum, then waits until
+    /// the whole payload is received; the bytes may arrive in any number of reads, and <paramref name="onProgress"/> is called after each
+    /// read that returned bytes: on a slow link, the heartbeat sees a large frame arrive instead of a silent peer. A stream that ends between
+    /// two frames is a normal end of the connection; a stream that ends inside a frame is an error. The payload of the returned frame is a
+    /// new array, owned by the caller.</para>
+    /// <para>After an exception, cancellation included, see the connection rule of <see cref="FrameCodec"/>: the connection is closed, since
+    /// its next bytes can no longer be trusted. A canceled read is never retried on the same stream.</para>
+    /// </remarks>
+    /// <param name="stream">[Cannot be null] Stream to read from</param>
+    /// <param name="onProgress">Called after each read that returned bytes; null when nobody needs it</param>
+    /// <param name="cancellationToken">Token used to cancel the read</param>
+    /// <returns>
+    /// The frame read<br/>
+    /// Null ==> The stream ended cleanly, before the first byte of a frame: the peer sends nothing more (it may still be reading, after
+    /// a half close)
+    /// </returns>
+    /// <exception cref="ArgumentNullException">If the stream is null (before any read)</exception>
+    /// <exception cref="InvalidDataException">If the stream ends inside a frame, or if the announced payload is larger than the maximum length</exception>
+    /// <exception cref="IOException">If the stream fails while reading, for example when the peer resets the connection</exception>
+    /// <exception cref="OperationCanceledException">If the read is canceled</exception>
+    /// <exception cref="ObjectDisposedException">If the stream is closed</exception>
+    /// <exception cref="NotSupportedException">If the stream cannot be read, or if a TLS stream already runs another read</exception>
+    /// <exception cref="InvalidOperationException">If the stream is not ready, for example a TLS stream before its authentication</exception>
+    public async Task<Frame?> ReadAsync(Stream stream, Action? onProgress, CancellationToken cancellationToken = default)
     {
         // Check
         if (stream is null)
@@ -221,7 +324,7 @@ public sealed class FrameCodec
 
         // Reading the header (a stream that ends before its first byte is a clean end of the connection)
         byte[] header = new byte[HeaderLength];
-        int headerBytes = await stream.ReadAtLeastAsync(header, HeaderLength, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false);
+        int headerBytes = await FillAsync(stream, header, onProgress, cancellationToken).ConfigureAwait(false);
         if (headerBytes == 0)
         {
             // Function's return
@@ -238,7 +341,7 @@ public sealed class FrameCodec
 
         // Reading the payload (the length fits in an int: it is not larger than the maximum)
         byte[] payload = new byte[(int)payloadLength];
-        int payloadBytes = await stream.ReadAtLeastAsync(payload, payload.Length, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false);
+        int payloadBytes = await FillAsync(stream, payload, onProgress, cancellationToken).ConfigureAwait(false);
         if (payloadBytes < payload.Length)
             throw new InvalidDataException($"The stream ended inside the payload of a frame ({payloadBytes} of {payload.Length} bytes received)");
 
