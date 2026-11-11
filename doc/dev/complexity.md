@@ -24,6 +24,8 @@ proves it. A path run per byte, per frame, per record or per request is a **hot 
 | Frame read (`FrameCodec.ReadAsync`) | O(n), each byte read once, whatever the size of the reads | O(n): the payload, given to the caller, and a fixed cost (header, frame, tasks) under 1 KiB | `AReadFrameAllocatesItsPayloadAndAFixedCost`, `AFrameArrivingByteByByteIsReadInOnePassAsync` |
 | Request written (`MessageSerializer.WriteRequest`) | O(n), one pass when the contract of the body is an object | O(n): the request, once | `MessageSerializerComplexityTests.ARequestIsWrittenInOnePass`, `ARequestWrittenInOnePassKeepsItsForm` |
 | Request read (`MessageSerializer.ReadRequest`) | O(n), the UTF-8 of the body checked on its raw bytes | O(n): the body, once | `ARequestIsReadWithoutASecondCopyOfItsBody` |
+| Record written (`SecureRecordStream.WriteAsync`) | O(n), one record per 16 KiB, 18 bytes added per record | O(1) per record: the record and its nonce are sealed into buffers of the stream (16 KiB per connection, once), under its write lock | `SecureRecordStreamComplexityTests.AWrittenRecordAllocatesTheSameWhateverItsLength`, `AWriteIsCutIntoTheFewestRecordsAsync` |
+| Record read (`SecureRecordStream.ReadAsync`) | O(n) per record of n bytes: once given, only the n bytes of the record are erased, never the whole buffer, so that a peer sending records of 1 byte cannot make each one cost the erasure of 16 KiB | O(1) per record: the length, the nonce and the plaintext live in buffers of the stream | `AReadRecordAllocatesTheSameWhateverItsLength`; the erasure has no test of its own (its work is seen only with a clock): each record erases its own bytes, the disposal erases the whole buffer |
 
 ## Bounded by the limits of the links
 
