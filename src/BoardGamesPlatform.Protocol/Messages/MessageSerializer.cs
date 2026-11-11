@@ -84,6 +84,16 @@ public static partial class MessageSerializer
         Converters = { new StrictDateTimeOffsetConverter() }
     };
 
+    /// <summary>
+    /// Rules of the reader of a request at the level of the JSON itself, checked on every request written before it is sent: the depth of the
+    /// envelope, and a property written only once at every level
+    /// </summary>
+    private static readonly JsonDocumentOptions _writtenRequestCheck = new JsonDocumentOptions
+    {
+        MaxDepth = MaxDepth,
+        AllowDuplicateProperties = false
+    };
+
     #endregion
 
     #region Delegates
@@ -178,29 +188,6 @@ public static partial class MessageSerializer
         return value;
     }
 
-    /// <summary>
-    /// Method used to tell whether a body can be written in one pass: its contract writes it as an object with properties, and none of them
-    /// is extension data, whose keys could repeat the name of a property and write it twice
-    /// </summary>
-    /// <param name="contract">[Cannot be null] Contract of the type of the body</param>
-    /// <returns>
-    /// True when the body is always written as a JSON object that the reader accepts; false when it must be written and checked first
-    /// </returns>
-    private static bool IsWrittenInOnePass(JsonTypeInfo contract)
-    {
-        // An object with properties only, none of them extension data
-        if (contract.Kind != JsonTypeInfoKind.Object)
-            return false;
-        for (int index = 0; index < contract.Properties.Count; index++)
-        {
-            if (contract.Properties[index].IsExtensionData)
-                return false;
-        }
-
-        // Function's return
-        return true;
-    }
-
     #endregion
 
     #region Publics
@@ -218,13 +205,14 @@ public static partial class MessageSerializer
     /// <para><b>Behavior:</b> the request is checked against the rules of the reader before anything is written: a name that is not a valid
     /// operation name, or a body that is not written as a JSON object, is a bug of the caller, refused here with an
     /// <see cref="ArgumentException"/>. Sent as it is, it would be a protocol violation that closes the connection of every caller. A body
-    /// whose contract writes it as an object with properties, none of them extension data, is written in one pass; any other one (a custom
-    /// converter, a value, a list, extension data whose keys could repeat a property) is written first as a JSON element and checked, so that
-    /// the check never depends on the shape of the type.</para>
+    /// whose contract writes it as an object with properties is written in one pass; any other one (a custom converter, a value, a list) is
+    /// written first as a JSON element, to check that it is an object. Then the request written is read back with the rules of the reader
+    /// (its depth, a property written only once at every level, extension data included), without a copy of it: what the peer would refuse
+    /// is refused here, whatever the shape of the type.</para>
     /// </remarks>
     /// <exception cref="ArgumentNullException">If the operation is null, empty or white spaces, or if the body is null</exception>
     /// <exception cref="ArgumentException">If the operation is not a valid name, or the body is not written as a JSON object that the reader
-    /// accepts (a property written twice included)</exception>
+    /// accepts (too deep, or a property written twice at any level)</exception>
     public static byte[] WriteRequest<TRequest>(string operation, TRequest body)
         where TRequest : class
     {
@@ -236,25 +224,31 @@ public static partial class MessageSerializer
         if (!OperationNamePattern().IsMatch(operation))
             throw new ArgumentException($"The value of the parameter: {nameof(operation)} is not a valid operation name (1 to {MaxOperationNameLength} characters among A-Z, a-z, 0-9, '.', '_', '-')", nameof(operation));
 
-        // Transforming data in one pass when the contract of the body always writes a JSON object the reader accepts
-        if (IsWrittenInOnePass(_options.GetTypeInfo(typeof(TRequest))))
-            return JsonSerializer.SerializeToUtf8Bytes(new RequestEnvelope<TRequest>(operation, body), _options);
-
-        // Otherwise the body first, which must be a JSON object that the strict options read back (a property written twice is refused there)
-        JsonElement element;
+        // Transforming data: in one pass when the contract of the body writes an object with properties, else the body first, which must be
+        // a JSON object; then reading the request back with the rules of the reader, so that nothing the peer would refuse leaves
+        byte[] request;
         try
         {
-            element = JsonSerializer.SerializeToElement(body, _options);
+            if (_options.GetTypeInfo(typeof(TRequest)).Kind == JsonTypeInfoKind.Object)
+            {
+                request = JsonSerializer.SerializeToUtf8Bytes(new RequestEnvelope<TRequest>(operation, body), _options);
+            }
+            else
+            {
+                JsonElement element = JsonSerializer.SerializeToElement(body, _options);
+                if (element.ValueKind != JsonValueKind.Object)
+                    throw new ArgumentException($"The value of the parameter: {nameof(body)} is not written as a JSON object", nameof(body));
+                request = JsonSerializer.SerializeToUtf8Bytes(new RequestEnvelope<JsonElement>(operation, element), _options);
+            }
+            using JsonDocument _ = JsonDocument.Parse(request, _writtenRequestCheck);
         }
         catch (JsonException exception)
         {
-            throw new ArgumentException($"The value of the parameter: {nameof(body)} is not written as a JSON object that the reader accepts", nameof(body), exception);
+            throw new ArgumentException($"The value of the parameter: {nameof(body)} is not written as a JSON object that the reader accepts (too deep, or a property written twice)", nameof(body), exception);
         }
-        if (element.ValueKind != JsonValueKind.Object)
-            throw new ArgumentException($"The value of the parameter: {nameof(body)} is not written as a JSON object", nameof(body));
 
         // Function's return
-        return JsonSerializer.SerializeToUtf8Bytes(new RequestEnvelope<JsonElement>(operation, element), _options);
+        return request;
     }
 
     /// <summary>

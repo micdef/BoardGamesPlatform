@@ -136,6 +136,30 @@ public sealed class MessageSerializerComplexityTests
     }
 
     /// <summary>
+    /// Method used to tell whether the serializer accepts a message, the documented refusals only counting as a refusal
+    /// </summary>
+    /// <param name="operation">[Cannot be null] Writing or reading of a message</param>
+    /// <returns>
+    /// True when the message is written or read; false when it is refused as documented (ArgumentException for the writer,
+    /// InvalidDataException for the reader); any other exception is a bug, and fails the test
+    /// </returns>
+    private static bool Accepts(Func<object> operation)
+    {
+        try
+        {
+            _ = operation();
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidDataException)
+        {
+            // Function's return
+            return false;
+        }
+
+        // Function's return
+        return true;
+    }
+
+    /// <summary>
     /// Method used to measure the bytes allocated by a synchronous operation of the serializer
     /// </summary>
     /// <param name="operation">[Cannot be null] Operation, whose result is dropped</param>
@@ -300,6 +324,62 @@ public sealed class MessageSerializerComplexityTests
         operation.ShouldBe(Operation);
         read.GetProperty("a").GetInt32().ShouldBe(1);
         read.GetProperty("b").GetInt32().ShouldBe(2);
+    }
+
+    /// <summary>
+    /// A property written twice one level below the body, by extension data, is refused before anything is sent, as at the first level
+    /// </summary>
+    [Fact]
+    public void APropertyWrittenTwiceInANestedBodyIsRefusedBeforeSending()
+    {
+        // Arranging a body whose inner body repeats the property "a" through its extension data
+        ExtensionBody inner = new ExtensionBody(1);
+        inner.Extra["a"] = JsonSerializer.SerializeToElement(2);
+        NestedBody body = new NestedBody(inner);
+
+        // Acting
+        ArgumentException refusal = Should.Throw<ArgumentException>(() => MessageSerializer.WriteRequest(Operation, body));
+
+        // Check
+        refusal.ParamName.ShouldBe("body");
+    }
+
+    /// <summary>
+    /// A body deeper than the reader allows is refused before anything is sent, with an ArgumentException, never a JSON exception
+    /// </summary>
+    [Fact]
+    public void ABodyTooDeepForTheReaderIsRefusedBeforeSending()
+    {
+        // Acting
+        ArgumentException refusal = Should.Throw<ArgumentException>(() => MessageSerializer.WriteRequest(Operation, DeepBody.Chain(MessageSerializer.MaxDepth + 4)));
+
+        // Check
+        refusal.ParamName.ShouldBe("body");
+    }
+
+    /// <summary>
+    /// The writer accepts exactly the depths the reader accepts: at each depth, the request written is read back, and a request refused by
+    /// the writer is refused by the reader too, the same JSON built by hand
+    /// </summary>
+    [Fact]
+    public void TheWriterAcceptsTheDepthsTheReaderAccepts()
+    {
+        for (int depth = 1; depth <= MessageSerializer.MaxDepth + 4; depth++)
+        {
+            // Arranging the same request as JSON built by hand, and asking the reader
+            StringBuilder json = new StringBuilder($$"""{"operation":"{{Operation}}","body":""");
+            for (int level = 1; level < depth; level++)
+                json.Append("""{"next":""");
+            json.Append("""{"next":null}""");
+            json.Append('}', depth);
+            bool isRead = Accepts(() => MessageSerializer.ReadRequest(Encoding.UTF8.GetBytes(json.ToString())));
+
+            // Acting
+            bool isWritten = Accepts(() => MessageSerializer.WriteRequest(Operation, DeepBody.Chain(depth)));
+
+            // Check
+            isWritten.ShouldBe(isRead, $"at the depth {depth}");
+        }
     }
 
     /// <summary>
