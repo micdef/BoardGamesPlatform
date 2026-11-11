@@ -85,10 +85,10 @@ public static partial class MessageSerializer
     };
 
     /// <summary>
-    /// Rules of the reader of a request at the level of the JSON itself, checked on every request written before it is sent: the depth of the
-    /// envelope, and a property written only once at every level
+    /// Rules of the readers of the messages at the level of the JSON itself, checked on every request and response written before it is
+    /// sent: the whole depth, envelope included, and a property appearing only once at every level
     /// </summary>
-    private static readonly JsonDocumentOptions _writtenRequestCheck = new JsonDocumentOptions
+    private static readonly JsonDocumentOptions _writtenMessageCheck = new JsonDocumentOptions
     {
         MaxDepth = MaxDepth,
         AllowDuplicateProperties = false
@@ -188,6 +188,24 @@ public static partial class MessageSerializer
         return value;
     }
 
+    /// <summary>
+    /// Method used to read a message written back with the rules of the reader of the peer, before it is sent: what the peer would refuse
+    /// at the level of the JSON closes its connection, so it must never leave
+    /// </summary>
+    /// <param name="message">[Cannot be null] UTF-8 JSON of the message written</param>
+    /// <exception cref="JsonException">If the message is malformed, deeper than the readers allow, writes a property twice at any level, or
+    /// is not valid UTF-8 (which the JSON reader does not check inside strings, and the reader of a request checks on its body)</exception>
+    private static void CheckAsTheReaderReads(byte[] message)
+    {
+        // Reading it without a copy (its metadata comes from the shared pool, and goes back at the end), then checking its UTF-8
+        using (JsonDocument check = JsonDocument.Parse(message, _writtenMessageCheck))
+        {
+            // The document is only read: being parsed is the check
+        }
+        if (!Utf8.IsValid(message))
+            throw new JsonException("The message written is not valid UTF-8: a converter of its body skipped the validation of the writer");
+    }
+
     #endregion
 
     #region Publics
@@ -207,12 +225,14 @@ public static partial class MessageSerializer
     /// <see cref="ArgumentException"/>. Sent as it is, it would be a protocol violation that closes the connection of every caller. A body
     /// whose contract writes it as an object with properties is written in one pass; any other one (a custom converter, a value, a list) is
     /// written first as a JSON element, to check that it is an object. Then the request written is read back with the rules of the reader
-    /// (its depth, a property written only once at every level, extension data included), without a copy of it: what the peer would refuse
-    /// is refused here, whatever the shape of the type.</para>
+    /// (its depth, a property appearing only once at every level, extension data included, valid UTF-8), without a copy of it: what the
+    /// peer would refuse at the level of the JSON is refused here, whatever the shape of the type. An exception of the code of the body
+    /// itself (a getter, a converter) is not changed.</para>
     /// </remarks>
     /// <exception cref="ArgumentNullException">If the operation is null, empty or white spaces, or if the body is null</exception>
     /// <exception cref="ArgumentException">If the operation is not a valid name, or the body is not written as a JSON object that the reader
-    /// accepts (too deep, or a property written twice at any level)</exception>
+    /// accepts (malformed, too deep, a property written twice at any level, or invalid UTF-8)</exception>
+    /// <exception cref="NotSupportedException">If the type of the body, or of one of its members, cannot be written by the serializer</exception>
     public static byte[] WriteRequest<TRequest>(string operation, TRequest body)
         where TRequest : class
     {
@@ -240,11 +260,11 @@ public static partial class MessageSerializer
                     throw new ArgumentException($"The value of the parameter: {nameof(body)} is not written as a JSON object", nameof(body));
                 request = JsonSerializer.SerializeToUtf8Bytes(new RequestEnvelope<JsonElement>(operation, element), _options);
             }
-            using JsonDocument _ = JsonDocument.Parse(request, _writtenRequestCheck);
+            CheckAsTheReaderReads(request);
         }
         catch (JsonException exception)
         {
-            throw new ArgumentException($"The value of the parameter: {nameof(body)} is not written as a JSON object that the reader accepts (too deep, or a property written twice)", nameof(body), exception);
+            throw new ArgumentException($"The value of the parameter: {nameof(body)} is not written as a JSON object that the reader accepts (malformed, too deep, a property written twice, or invalid UTF-8)", nameof(body), exception);
         }
 
         // Function's return
@@ -318,7 +338,15 @@ public static partial class MessageSerializer
     /// <returns>
     /// The UTF-8 JSON of the envelope
     /// </returns>
+    /// <remarks>
+    /// <para><b>Behavior:</b> the response written is read back with the rules of the reader of the peer (its depth, a property appearing
+    /// only once at every level, valid UTF-8), without a copy of it, so that a response the client would refuse never leaves: the
+    /// dispatcher answers an internal error instead. An exception of the code of the body itself (a getter, a converter) is not changed.</para>
+    /// </remarks>
     /// <exception cref="ArgumentNullException">If the body is null</exception>
+    /// <exception cref="ArgumentException">If the body is not written as JSON that the reader accepts (malformed, too deep, a property
+    /// written twice at any level, or invalid UTF-8)</exception>
+    /// <exception cref="NotSupportedException">If the type of the body, or of one of its members, cannot be written by the serializer</exception>
     public static byte[] WriteResponse<TResponse>(TResponse body)
         where TResponse : class
     {
@@ -326,8 +354,20 @@ public static partial class MessageSerializer
         if (body is null)
             throw new ArgumentNullException(nameof(body), $"The value of the parameter: {nameof(body)} cannot be null");
 
+        // Transforming data, then reading the response back with the rules of the reader
+        byte[] response;
+        try
+        {
+            response = JsonSerializer.SerializeToUtf8Bytes(new ResponseEnvelope<TResponse>(body), _options);
+            CheckAsTheReaderReads(response);
+        }
+        catch (JsonException exception)
+        {
+            throw new ArgumentException($"The value of the parameter: {nameof(body)} is not written as JSON that the reader accepts (malformed, too deep, a property written twice, or invalid UTF-8)", nameof(body), exception);
+        }
+
         // Function's return
-        return JsonSerializer.SerializeToUtf8Bytes(new ResponseEnvelope<TResponse>(body), _options);
+        return response;
     }
 
     /// <summary>

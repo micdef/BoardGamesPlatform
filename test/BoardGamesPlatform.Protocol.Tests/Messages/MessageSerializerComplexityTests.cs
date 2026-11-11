@@ -337,8 +337,53 @@ public sealed class MessageSerializerComplexityTests
         inner.Extra["a"] = JsonSerializer.SerializeToElement(2);
         NestedBody body = new NestedBody(inner);
 
-        // Acting
+        // Acting: the writer refuses it, and the reader refuses the same request built by hand, so that the writer is never stricter
         ArgumentException refusal = Should.Throw<ArgumentException>(() => MessageSerializer.WriteRequest(Operation, body));
+        bool isRead = Accepts(() => MessageSerializer.ReadRequest(Encoding.UTF8.GetBytes("""{"operation":""" + "\"" + Operation + "\"" + ""","body":{"inner":{"a":1,"a":2}}}""")));
+
+        // Checks
+        refusal.ParamName.ShouldBe("body");
+        isRead.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// A body written as invalid UTF-8 by its own converter is refused before anything is sent: the reader of the peer refuses it
+    /// </summary>
+    [Fact]
+    public void ARequestOfInvalidUtf8IsRefusedBeforeSending()
+    {
+        // Acting
+        ArgumentException refusal = Should.Throw<ArgumentException>(() => MessageSerializer.WriteRequest(Operation, new InvalidUtf8Body("hi")));
+
+        // Check
+        refusal.ParamName.ShouldBe("body");
+    }
+
+    /// <summary>
+    /// A response that writes a property twice one level below its body is refused before anything is sent, as a request is
+    /// </summary>
+    [Fact]
+    public void AResponseWritingAPropertyTwiceIsRefusedBeforeSending()
+    {
+        // Arranging a body whose inner body repeats the property "a" through its extension data
+        ExtensionBody inner = new ExtensionBody(1);
+        inner.Extra["a"] = JsonSerializer.SerializeToElement(2);
+
+        // Acting
+        ArgumentException refusal = Should.Throw<ArgumentException>(() => MessageSerializer.WriteResponse(new NestedBody(inner)));
+
+        // Check
+        refusal.ParamName.ShouldBe("body");
+    }
+
+    /// <summary>
+    /// A response written as invalid UTF-8 by the converter of its body is refused before anything is sent
+    /// </summary>
+    [Fact]
+    public void AResponseOfInvalidUtf8IsRefusedBeforeSending()
+    {
+        // Acting
+        ArgumentException refusal = Should.Throw<ArgumentException>(() => MessageSerializer.WriteResponse(new InvalidUtf8Body("hi")));
 
         // Check
         refusal.ParamName.ShouldBe("body");
@@ -364,6 +409,10 @@ public sealed class MessageSerializerComplexityTests
     [Fact]
     public void TheWriterAcceptsTheDepthsTheReaderAccepts()
     {
+        // The comparison proves something only if both answers are met: a shallow body is written, a body far too deep is not
+        Accepts(() => MessageSerializer.WriteRequest(Operation, DeepBody.Chain(1))).ShouldBeTrue();
+        Accepts(() => MessageSerializer.WriteRequest(Operation, DeepBody.Chain(MessageSerializer.MaxDepth + 4))).ShouldBeFalse();
+
         for (int depth = 1; depth <= MessageSerializer.MaxDepth + 4; depth++)
         {
             // Arranging the same request as JSON built by hand, and asking the reader
