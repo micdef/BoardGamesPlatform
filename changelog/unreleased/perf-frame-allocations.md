@@ -16,7 +16,9 @@
   its size: no allocation per byte of payload (64 KiB less per frame of 64 KiB). The bytes of the frame are erased before the buffer goes
   back to the pool, since a payload may hold a secret.
 - Socket protocol, messages: a request whose body is an object with properties is written in one pass, instead of its body first, then
-  the envelope: 1 byte allocated per byte of request instead of 2. The body of a request read is checked as UTF-8 on its raw bytes,
+  the envelope: 1 byte allocated per byte of request instead of 2. A body with extension data keeps the checked path, since an
+  extension key may repeat a property; a body that the reader would refuse is now always an `ArgumentException` for the caller, never a
+  `JsonException`. The body of a request read is checked as UTF-8 on its raw bytes,
   instead of a copy as text of 2 bytes per byte: 1 byte allocated per byte of request instead of 3. The bytes on the wire do not change.
 
 ### Fixed

@@ -30,6 +30,13 @@ proves it. A path run per byte, per frame, per record or per request is a **hot 
 | Record written (`SecureRecordStream.WriteAsync`) | O(n), one write of the stream below per 16 KiB, 18 bytes added per record | O(1) per record: the record and its nonce are sealed into buffers of the stream (16 KiB per connection, once), under its write lock | `SecureRecordStreamComplexityTests.AWrittenRecordAllocatesTheSameWhateverItsLength`, `AWriteIsCutIntoTheFewestRecordsAsync` |
 | Record read (`SecureRecordStream.ReadAsync`) | O(n) per record of n bytes: once given, only the n bytes of the record are erased, never the whole buffer, so that a peer sending records of 1 byte cannot make each one cost the erasure of 16 KiB | O(1) per record: the length, the nonce and the plaintext live in buffers of the stream (already so before 0.6.1: the test keeps it so) | `AReadRecordAllocatesTheSameWhateverItsLength`; the erasure: `AGivenRecordLeavesNoPlaintextInTheStreamAsync`, `ARefusedRecordLeavesNoPlaintextInTheStreamAsync` (its time is seen only with a clock, so it is checked by what it leaves: nothing) |
 
+The erasure of a frame written covers the copy of the codec only: the payload of the caller, and the buffers of the JSON writer, stay in
+memory until the next collection. A secret sent in a message (passwords, from 0.8.0) needs its own erasure where it is held.
+
+The shared pool keeps the buffers it lends, rounded up to a power of two: a link of 64 KiB frames keeps buffers of 128 KiB, which is
+negligible; a link set to frames of 16 MiB (`FrameCodec.HighestMaxPayloadLength`) would keep buffers of 32 MiB for the life of the
+process.
+
 ## Bounded by the limits of the links
 
 These collections grow with the load, but never beyond a limit of the link: their operations are linear in a constant.

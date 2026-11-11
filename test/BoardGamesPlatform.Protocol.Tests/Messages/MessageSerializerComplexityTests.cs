@@ -7,6 +7,7 @@
 
 // Using
 using System.Text;
+using System.Text.Json;
 using BoardGamesPlatform.Protocol.Messages;
 using BoardGamesPlatform.TestKit;
 
@@ -262,6 +263,43 @@ public sealed class MessageSerializerComplexityTests
 
         // Check
         onePass.ShouldBe(throughElement);
+    }
+
+    /// <summary>
+    /// A body with extension data is still checked before anything is sent: an extension key that repeats the name of a property would write
+    /// it twice, which the reader of the peer refuses and which would close the connection
+    /// </summary>
+    [Fact]
+    public void ABodyWritingAPropertyTwiceIsRefusedBeforeSending()
+    {
+        // Arranging a body whose extension data repeats the property "a"
+        ExtensionBody body = new ExtensionBody(1);
+        body.Extra["a"] = JsonSerializer.SerializeToElement(2);
+
+        // Acting
+        ArgumentException refusal = Should.Throw<ArgumentException>(() => MessageSerializer.WriteRequest(Operation, body));
+
+        // Check
+        refusal.ParamName.ShouldBe("body");
+    }
+
+    /// <summary>
+    /// A body with extension data that repeats no property is written, and read back by the reader of the peer
+    /// </summary>
+    [Fact]
+    public void ABodyWithDistinctExtensionDataIsWrittenAndRead()
+    {
+        // Arranging a body whose extension data adds the property "b"
+        ExtensionBody body = new ExtensionBody(1);
+        body.Extra["b"] = JsonSerializer.SerializeToElement(2);
+
+        // Acting
+        (string operation, JsonElement read) = MessageSerializer.ReadRequest(MessageSerializer.WriteRequest(Operation, body));
+
+        // Checks
+        operation.ShouldBe(Operation);
+        read.GetProperty("a").GetInt32().ShouldBe(1);
+        read.GetProperty("b").GetInt32().ShouldBe(2);
     }
 
     /// <summary>
