@@ -2,10 +2,11 @@
  *	@file	test/BoardGamesPlatform.Protocol.Tests/Transport/Secure/SecureRecordStreamComplexityTests.cs
  *	@author	Defraene Michaël (AKA Sonic) (co-written by Claude)
  *
- *	@brief	Checks the memory and the work of the records of the secure channel: a fixed cost per record, and one record per 16 KiB
+ *	@brief	Checks the memory, the work and the erasure of the records of the secure channel: a fixed cost, one record per 16 KiB
  */
 
 // Using
+using System.Reflection;
 using System.Security.Cryptography;
 using BoardGamesPlatform.Protocol.Transport.Secure;
 using BoardGamesPlatform.TestKit;
@@ -24,11 +25,12 @@ namespace BoardGamesPlatform.Protocol.Tests.Transport.Secure;
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> every byte between the Back and the Very Back goes through a record: a buffer allocated per record, of the size of
-/// the record, is paid on all their traffic.</para>
+/// the record, is paid on all their traffic. Since the buffers of the records are kept by the stream, their erasure is checked too: once a
+/// record is given, or refused, nothing of its plaintext stays in the stream.</para>
 /// <para><b>Behavior:</b> the records go to and come from streams in memory, so that the stream completes synchronously and its
 /// allocations are measured on the thread of the test (<see cref="AllocationMeter"/>), with a short and a full record: the difference is
-/// the cost of each byte of record (the slope), the short one bounds the fixed cost of a record. The work is counted in records, from the
-/// bytes written, never measured in time.</para>
+/// the cost of each byte of record (the slope), the short one bounds the fixed cost of a record. The work is counted in writes of the stream
+/// below, never measured in time. The buffer of the plaintext, which the stream never shows, is read by reflection.</para>
 /// </remarks>
 public sealed class SecureRecordStreamComplexityTests
 {
@@ -42,7 +44,7 @@ public sealed class SecureRecordStreamComplexityTests
     private const int ShortRecord = 16;
 
     /// <summary>
-    /// Bytes a record may allocate whatever its length: the tasks of the call and their state
+    /// Bytes a record may allocate whatever its length: the task of the call, and the objects that hold its progress
     /// </summary>
     private const long FixedCostLimit = 1024;
 
@@ -50,6 +52,11 @@ public sealed class SecureRecordStreamComplexityTests
     /// Bytes the two records may differ by: the alignment of the arrays
     /// </summary>
     private const long SlopeTolerance = 64;
+
+    /// <summary>
+    /// Name of the buffer of the plaintext of the stream, whose erasure is checked
+    /// </summary>
+    private const string PlaintextField = "_plaintext";
 
     #endregion
 
@@ -125,6 +132,22 @@ public sealed class SecureRecordStreamComplexityTests
     }
 
     /// <summary>
+    /// Method used to read the buffer of the plaintext of a stream, which the stream never shows: the erasure of the records is checked on it
+    /// </summary>
+    /// <param name="stream">[Cannot be null] Stream read</param>
+    /// <returns>
+    /// The buffer of the plaintext of the stream
+    /// </returns>
+    /// <exception cref="InvalidOperationException">If the buffer is no longer found under its name: the test must follow the stream</exception>
+    private static byte[] PlaintextBuffer(SecureRecordStream stream)
+    {
+        // Function's return
+        FieldInfo field = typeof(SecureRecordStream).GetField(PlaintextField, BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException($"SecureRecordStream no longer has a field {PlaintextField}: update this test, which checks its erasure");
+        return field.GetValue(stream) as byte[] ?? throw new InvalidOperationException($"The field {PlaintextField} of SecureRecordStream is not a byte array");
+    }
+
+    /// <summary>
     /// Method used to measure the bytes allocated by the write of one record, to a stream that never grows
     /// </summary>
     /// <param name="length">Bytes of the record</param>
@@ -158,12 +181,12 @@ public sealed class SecureRecordStreamComplexityTests
     /// </returns>
     private static long MeasureRead(int length)
     {
-        // Arranging one record per run, written by the client before the measure
+        // Arranging one record per run of both series, written by the client before the measure
         const int Runs = 10;
         MemoryStream written = new MemoryStream();
         using (SecureRecordStream client = new SecureRecordStream(written, CreateSecrets(), isClient: true))
         {
-            for (int record = 0; record < Runs + AllocationMeter.DefaultWarmUps; record++)
+            for (int record = 0; record < (2 * Runs) + AllocationMeter.DefaultWarmUps; record++)
                 client.WriteAsync(new byte[length], TestContext.Current.CancellationToken).AsTask().GetAwaiter().GetResult();
         }
         using SecureRecordStream server = new SecureRecordStream(new MemoryStream(written.ToArray(), writable: false), CreateSecrets(), isClient: false);
@@ -199,7 +222,8 @@ public sealed class SecureRecordStreamComplexityTests
     }
 
     /// <summary>
-    /// A record read allocates the same few bytes whatever its length: it is opened into the buffer of the stream (space O(1) per record)
+    /// A record read allocates the same few bytes whatever its length: it is opened into the buffers of the stream (space O(1) per record).
+    /// The read was already so before the records were kept in the stream: this test keeps it so
     /// </summary>
     [Fact]
     public void AReadRecordAllocatesTheSameWhateverItsLength()
@@ -214,7 +238,8 @@ public sealed class SecureRecordStreamComplexityTests
     }
 
     /// <summary>
-    /// A write is cut into the fewest records: one per 16 KiB, each with its length and its tag only (time O(n), and 18 bytes per 16 KiB)
+    /// A write is cut into the fewest records: one write of the stream below per 16 KiB, each record with its length and its tag only (time
+    /// O(n), and 18 bytes per 16 KiB)
     /// </summary>
     /// <returns>
     /// A task that completes once checked
@@ -225,14 +250,80 @@ public sealed class SecureRecordStreamComplexityTests
         // Arranging a write of 100 KiB: 6 full records and a last one of 4 KiB
         const int WriteLength = 100 * 1024;
         const int Records = (WriteLength + SecureRecordStream.MaxRecordLength - 1) / SecureRecordStream.MaxRecordLength;
-        MemoryStream below = new MemoryStream();
+        CountingMemoryStream below = new CountingMemoryStream();
         await using SecureRecordStream client = new SecureRecordStream(below, CreateSecrets(), isClient: true);
 
         // Acting
         await client.WriteAsync(new byte[WriteLength], TestContext.Current.CancellationToken);
 
-        // Check
+        // Checks: one write per record, and 18 bytes added per record
+        below.Writes.ShouldBe(Records);
         below.Length.ShouldBe(WriteLength + (Records * (SecureRecordStream.HeaderLength + SecureRecordStream.TagLength)));
+    }
+
+    /// <summary>
+    /// Once a record is given, no byte of its plaintext stays in the stream: a full record, then a record of 1 byte sealed and opened in the
+    /// same buffers, are both read back whole, and the buffer of the plaintext is empty after each one
+    /// </summary>
+    /// <returns>
+    /// A task that completes once checked
+    /// </returns>
+    [Fact]
+    public async Task AGivenRecordLeavesNoPlaintextInTheStreamAsync()
+    {
+        // Arranging a full record, then a record of 1 byte, both sealed in the same buffers of the client
+        CancellationToken token = TestContext.Current.CancellationToken;
+        byte[] full = Enumerable.Repeat((byte)0xAB, SecureRecordStream.MaxRecordLength).ToArray();
+        byte[] single = new byte[] { 0xCD };
+        MemoryStream written = new MemoryStream();
+        await using (SecureRecordStream client = new SecureRecordStream(written, CreateSecrets(), isClient: true))
+        {
+            await client.WriteAsync(full, token);
+            await client.WriteAsync(single, token);
+        }
+        await using SecureRecordStream server = new SecureRecordStream(new MemoryStream(written.ToArray(), writable: false), CreateSecrets(), isClient: false);
+        byte[] plaintext = PlaintextBuffer(server);
+
+        // Acting
+        byte[] readFull = new byte[SecureRecordStream.MaxRecordLength];
+        int fullRead = await server.ReadAsync(readFull, token);
+        bool isEmptyAfterFull = plaintext.All(value => value == 0);
+        byte[] readSingle = new byte[1];
+        int singleRead = await server.ReadAsync(readSingle, token);
+        bool isEmptyAfterSingle = plaintext.All(value => value == 0);
+
+        // Checks
+        fullRead.ShouldBe(SecureRecordStream.MaxRecordLength);
+        readFull.ShouldBe(full);
+        singleRead.ShouldBe(1);
+        readSingle.ShouldBe(single);
+        isEmptyAfterFull.ShouldBeTrue();
+        isEmptyAfterSingle.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// A refused record leaves no byte of plaintext in the stream, whatever the cipher wrote before it checked the tag
+    /// </summary>
+    /// <returns>
+    /// A task that completes once checked
+    /// </returns>
+    [Fact]
+    public async Task ARefusedRecordLeavesNoPlaintextInTheStreamAsync()
+    {
+        // Arranging a full record whose ciphertext is changed
+        CancellationToken token = TestContext.Current.CancellationToken;
+        MemoryStream written = new MemoryStream();
+        await using (SecureRecordStream client = new SecureRecordStream(written, CreateSecrets(), isClient: true))
+            await client.WriteAsync(Enumerable.Repeat((byte)0xAB, SecureRecordStream.MaxRecordLength).ToArray(), token);
+        byte[] bytes = written.ToArray();
+        bytes[SecureRecordStream.HeaderLength + 10] ^= 0x01;
+        await using SecureRecordStream server = new SecureRecordStream(new MemoryStream(bytes, writable: false), CreateSecrets(), isClient: false);
+
+        // Acting
+        await Should.ThrowAsync<SecureChannelException>(server.ReadAsync(new byte[SecureRecordStream.MaxRecordLength], token).AsTask());
+
+        // Check
+        PlaintextBuffer(server).All(value => value == 0).ShouldBeTrue();
     }
 
     #endregion
@@ -254,4 +345,25 @@ public sealed class SecureRecordStreamComplexityTests
     #endregion
 
     #endregion
+
+    /// <summary>
+    /// Stream in memory that counts the writes it receives
+    /// </summary>
+    private sealed class CountingMemoryStream : MemoryStream
+    {
+        /// <summary>
+        /// Number of writes received
+        /// </summary>
+        public int Writes { get; private set; }
+
+        /// <inheritdoc/>
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            // Counting, then writing
+            Writes++;
+
+            // Function's return
+            return base.WriteAsync(buffer, cancellationToken);
+        }
+    }
 }

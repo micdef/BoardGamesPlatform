@@ -170,8 +170,8 @@ internal sealed class SecureRecordStream : Stream
     private int _plaintextCount;
 
     /// <summary>
-    /// Length of the last record read, the bytes of <see cref="_plaintext"/> erased once it is given: never the whole buffer for a short
-    /// record, so that a peer that sends tiny records cannot make each one cost the erasure of 16 KiB
+    /// Number of bytes the last record wrote in <see cref="_plaintext"/>: only these are erased once the record is given, never the whole
+    /// buffer, so that a peer that sends tiny records cannot make each one cost the erasure of 16 KiB
     /// </summary>
     private int _plaintextLength;
 
@@ -406,6 +406,8 @@ internal sealed class SecureRecordStream : Stream
         }
         catch (AuthenticationTagMismatchException exception)
         {
+            // Nothing of a refused record stays in the buffer: the cipher clears the plaintext when the tag cannot be validated (documented by
+            // AesGcm.Decrypt; checked by a test of the records)
             throw new SecureChannelException(sequence == 0 ? SecureChannelFailure.KeyConfirmationFailed : SecureChannelFailure.RecordAuthenticationFailed, exception);
         }
         Interlocked.Exchange(ref _receiveSequence, sequence + 1);
