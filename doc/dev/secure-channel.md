@@ -32,7 +32,7 @@ The points the tests use to fix the ephemeral keys, the nonces or a smaller limi
 
 ## Prerequisites
 
-- **.NET 10.0.13 or later**, the latest patch recommended: 10.0.13 fixes CVE-2026-96957, an improper verification of a cryptographic signature in .NET (CVSS 8.8), whose component the public advisory does not name.
+- **.NET 10.0.15 or later**, the latest patch recommended: 10.0.13 fixes CVE-2026-96957, an improper verification of a cryptographic signature in .NET (CVSS 8.8), and 10.0.15 fixes 17 CVEs, among them three denials of service over the network (CVE-2026-109475, CVE-2026-118747, CVE-2026-120796); the public advisories do not name their component, so the JSON reader, the UTF-8 check and AES-GCM of the channel cannot be ruled out. The SDK of `global.json` (10.0.404) brings this runtime.
 - **Linux**: OpenSSL 3, kept up to date by the distribution (`dnf upgrade`; check with `rpm -q openssl-libs`). Fedora backports its fixes without changing the version number, so a minimum version number alone would be misleading.
 - **Windows**: Windows Server 2022 or Windows 11 (TLS 1.3), with the latest cumulative update.
 

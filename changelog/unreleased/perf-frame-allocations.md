@@ -28,3 +28,9 @@
 - Tests: the heartbeat test of a large request written slowly moves the clock only while the client writes. Once the request is
   written, the bytes left in the buffers of Linux (several MiB) are read without moving it: a client that waits for a silent server
   rightly closes after its timeout. The test failed at random on Linux.
+
+### Security
+
+- .NET: the SDK of `global.json` is 10.0.404, which brings the runtime 10.0.15 (17 CVEs fixed, among them three denials of service over
+  the network whose component is not named); the CI uses it. The minimum of `doc/dev/secure-channel.md` and of the README is now
+  10.0.15 instead of 10.0.13.
