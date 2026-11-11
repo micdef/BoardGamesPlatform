@@ -22,3 +22,6 @@
 
 - Tests: the renewal test of the link client waits for the log of the renewal before it disposes the client, which otherwise logged the
   old connection as closed by the disposal, at random.
+- Tests: the heartbeat test of a large request written slowly moves the clock only while the client writes; once the request is written,
+  the bytes left in the buffers of Linux (several MiB) are read without moving it, since a client that waits for a silent server rightly
+  closes after its timeout. It failed at random on Linux.

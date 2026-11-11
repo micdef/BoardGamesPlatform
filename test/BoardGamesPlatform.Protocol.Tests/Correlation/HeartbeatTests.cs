@@ -357,21 +357,30 @@ public sealed class HeartbeatTests
         byte[] payload = new byte[FrameCodec.HighestMaxPayloadLength];
         Task<ReadOnlyMemory<byte>> pending = client.SendAsync(payload, token);
 
-        // Reading the request 1 MiB per ping interval: the whole write takes more than five times the client timeout. The clock moves only
-        // once a whole MiB is read AND the client has written two more pieces since the last move: on Linux, the buffers of the system may
-        // hold several MiB, so a read alone does not prove that the writer ran (under a loaded run, it may not have)
+        // Reading the request 1 MiB per ping interval: the write takes several times the client timeout. The clock moves only while the client
+        // writes, once a whole MiB is read AND the client has written two more pieces since the last move: on Linux, the buffers of the system
+        // may hold several MiB, so a read alone does not prove that the writer ran (under a loaded run, it may not have). Once the client has
+        // written the whole request, the bytes left in the buffers are read without moving the clock: the client then waits for a server that
+        // sends nothing, and would rightly close after its timeout
         byte[] piece = new byte[1024 * 1024];
         int total = FrameCodec.HeaderLength + payload.Length;
         int received = 0;
+        int moves = 0;
         while (received < total)
         {
             long writtenBefore = observed.Written;
             received += await raw.Stream.ReadAtLeastAsync(piece, Math.Min(piece.Length, total - received), throwOnEndOfStream: true, token);
-            await observed.WaitForWrittenAsync(Math.Min(total, writtenBefore + (2 * FrameCodec.WriteChunkLength)), token);
-            clock.Advance(_timings.PingInterval);
+            if (writtenBefore < total)
+            {
+                await observed.WaitForWrittenAsync(Math.Min(total, writtenBefore + (2 * FrameCodec.WriteChunkLength)), token);
+                clock.Advance(_timings.PingInterval);
+                moves++;
+            }
         }
 
-        // Checks: the client is still open, and the answer reaches the request
+        // Checks: the clock moved more than the timeout of the client while it wrote, the client is still open, and the answer reaches the
+        // request
+        (moves * _timings.PingInterval).ShouldBeGreaterThan(_timings.ClientTimeout);
         client.Completion.IsCompleted.ShouldBeFalse();
         await codec.WriteAsync(raw.Stream, new Frame(1, new byte[] { 7 }), token);
         (await pending).ToArray().ShouldBe(new byte[] { 7 });
