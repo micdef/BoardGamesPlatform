@@ -68,7 +68,8 @@ public static partial class MessageSerializer
     /// <para><b>Behavior:</b> the web defaults give the camelCase names, but three of their reading rules are tolerant and are turned off here:
     /// names are matched case-sensitively, a property may appear only once (otherwise two readers could see different values), and a number
     /// must be a JSON number, never a string. Dates must carry their offset (<see cref="StrictDateTimeOffsetConverter"/>). The resolver
-    /// is the default one, set here so that the contract of a type can be read before the first message (<c>GetTypeInfo</c>).</para>
+    /// is the default one, set here so that the contract of a type can be read before the first message (<c>GetTypeInfo</c>); it uses
+    /// reflection, as the default of the serializer did, so a trimmed or native AOT build would need a generated context instead.</para>
     /// </remarks>
     private static readonly JsonSerializerOptions _options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
     {

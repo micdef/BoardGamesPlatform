@@ -51,6 +51,12 @@ public sealed class MessageSerializerComplexityTests
     private const double MaxBytesPerByte = 1.5;
 
     /// <summary>
+    /// Bytes allocated per byte of response read, at most: the text of the body is a .NET string, of 2 bytes per character, which is the
+    /// result itself, and a margin
+    /// </summary>
+    private const double MaxBytesPerByteOfTextRead = 2.5;
+
+    /// <summary>
     /// Operation of the requests
     /// </summary>
     private const string Operation = "test.text";
@@ -126,6 +132,25 @@ public sealed class MessageSerializerComplexityTests
     {
         // Function's return
         return new TextBody(new string('a', length));
+    }
+
+    /// <summary>
+    /// Method used to measure the bytes allocated by a synchronous operation of the serializer
+    /// </summary>
+    /// <param name="operation">[Cannot be null] Operation, whose result is dropped</param>
+    /// <returns>
+    /// The bytes allocated by one run
+    /// </returns>
+    private static long Measure(Func<object> operation)
+    {
+        // Function's return
+        return AllocationMeter.PerRun(() =>
+        {
+            _ = operation();
+
+            // Function's return
+            return ValueTask.CompletedTask;
+        });
     }
 
     /// <summary>
@@ -217,6 +242,63 @@ public sealed class MessageSerializerComplexityTests
 
         // Check
         json.ShouldBe("""{"operation":"test.text","body":{"text":"hi"}}""");
+    }
+
+    /// <summary>
+    /// A request written in one pass holds the same bytes as one written through a JSON element first, whatever its text: accents, an emoji,
+    /// characters the JSON writer escapes
+    /// </summary>
+    [Fact]
+    public void BothWaysOfWritingARequestGiveTheSameBytes()
+    {
+        // Arranging the same body as an object (written in one pass) and as a dictionary (written through a JSON element)
+        const string Text = "Çà et là, <b>\"gras\"</b> + 1,10 € ☃ \U0001F600";
+        TextBody asObject = new TextBody(Text);
+        Dictionary<string, string> asDictionary = new Dictionary<string, string> { ["text"] = Text };
+
+        // Acting
+        byte[] onePass = MessageSerializer.WriteRequest(Operation, asObject);
+        byte[] throughElement = MessageSerializer.WriteRequest(Operation, asDictionary);
+
+        // Check
+        onePass.ShouldBe(throughElement);
+    }
+
+    /// <summary>
+    /// A response is written once: its memory grows by about one byte per byte of response (space O(n))
+    /// </summary>
+    [Fact]
+    public void AResponseIsWrittenInOnePass()
+    {
+        // Arranging
+        TextBody shortBody = Body(ShortText);
+        TextBody longBody = Body(LongText);
+        int growth = MessageSerializer.WriteResponse(longBody).Length - MessageSerializer.WriteResponse(shortBody).Length;
+
+        // Acting
+        long allocated = Measure(() => MessageSerializer.WriteResponse(longBody)) - Measure(() => MessageSerializer.WriteResponse(shortBody));
+
+        // Check
+        ((double)allocated / growth).ShouldBeLessThan(MaxBytesPerByte);
+    }
+
+    /// <summary>
+    /// A response is read into its body without any other copy: its memory grows by the text of the body, a .NET string of 2 bytes per
+    /// character, and no more (space O(n))
+    /// </summary>
+    [Fact]
+    public void AResponseIsReadIntoItsBodyOnly()
+    {
+        // Arranging
+        byte[] shortResponse = MessageSerializer.WriteResponse(Body(ShortText));
+        byte[] longResponse = MessageSerializer.WriteResponse(Body(LongText));
+        int growth = longResponse.Length - shortResponse.Length;
+
+        // Acting
+        long allocated = Measure(() => MessageSerializer.ReadResponse<TextBody>(longResponse)) - Measure(() => MessageSerializer.ReadResponse<TextBody>(shortResponse));
+
+        // Check
+        ((double)allocated / growth).ShouldBeLessThan(MaxBytesPerByteOfTextRead);
     }
 
     #endregion

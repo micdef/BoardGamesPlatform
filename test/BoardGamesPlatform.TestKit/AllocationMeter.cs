@@ -27,7 +27,11 @@ namespace BoardGamesPlatform.TestKit;
 /// <para><b>Behavior:</b> counts the bytes allocated on the current thread (<see cref="GC.GetAllocatedBytesForCurrentThread"/>), which
 /// the other tests running in parallel never change. The operation must complete synchronously, on a stream in memory: an asynchronous
 /// operation that really waits would go on on another thread, out of the measure, so it throws instead of measuring something wrong. The
-/// first runs are left out of the measure, since the first call of a method allocates for the runtime (compilation, caches).</para>
+/// first runs are left out of the measure, since the first call of a method allocates for the runtime (compilation, caches). The runs are
+/// measured in two series, and the smaller one is kept: a collection of the runtime may empty the shared pool of arrays during one series,
+/// which then allocates a buffer again; a real allocation per run shows in both series.</para>
+/// <para><b>Limit:</b> what another thread allocates for the operation is not counted, for example a stream of a test that waits for a task
+/// it started on the thread pool. The streams of the tests are streams in memory, which never do.</para>
 /// </remarks>
 public static class AllocationMeter
 {
@@ -101,6 +105,26 @@ public static class AllocationMeter
     #region Privates
 
     /// <summary>
+    /// Method used to measure the bytes allocated by a series of runs
+    /// </summary>
+    /// <param name="operation">[Cannot be null] Operation to run</param>
+    /// <param name="runs">Runs of the series</param>
+    /// <returns>
+    /// The bytes allocated by the whole series
+    /// </returns>
+    /// <exception cref="InvalidOperationException">If the operation does not complete synchronously</exception>
+    private static long MeasureSeries(Func<ValueTask> operation, int runs)
+    {
+        // Counting the bytes allocated on this thread around the runs
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int run = 0; run < runs; run++)
+            RunSynchronously(operation);
+
+        // Function's return
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    /// <summary>
     /// Method used to run the operation once, refusing one that does not complete synchronously
     /// </summary>
     /// <param name="operation">[Cannot be null] Operation to run</param>
@@ -119,10 +143,10 @@ public static class AllocationMeter
     #region Publics
 
     /// <summary>
-    /// Method used to measure the bytes one run of an operation allocates, on average over several runs
+    /// Method used to measure the bytes one run of an operation allocates, on average over several runs, the smaller of two series
     /// </summary>
     /// <param name="operation">[Cannot be null] Operation to measure; it must complete synchronously, and be the same at each run</param>
-    /// <param name="runs">Runs measured, at least 1</param>
+    /// <param name="runs">Runs measured in each series, at least 1</param>
     /// <param name="warmUps">Runs left out of the measure before it starts</param>
     /// <returns>
     /// The bytes allocated by one run, on average, rounded up
@@ -140,13 +164,10 @@ public static class AllocationMeter
         if (warmUps < 0)
             throw new ArgumentOutOfRangeException(nameof(warmUps), warmUps, $"The value of the parameter: {nameof(warmUps)} cannot be negative");
 
-        // Warming up, then measuring the runs
+        // Warming up, then measuring two series of runs, the smaller one kept
         for (int run = 0; run < warmUps; run++)
             RunSynchronously(operation);
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        for (int run = 0; run < runs; run++)
-            RunSynchronously(operation);
-        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        long allocated = Math.Min(MeasureSeries(operation, runs), MeasureSeries(operation, runs));
 
         // Function's return
         return (allocated + runs - 1) / runs;
