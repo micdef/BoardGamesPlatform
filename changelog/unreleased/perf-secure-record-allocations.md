@@ -3,7 +3,7 @@
 - Complexity tests of the records: a record written and a record read allocate the same few bytes whatever their length, and a write
   is cut into the fewest records (one write of the stream below per 16 KiB, 18 bytes added per record).
 - Tests of the erasure of the records: once a record is given, or refused, no byte of its plaintext stays in the stream; a full record
-  then a record of 1 byte, sealed and opened in the same buffers, are both read back whole.
+  then a record of 1 byte, sealed and opened in the same buffers, are both read back whole. A disposed stream keeps no nonce.
 
 ### Changed
 
@@ -13,3 +13,5 @@
 - Secure channel, records: once a record is given, only its own bytes are erased, instead of the whole buffer of 16 KiB. A peer that
   sends records of 1 byte can no longer make each one cost the erasure of 16 KiB. The disposal still erases the whole buffer, and the
   bytes on the wire do not change.
+- Secure channel, records: the disposal also erases the nonces kept by the stream, which give the IV of their direction back from the
+  sequence number; the ciphers are disposed first, so that no record is sealed with an erased nonce.

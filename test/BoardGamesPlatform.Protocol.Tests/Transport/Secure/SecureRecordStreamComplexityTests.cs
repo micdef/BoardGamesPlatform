@@ -62,7 +62,10 @@ public sealed class SecureRecordStreamComplexityTests
 
     #region Variables
 
-    // #N/A
+    /// <summary>
+    /// Names of the nonces of the stream, the IV of their direction XOR a sequence number, erased by the disposal
+    /// </summary>
+    private static readonly string[] _nonceFields = new string[] { "_sendNonce", "_receiveNonce" };
 
     #endregion
 
@@ -132,7 +135,24 @@ public sealed class SecureRecordStreamComplexityTests
     }
 
     /// <summary>
-    /// Method used to read the buffer of the plaintext of a stream, which the stream never shows: the erasure of the records is checked on it
+    /// Method used to read a buffer of a stream, which the stream never shows: the erasure of the records is checked on it
+    /// </summary>
+    /// <param name="stream">[Cannot be null] Stream read</param>
+    /// <param name="name">[Cannot be null] Name of the field of the buffer</param>
+    /// <returns>
+    /// The buffer of the stream
+    /// </returns>
+    /// <exception cref="InvalidOperationException">If the buffer is no longer found under its name: the test must follow the stream</exception>
+    private static byte[] Buffer(SecureRecordStream stream, string name)
+    {
+        // Function's return
+        FieldInfo field = typeof(SecureRecordStream).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException($"SecureRecordStream no longer has a field {name}: update this test, which checks its erasure");
+        return field.GetValue(stream) as byte[] ?? throw new InvalidOperationException($"The field {name} of SecureRecordStream is not a byte array");
+    }
+
+    /// <summary>
+    /// Method used to read the buffer of the plaintext of a stream
     /// </summary>
     /// <param name="stream">[Cannot be null] Stream read</param>
     /// <returns>
@@ -142,9 +162,7 @@ public sealed class SecureRecordStreamComplexityTests
     private static byte[] PlaintextBuffer(SecureRecordStream stream)
     {
         // Function's return
-        FieldInfo field = typeof(SecureRecordStream).GetField(PlaintextField, BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException($"SecureRecordStream no longer has a field {PlaintextField}: update this test, which checks its erasure");
-        return field.GetValue(stream) as byte[] ?? throw new InvalidOperationException($"The field {PlaintextField} of SecureRecordStream is not a byte array");
+        return Buffer(stream, PlaintextField);
     }
 
     /// <summary>
@@ -324,6 +342,36 @@ public sealed class SecureRecordStreamComplexityTests
 
         // Check
         PlaintextBuffer(server).All(value => value == 0).ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// A disposed stream keeps no nonce: a nonce gives the IV of its direction back from its sequence number, and the IV is erased
+    /// </summary>
+    /// <returns>
+    /// A task that completes once checked
+    /// </returns>
+    [Fact]
+    public async Task ADisposedStreamKeepsNoNonceAsync()
+    {
+        // Arranging a stream that has sealed a record and opened one, so that both nonces hold a value
+        CancellationToken token = TestContext.Current.CancellationToken;
+        MemoryStream written = new MemoryStream();
+        await using (SecureRecordStream client = new SecureRecordStream(written, CreateSecrets(), isClient: true))
+            await client.WriteAsync(new byte[] { 1 }, token);
+        MemoryStream below = new MemoryStream();
+        below.Write(written.ToArray());
+        below.Position = 0;
+        SecureRecordStream stream = new SecureRecordStream(below, CreateSecrets(), isClient: false);
+        _ = await stream.ReadAsync(new byte[1], token);
+        await stream.WriteAsync(new byte[] { 2 }, token);
+        bool wereSet = _nonceFields.All(name => Buffer(stream, name).Any(value => value != 0));
+
+        // Acting
+        await stream.DisposeAsync();
+
+        // Checks
+        wereSet.ShouldBeTrue();
+        _nonceFields.ShouldAllBe(name => Buffer(stream, name).All(value => value == 0));
     }
 
     #endregion

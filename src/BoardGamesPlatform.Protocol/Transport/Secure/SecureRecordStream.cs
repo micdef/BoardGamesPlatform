@@ -693,13 +693,16 @@ internal sealed class SecureRecordStream : Stream
     /// <inheritdoc/>
     protected override void Dispose(bool disposing)
     {
-        // Erasing the keys once; the stream below belongs to the connection
+        // Erasing the keys once, and the nonces, which give the IV back from the sequence; the stream below belongs to the connection. The
+        // ciphers go first, so that no record is sealed with an erased IV or nonce
         if (disposing && Interlocked.Exchange(ref _isDisposed, 1) == 0)
         {
             _sendCipher.Dispose();
             _receiveCipher.Dispose();
             CryptographicOperations.ZeroMemory(_sendIv);
             CryptographicOperations.ZeroMemory(_receiveIv);
+            CryptographicOperations.ZeroMemory(_sendNonce);
+            CryptographicOperations.ZeroMemory(_receiveNonce);
             CryptographicOperations.ZeroMemory(_plaintext);
 
             // The lock of the writes is never disposed: a write may still wait for it or release it, and a semaphore whose wait handle nobody
