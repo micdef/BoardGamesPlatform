@@ -6,9 +6,12 @@
  */
 
 // Using
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using System.Text.RegularExpressions;
+using System.Text.Unicode;
 using BoardGamesPlatform.Protocol.Control;
 using BoardGamesPlatform.Protocol.Errors;
 
@@ -64,10 +67,12 @@ public static partial class MessageSerializer
     /// <remarks>
     /// <para><b>Behavior:</b> the web defaults give the camelCase names, but three of their reading rules are tolerant and are turned off here:
     /// names are matched case-sensitively, a property may appear only once (otherwise two readers could see different values), and a number
-    /// must be a JSON number, never a string. Dates must carry their offset (<see cref="StrictDateTimeOffsetConverter"/>).</para>
+    /// must be a JSON number, never a string. Dates must carry their offset (<see cref="StrictDateTimeOffsetConverter"/>). The resolver
+    /// is the default one, set here so that the contract of a type can be read before the first message (<c>GetTypeInfo</c>).</para>
     /// </remarks>
     private static readonly JsonSerializerOptions _options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
     {
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
         MaxDepth = MaxDepth,
         PropertyNameCaseInsensitive = false,
         AllowDuplicateProperties = false,
@@ -188,7 +193,9 @@ public static partial class MessageSerializer
     /// <remarks>
     /// <para><b>Behavior:</b> the request is checked against the rules of the reader before anything is written: a name that is not a valid
     /// operation name, or a body that is not written as a JSON object, is a bug of the caller, refused here with an
-    /// <see cref="ArgumentException"/>. Sent as it is, it would be a protocol violation that closes the connection of every caller.</para>
+    /// <see cref="ArgumentException"/>. Sent as it is, it would be a protocol violation that closes the connection of every caller. A body
+    /// whose contract writes it as an object is written in one pass; any other one (a custom converter, a value, a list) is written first as
+    /// a JSON element and checked, so that the check never depends on the shape of the type.</para>
     /// </remarks>
     /// <exception cref="ArgumentNullException">If the operation is null, empty or white spaces, or if the body is null</exception>
     /// <exception cref="ArgumentException">If the operation is not a valid name, or the body is not written as a JSON object</exception>
@@ -203,7 +210,11 @@ public static partial class MessageSerializer
         if (!OperationNamePattern().IsMatch(operation))
             throw new ArgumentException($"The value of the parameter: {nameof(operation)} is not a valid operation name (1 to {MaxOperationNameLength} characters among A-Z, a-z, 0-9, '.', '_', '-')", nameof(operation));
 
-        // Transforming data: the body first, which must be a JSON object
+        // Transforming data in one pass when the contract of the body writes it as a JSON object with properties
+        if (_options.GetTypeInfo(typeof(TRequest)).Kind == JsonTypeInfoKind.Object)
+            return JsonSerializer.SerializeToUtf8Bytes(new RequestEnvelope<TRequest>(operation, body), _options);
+
+        // Otherwise the body first, which must be a JSON object
         JsonElement element = JsonSerializer.SerializeToElement(body, _options);
         if (element.ValueKind != JsonValueKind.Object)
             throw new ArgumentException($"The value of the parameter: {nameof(body)} is not written as a JSON object", nameof(body));
@@ -229,17 +240,12 @@ public static partial class MessageSerializer
         if (envelope.Operation is null || !OperationNamePattern().IsMatch(envelope.Operation))
             throw new InvalidDataException($"The operation name of the request envelope is not a valid name (1 to {MaxOperationNameLength} characters among A-Z, a-z, 0-9, '.', '_', '-')");
 
-        // Checking the body: a JSON object, whose text is valid UTF-8 (otherwise reading it later would fail with another exception type)
+        // Checking the body: a JSON object, whose text is valid UTF-8 (otherwise reading it later would fail with another exception type),
+        // checked on its raw bytes, never on a copy of it as text
         if (envelope.Body.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("The body of the request envelope is not a JSON object");
-        try
-        {
-            _ = envelope.Body.GetRawText();
-        }
-        catch (InvalidOperationException)
-        {
+        if (!Utf8.IsValid(JsonMarshal.GetRawUtf8Value(envelope.Body)))
             throw new InvalidDataException("The body of the request envelope is not valid UTF-8");
-        }
 
         // Function's return
         return (envelope.Operation, envelope.Body);
