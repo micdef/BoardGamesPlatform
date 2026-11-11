@@ -8,7 +8,9 @@ proves it. A path run per byte, per frame, per record or per request is a **hot 
 - **Space**: the bytes an operation allocates, measured by `AllocationMeter` (`test/BoardGamesPlatform.TestKit`) on the thread of the
   test (`GC.GetAllocatedBytesForCurrentThread`). The operation runs on a stream in memory, so that it completes synchronously: what it
   allocates stays on that thread, and the tests that run in parallel never change the count. An operation that does not complete
-  synchronously makes the test fail instead of measuring something wrong. The first runs are left out (compilation, caches).
+  synchronously makes the test fail instead of measuring something wrong. The first runs are left out (compilation, caches), and the
+  smaller of two series is kept, since a collection may empty the shared pool of arrays during one of them. `AllocationMeterTests` checks
+  that the meter counts a known allocation and refuses an asynchronous operation: a meter that counted nothing would prove nothing.
 - **Slope and fixed cost**: an operation is measured with a small and a large input. The difference, divided by the difference of the
   sizes, is the cost of each byte (the slope: 0 for O(1), 1 for one copy); the small one bounds the fixed cost. A bound on the slope stays
   true on any machine, where a bound on a total would depend on the version of the runtime.
@@ -22,8 +24,9 @@ proves it. A path run per byte, per frame, per record or per request is a **hot 
 |------|------|-------|------|
 | Frame written (`FrameCodec.WriteAsync`) | O(n), one copy into a buffer of the shared pool, one call to the stream up to 64 KiB | O(1) per frame: the buffer comes from the shared pool and goes back cleared, since a payload may hold a secret | `FrameCodecComplexityTests.AWrittenFrameAllocatesTheSameWhateverItsPayload` |
 | Frame read (`FrameCodec.ReadAsync`) | O(n), each byte read once, whatever the size of the reads | O(n): the payload, given to the caller, and a fixed cost (header, frame, tasks) under 1 KiB | `AReadFrameAllocatesItsPayloadAndAFixedCost`, `AFrameArrivingByteByByteIsReadInOnePassAsync` |
-| Request written (`MessageSerializer.WriteRequest`) | O(n), one pass when the contract of the body is an object | O(n): the request, once | `MessageSerializerComplexityTests.ARequestIsWrittenInOnePass`, `ARequestWrittenInOnePassKeepsItsForm` |
+| Request written (`MessageSerializer.WriteRequest`) | O(n), one pass when the contract of the body is an object | O(n): the request, once | `MessageSerializerComplexityTests.ARequestIsWrittenInOnePass`, `ARequestWrittenInOnePassKeepsItsForm`, `BothWaysOfWritingARequestGiveTheSameBytes` |
 | Request read (`MessageSerializer.ReadRequest`) | O(n), the UTF-8 of the body checked on its raw bytes | O(n): the body, once | `ARequestIsReadWithoutASecondCopyOfItsBody` |
+| Response written and read (`MessageSerializer.WriteResponse`, `ReadResponse`) | O(n), one pass each way | O(n): the response once when written; when read, the body only (a text is a .NET string, 2 bytes per character) | `AResponseIsWrittenInOnePass`, `AResponseIsReadIntoItsBodyOnly` |
 
 ## Bounded by the limits of the links
 

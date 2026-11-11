@@ -8,6 +8,7 @@
 // Using
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Security.Cryptography;
 
 // Static using
 // #N/A
@@ -188,9 +189,9 @@ public sealed class FrameCodec
     /// </summary>
     /// <remarks>
     /// <para><b>Behavior:</b> builds the header and the payload into one buffer taken from the shared pool (never a new one per frame, and
-    /// cleared before it goes back), writes it in a single call and flushes the stream: a small
-    /// frame leaves as one network segment (one TLS record from 0.5.0) instead of two. A payload larger than the maximum is refused before
-    /// anything is written. The payload must not be modified until the returned task completes.</para>
+    /// erased before it goes back), writes it in a single call and flushes the stream: a small frame leaves as one network segment (one TLS
+    /// record from 0.5.0) instead of two. A payload larger than the maximum is refused before anything is written. The payload must not be
+    /// modified until the returned task completes.</para>
     /// <para>The same as <see cref="WriteAsync(Stream, Frame, Action?, CancellationToken)"/>, without telling the progress.</para>
     /// <para>After an exception, see the connection rule of <see cref="FrameCodec"/>: the connection is closed. A canceled write has an
     /// unknown outcome: the frame may have been sent in full, in part or not at all.</para>
@@ -216,11 +217,12 @@ public sealed class FrameCodec
     /// </summary>
     /// <remarks>
     /// <para><b>Behavior:</b> builds the header and the payload into one buffer taken from the shared pool, so that a frame allocates no
-    /// buffer of its size; the buffer is cleared before it goes back, since a payload may hold a secret. A frame up to <see cref="WriteChunkLength"/> bytes, header
-    /// included, is written in a single call, so that a small frame leaves as one network segment (one TLS record from 0.5.0). A larger frame
-    /// is written in pieces of that length, and <paramref name="onProgress"/> is called after each one: the bytes keep leaving, so the peer
-    /// is reading them. The stream is flushed at the end. A payload larger than the maximum is refused before anything is written. The payload
-    /// must not be modified until the returned task completes.</para>
+    /// buffer of its size. The bytes of the frame are erased before the buffer goes back, since a payload may hold a secret; the stream must
+    /// not touch the buffer once its write task ended, as the contract of <see cref="Stream"/> requires. A frame up to
+    /// <see cref="WriteChunkLength"/> bytes, header included, is written in a single call, so that a small frame leaves as one network
+    /// segment (one TLS record from 0.5.0). A larger frame is written in pieces of that length, and <paramref name="onProgress"/> is called
+    /// after each one: the bytes keep leaving, so the peer is reading them. The stream is flushed at the end. A payload larger than the
+    /// maximum is refused before anything is written. The payload must not be modified until the returned task completes.</para>
     /// <para>After an exception, see the connection rule of <see cref="FrameCodec"/>: the connection is closed. A canceled write has an
     /// unknown outcome: the frame may have been sent in full, in part or not at all.</para>
     /// </remarks>
@@ -265,8 +267,10 @@ public sealed class FrameCodec
         }
         finally
         {
-            // Giving the buffer back cleared, whatever the write did: the next one who takes it never reads this payload
-            ArrayPool<byte>.Shared.Return(buffer, clearArray: true);
+            // Erasing the bytes of the frame, whatever the write did, then giving the buffer back: the next one who takes it never reads this
+            // payload. Only the bytes written are erased, never the whole buffer, which the pool may have made up to twice as long
+            CryptographicOperations.ZeroMemory(buffer.AsSpan(0, frameLength));
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 
