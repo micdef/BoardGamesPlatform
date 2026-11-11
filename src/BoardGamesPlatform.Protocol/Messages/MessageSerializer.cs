@@ -6,9 +6,12 @@
  */
 
 // Using
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using System.Text.RegularExpressions;
+using System.Text.Unicode;
 using BoardGamesPlatform.Protocol.Control;
 using BoardGamesPlatform.Protocol.Errors;
 
@@ -64,10 +67,13 @@ public static partial class MessageSerializer
     /// <remarks>
     /// <para><b>Behavior:</b> the web defaults give the camelCase names, but three of their reading rules are tolerant and are turned off here:
     /// names are matched case-sensitively, a property may appear only once (otherwise two readers could see different values), and a number
-    /// must be a JSON number, never a string. Dates must carry their offset (<see cref="StrictDateTimeOffsetConverter"/>).</para>
+    /// must be a JSON number, never a string. Dates must carry their offset (<see cref="StrictDateTimeOffsetConverter"/>). The resolver
+    /// is the default one, set here so that the contract of a type can be read before the first message (<c>GetTypeInfo</c>); it uses
+    /// reflection, as the default of the serializer did, so a trimmed or native AOT build would need a generated context instead.</para>
     /// </remarks>
     private static readonly JsonSerializerOptions _options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
     {
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
         MaxDepth = MaxDepth,
         PropertyNameCaseInsensitive = false,
         AllowDuplicateProperties = false,
@@ -172,6 +178,29 @@ public static partial class MessageSerializer
         return value;
     }
 
+    /// <summary>
+    /// Method used to tell whether a body can be written in one pass: its contract writes it as an object with properties, and none of them
+    /// is extension data, whose keys could repeat the name of a property and write it twice
+    /// </summary>
+    /// <param name="contract">[Cannot be null] Contract of the type of the body</param>
+    /// <returns>
+    /// True when the body is always written as a JSON object that the reader accepts; false when it must be written and checked first
+    /// </returns>
+    private static bool IsWrittenInOnePass(JsonTypeInfo contract)
+    {
+        // An object with properties only, none of them extension data
+        if (contract.Kind != JsonTypeInfoKind.Object)
+            return false;
+        for (int index = 0; index < contract.Properties.Count; index++)
+        {
+            if (contract.Properties[index].IsExtensionData)
+                return false;
+        }
+
+        // Function's return
+        return true;
+    }
+
     #endregion
 
     #region Publics
@@ -188,10 +217,14 @@ public static partial class MessageSerializer
     /// <remarks>
     /// <para><b>Behavior:</b> the request is checked against the rules of the reader before anything is written: a name that is not a valid
     /// operation name, or a body that is not written as a JSON object, is a bug of the caller, refused here with an
-    /// <see cref="ArgumentException"/>. Sent as it is, it would be a protocol violation that closes the connection of every caller.</para>
+    /// <see cref="ArgumentException"/>. Sent as it is, it would be a protocol violation that closes the connection of every caller. A body
+    /// whose contract writes it as an object with properties, none of them extension data, is written in one pass; any other one (a custom
+    /// converter, a value, a list, extension data whose keys could repeat a property) is written first as a JSON element and checked, so that
+    /// the check never depends on the shape of the type.</para>
     /// </remarks>
     /// <exception cref="ArgumentNullException">If the operation is null, empty or white spaces, or if the body is null</exception>
-    /// <exception cref="ArgumentException">If the operation is not a valid name, or the body is not written as a JSON object</exception>
+    /// <exception cref="ArgumentException">If the operation is not a valid name, or the body is not written as a JSON object that the reader
+    /// accepts (a property written twice included)</exception>
     public static byte[] WriteRequest<TRequest>(string operation, TRequest body)
         where TRequest : class
     {
@@ -203,8 +236,20 @@ public static partial class MessageSerializer
         if (!OperationNamePattern().IsMatch(operation))
             throw new ArgumentException($"The value of the parameter: {nameof(operation)} is not a valid operation name (1 to {MaxOperationNameLength} characters among A-Z, a-z, 0-9, '.', '_', '-')", nameof(operation));
 
-        // Transforming data: the body first, which must be a JSON object
-        JsonElement element = JsonSerializer.SerializeToElement(body, _options);
+        // Transforming data in one pass when the contract of the body always writes a JSON object the reader accepts
+        if (IsWrittenInOnePass(_options.GetTypeInfo(typeof(TRequest))))
+            return JsonSerializer.SerializeToUtf8Bytes(new RequestEnvelope<TRequest>(operation, body), _options);
+
+        // Otherwise the body first, which must be a JSON object that the strict options read back (a property written twice is refused there)
+        JsonElement element;
+        try
+        {
+            element = JsonSerializer.SerializeToElement(body, _options);
+        }
+        catch (JsonException exception)
+        {
+            throw new ArgumentException($"The value of the parameter: {nameof(body)} is not written as a JSON object that the reader accepts", nameof(body), exception);
+        }
         if (element.ValueKind != JsonValueKind.Object)
             throw new ArgumentException($"The value of the parameter: {nameof(body)} is not written as a JSON object", nameof(body));
 
@@ -229,17 +274,12 @@ public static partial class MessageSerializer
         if (envelope.Operation is null || !OperationNamePattern().IsMatch(envelope.Operation))
             throw new InvalidDataException($"The operation name of the request envelope is not a valid name (1 to {MaxOperationNameLength} characters among A-Z, a-z, 0-9, '.', '_', '-')");
 
-        // Checking the body: a JSON object, whose text is valid UTF-8 (otherwise reading it later would fail with another exception type)
+        // Checking the body: a JSON object, whose text is valid UTF-8 (otherwise reading it later would fail with another exception type),
+        // checked on its raw bytes, never on a copy of it as text
         if (envelope.Body.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("The body of the request envelope is not a JSON object");
-        try
-        {
-            _ = envelope.Body.GetRawText();
-        }
-        catch (InvalidOperationException)
-        {
+        if (!Utf8.IsValid(JsonMarshal.GetRawUtf8Value(envelope.Body)))
             throw new InvalidDataException("The body of the request envelope is not valid UTF-8");
-        }
 
         // Function's return
         return (envelope.Operation, envelope.Body);
