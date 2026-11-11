@@ -22,7 +22,7 @@ Design mock-ups of the arcade neon interface: they show the intended look, not t
 
 | Tool     | Version                                                   |
 |----------|-----------------------------------------------------------|
-| .NET SDK | 10.0.403 or a later 10.0 feature band (see `global.json`) |
+| .NET SDK | 10.0.404 or later in the 10.0 line (see `global.json`); it brings the runtime 10.0.15 |
 | IDE      | Visual Studio 2026 (`.slnx` solution format)              |
 | Doxygen  | Optional, to generate the API documentation               |
 
@@ -101,7 +101,7 @@ Maquettes de l'interface en style arcade néon : elles montrent l'apparence vis�
 
 | Outil    | Version                                                                       |
 |----------|-------------------------------------------------------------------------------|
-| SDK .NET | 10.0.403 ou une bande de fonctionnalités 10.0 ultérieure (voir `global.json`) |
+| SDK .NET | 10.0.404 ou ultérieur dans la ligne 10.0 (voir `global.json`) ; il apporte le runtime 10.0.15 |
 | IDE      | Visual Studio 2026 (format de solution `.slnx`)                               |
 | Doxygen  | Facultatif, pour générer la documentation de l'API                            |
 
