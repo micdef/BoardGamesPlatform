@@ -28,6 +28,13 @@ proves it. A path run per byte, per frame, per record or per request is a **hot 
 | Request read (`MessageSerializer.ReadRequest`) | O(n), the UTF-8 of the body checked on its raw bytes | O(n): the body, once | `ARequestIsReadWithoutASecondCopyOfItsBody` |
 | Response written and read (`MessageSerializer.WriteResponse`, `ReadResponse`) | O(n), one pass each way | O(n): the response once when written; when read, the body only (a text is a .NET string, 2 bytes per character) | `AResponseIsWrittenInOnePass`, `AResponseIsReadIntoItsBodyOnly` |
 
+The erasure of a frame written covers the copy of the codec only: the payload of the caller, and the buffers of the JSON writer, stay in
+memory until the next collection. A secret sent in a message (passwords, from 0.8.0) needs its own erasure where it is held.
+
+The shared pool keeps the buffers it lends, rounded up to a power of two: a link of 64 KiB frames keeps buffers of 128 KiB, which is
+negligible; a link set to frames of 16 MiB (`FrameCodec.HighestMaxPayloadLength`) would keep buffers of 32 MiB for the life of the
+process.
+
 ## Bounded by the limits of the links
 
 These collections grow with the load, but never beyond a limit of the link: their operations are linear in a constant.

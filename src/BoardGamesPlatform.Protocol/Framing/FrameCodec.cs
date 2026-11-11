@@ -217,8 +217,9 @@ public sealed class FrameCodec
     /// </summary>
     /// <remarks>
     /// <para><b>Behavior:</b> builds the header and the payload into one buffer taken from the shared pool, so that a frame allocates no
-    /// buffer of its size. The bytes of the frame are erased before the buffer goes back, since a payload may hold a secret; the stream must
-    /// not touch the buffer once its write task ended, as the contract of <see cref="Stream"/> requires. A frame up to
+    /// buffer of its size. The bytes of the frame are erased before the buffer goes back, since a payload may hold a secret: this erases the
+    /// copy of the codec only, never the payload of the caller. The stream must not touch the buffer once its write task ended, as the
+    /// contract of <see cref="Stream"/> requires. A frame up to
     /// <see cref="WriteChunkLength"/> bytes, header included, is written in a single call, so that a small frame leaves as one network
     /// segment (one TLS record from 0.5.0). A larger frame is written in pieces of that length, and <paramref name="onProgress"/> is called
     /// after each one: the bytes keep leaving, so the peer is reading them. The stream is flushed at the end. A payload larger than the
