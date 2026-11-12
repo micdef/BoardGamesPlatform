@@ -53,6 +53,12 @@ public sealed class HeartbeatTests
     /// </summary>
     private static readonly HeartbeatSettings _timings = HeartbeatSettings.Default;
 
+    /// <summary>
+    /// Longest real time a large frame test gives the writer after each read: short enough that 17 reads stay well within the timeout of the
+    /// test, long enough for a loaded machine (40 busy loops on 32 cores: no failure in 40 runs)
+    /// </summary>
+    private static readonly TimeSpan _writerGrace = TimeSpan.FromMilliseconds(250);
+
     #endregion
 
     #region Delegates
@@ -357,26 +363,40 @@ public sealed class HeartbeatTests
         byte[] payload = new byte[FrameCodec.HighestMaxPayloadLength];
         Task<ReadOnlyMemory<byte>> pending = client.SendAsync(payload, token);
 
-        // Reading the request 1 MiB per ping interval: the write takes several times the client timeout. The clock moves only while the client
-        // writes, once a whole MiB is read AND the client has written two more pieces since the last move: on Linux, the buffers of the system
-        // may hold several MiB, so a read alone does not prove that the writer ran (under a loaded run, it may not have). Once the client has
-        // written the whole request, the bytes left in the buffers are read without moving the clock: the client then waits for a server that
-        // sends nothing, and would rightly close after its timeout
+        // Reading the request 1 MiB at a time: the write takes several times the client timeout. The clock moves by a ping interval only while
+        // the client writes, after a read once the client has written two more pieces since the last move: on Linux, the buffers of the system
+        // may hold several MiB, so a read alone does not prove that the writer ran (under a loaded run, it may not have). After each read, the
+        // writer is given a short time to write, never more: the system wakes a blocked writer only once enough of its buffer is free, so a
+        // test that waited for a write without a limit could wait for a writer that waits for the next read, and a test that did not wait at
+        // all could see too few writes under load and move the clock too few times. Once the client has written the whole request, the bytes
+        // left in the buffers are read without moving the clock: the client then waits for a server that sends nothing, and would rightly
+        // close after its timeout
         byte[] piece = new byte[1024 * 1024];
         int total = FrameCodec.HeaderLength + payload.Length;
         int received = 0;
         int moves = 0;
+        long target = Math.Min(total, observed.Written + (2 * FrameCodec.WriteChunkLength));
+        Task progressed = observed.WaitForWrittenAsync(target, token);
+        bool isWritten = false;
         while (received < total)
         {
-            long writtenBefore = observed.Written;
             received += await raw.Stream.ReadAtLeastAsync(piece, Math.Min(piece.Length, total - received), throwOnEndOfStream: true, token);
-            if (writtenBefore < total)
+            if (!isWritten)
+                await Task.WhenAny(progressed, Task.Delay(_writerGrace, token));
+            if (!isWritten && progressed.IsCompleted)
             {
-                await observed.WaitForWrittenAsync(Math.Min(total, writtenBefore + (2 * FrameCodec.WriteChunkLength)), token);
+                await progressed;
                 clock.Advance(_timings.PingInterval);
                 moves++;
+                isWritten = target == total;
+                if (!isWritten)
+                {
+                    target = Math.Min(total, observed.Written + (2 * FrameCodec.WriteChunkLength));
+                    progressed = observed.WaitForWrittenAsync(target, token);
+                }
             }
         }
+        await progressed;
 
         // Checks: the clock moved more than the timeout of the client while it wrote, the client is still open, and the answer reaches the
         // request
@@ -588,14 +608,34 @@ public sealed class HeartbeatTests
             }
         }, token);
 
-        // Sending a short request at every interval, each one read by the server before the clock moves, then given up by its caller
+        // Sending a short request at every interval, each one read by the server before the clock moves, then given up by its caller. The
+        // client closes on a task of its own once the clock passes its timeout: a request sent while it closes may never be written, so the read
+        // is waited for together with the close, never alone
         int intervals = (int)(_timings.ClientTimeout / _timings.PingInterval) + 3;
         for (int interval = 0; interval < intervals && !client.Completion.IsCompleted; interval++)
         {
             using CancellationTokenSource caller = new CancellationTokenSource();
+            using CancellationTokenSource readWait = CancellationTokenSource.CreateLinkedTokenSource(token);
             Task<ReadOnlyMemory<byte>> pending = client.SendAsync(new byte[] { 7 }, caller.Token);
-            await requestRead.WaitAsync(token);
-            clock.Advance(_timings.PingInterval);
+            Task read = requestRead.WaitAsync(readWait.Token);
+            bool isRead = await Task.WhenAny(read, client.Completion) == read;
+            if (isRead)
+            {
+                clock.Advance(_timings.PingInterval);
+            }
+            else
+            {
+                // The client closed before the request was read: no longer waiting for it (the read may still have ended at the same time)
+                await readWait.CancelAsync();
+                try
+                {
+                    await read;
+                }
+                catch (OperationCanceledException)
+                {
+                    // The wait given up, as asked
+                }
+            }
             await caller.CancelAsync();
             await Should.ThrowAsync<Exception>(() => pending);
         }

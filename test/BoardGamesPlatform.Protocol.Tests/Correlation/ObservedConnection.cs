@@ -214,7 +214,7 @@ internal sealed class ObservedConnection : ITransportConnection
         private long _written;
 
         /// <summary>
-        /// Released at each read, so that a waiter checks the count again; never disposed, since a read may still end after the connection is
+        /// Released at each read and each write, so that a waiter checks the counts again; never disposed, since a read may still end after the connection is
         /// closed, and a semaphore whose wait handle is never asked for holds no system resource
         /// </summary>
         private readonly SemaphoreSlim _signal = new SemaphoreSlim(0);

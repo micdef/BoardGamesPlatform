@@ -59,9 +59,15 @@ public sealed class LinkRenewalTests
     private readonly TaskCompletionSource _gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>
-    /// Whether the next ping waits for the gate
+    /// Completed once the gated ping waits for the gate: the test sends its other pings only then, otherwise one of them could reach the
+    /// peer first, take the gate and wait forever
     /// </summary>
-    private volatile bool _isGated;
+    private readonly TaskCompletionSource _gateEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// 1 when the next ping waits for the gate, else 0; taken by one ping only (Interlocked)
+    /// </summary>
+    private int _isGated;
 
     #endregion
 
@@ -131,9 +137,9 @@ public sealed class LinkRenewalTests
         TcpTransportListener listener = TcpTransportListener.Start(new IPEndPoint(IPAddress.Loopback, TestPorts.Block.Next()));
         OperationDispatcher dispatcher = new OperationDispatcher(NullLogger.Instance).Register<PingRequest, PingResponse>(BackOperations.Ping, async (_, _) =>
         {
-            if (_isGated)
+            if (Interlocked.Exchange(ref _isGated, 0) == 1)
             {
-                _isGated = false;
+                _gateEntered.TrySetResult();
                 await _gate.Task;
             }
 
@@ -204,14 +210,14 @@ public sealed class LinkRenewalTests
             await PingAsync(client);
             connector.Opened[0].IsRenewalDue = true;
             await PingAsync(client);
-            await WaitUntilAsync(() => connector.Opened.Count == 2);
+            await WaitUntilAsync(() => connector.Opened.Length == 2);
             await connector.Opened[0].Disposed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
             // Checks; the renewal is logged once the old connection ended, by a task of its own: waited for before the client is disposed,
             // since a client disposed first logs the old connection as closed by the disposal
-            connector.Opened.Count.ShouldBe(2);
+            connector.Opened.Length.ShouldBe(2);
             await PingAsync(client);
-            connector.Opened.Count.ShouldBe(2);
+            connector.Opened.Length.ShouldBe(2);
             await WaitUntilAsync(() => _logger.Entries.Any(entry => entry.Message.Contains("renewed", StringComparison.Ordinal)));
         }
 
@@ -235,23 +241,32 @@ public sealed class LinkRenewalTests
         RenewableConnector connector = new RenewableConnector();
         await using (LinkClient client = new LinkClient("127.0.0.1", port, TimeSpan.FromSeconds(5), "the peer", connector, _logger))
         {
-            await PingAsync(client);
-            _isGated = true;
-            Task<PingResponse> inFlight = PingAsync(client);
+            try
+            {
+                await PingAsync(client);
+                Volatile.Write(ref _isGated, 1);
+                Task<PingResponse> inFlight = PingAsync(client);
+                await _gateEntered.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
-            // Acting: a renewal while the ping waits, then a second ping, the renewal done in the background
-            connector.Opened[0].IsRenewalDue = true;
-            await PingAsync(client);
-            await WaitUntilAsync(() => connector.Opened.Count == 2);
-            await PingAsync(client);
-            bool closedEarly = connector.Opened[0].Disposed.Task.IsCompleted;
-            _gate.SetResult();
-            PingResponse answered = await inFlight;
+                // Acting: a renewal while the ping waits, then a second ping, the renewal done in the background
+                connector.Opened[0].IsRenewalDue = true;
+                await PingAsync(client);
+                await WaitUntilAsync(() => connector.Opened.Length == 2);
+                await PingAsync(client);
+                bool closedEarly = connector.Opened[0].Disposed.Task.IsCompleted;
+                _gate.SetResult();
+                PingResponse answered = await inFlight;
 
-            // Checks
-            closedEarly.ShouldBeFalse();
-            answered.ServerTime.ShouldBe(DateTimeOffset.UnixEpoch);
-            await connector.Opened[0].Disposed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+                // Checks
+                closedEarly.ShouldBeFalse();
+                answered.ServerTime.ShouldBe(DateTimeOffset.UnixEpoch);
+                await connector.Opened[0].Disposed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            }
+            finally
+            {
+                // Releasing the gated ping even when a check failed, so that the peer can stop
+                _gate.TrySetResult();
+            }
         }
 
         // Stopping the peer
@@ -308,24 +323,35 @@ public sealed class LinkRenewalTests
         int port = StartPeer(stopping.Token, out Task running);
         RenewableConnector connector = new RenewableConnector();
         LinkClient client = new LinkClient("127.0.0.1", port, TimeSpan.FromSeconds(5), "the peer", connector, _logger);
-        await PingAsync(client);
-        _isGated = true;
-        Task<PingResponse> inFlight = PingAsync(client);
-        connector.Opened[0].IsRenewalDue = true;
-        await PingAsync(client);
-        await WaitUntilAsync(() => connector.Opened.Count == 2);
-        bool closedBefore = connector.Opened[0].Disposed.Task.IsCompleted;
+        try
+        {
+            await PingAsync(client);
+            Volatile.Write(ref _isGated, 1);
+            Task<PingResponse> inFlight = PingAsync(client);
+            await _gateEntered.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            connector.Opened[0].IsRenewalDue = true;
+            await PingAsync(client);
+            await WaitUntilAsync(() => connector.Opened.Length == 2);
+            bool closedBefore = connector.Opened[0].Disposed.Task.IsCompleted;
 
-        // Acting: disposing while the old connection waits for its request
-        await client.DisposeAsync();
-        bool closedAfter = connector.Opened[0].Disposed.Task.IsCompleted;
-        _gate.SetResult();
+            // Acting: disposing while the old connection waits for its request
+            await client.DisposeAsync();
+            bool closedAfter = connector.Opened[0].Disposed.Task.IsCompleted;
+            _gate.SetResult();
 
-        // Checks
-        closedBefore.ShouldBeFalse();
-        closedAfter.ShouldBeTrue();
-        connector.Opened[1].Disposed.Task.IsCompleted.ShouldBeTrue();
-        await Should.ThrowAsync<Exception>(inFlight);
+            // Checks
+            closedBefore.ShouldBeFalse();
+            closedAfter.ShouldBeTrue();
+            connector.Opened[1].Disposed.Task.IsCompleted.ShouldBeTrue();
+            await Should.ThrowAsync<Exception>(inFlight);
+        }
+        finally
+        {
+            // Releasing the gated ping and disposing the client even when a check failed (a second disposal does nothing), so that the peer
+            // can stop
+            _gate.TrySetResult();
+            await client.DisposeAsync();
+        }
 
         // Stopping the peer
         await stopping.CancelAsync();
@@ -358,9 +384,31 @@ public sealed class LinkRenewalTests
     private sealed class RenewableConnector : ITransportConnector
     {
         /// <summary>
+        /// Guards the connections opened and the attempts: the renewal opens them on a task of its own while the test reads them
+        /// </summary>
+        private readonly Lock _lock = new Lock();
+
+        /// <summary>
         /// Connections opened, in their order
         /// </summary>
-        public List<RenewableConnection> Opened { get; } = new List<RenewableConnection>();
+        private readonly List<RenewableConnection> _opened = new List<RenewableConnection>();
+
+        /// <summary>
+        /// Number of connections asked
+        /// </summary>
+        private int _attempts;
+
+        /// <summary>
+        /// Copy of the connections opened, in their order
+        /// </summary>
+        public RenewableConnection[] Opened
+        {
+            get
+            {
+                lock (_lock)
+                    return _opened.ToArray();
+            }
+        }
 
         /// <summary>
         /// Most connections opened; the next ones fail
@@ -370,17 +418,28 @@ public sealed class LinkRenewalTests
         /// <summary>
         /// Number of connections asked
         /// </summary>
-        public int Attempts { get; private set; }
+        public int Attempts
+        {
+            get
+            {
+                lock (_lock)
+                    return _attempts;
+            }
+        }
 
         /// <inheritdoc/>
         public async Task<ITransportConnection> ConnectAsync(string host, int port, CancellationToken cancellationToken = default)
         {
             // Refusing beyond the maximum, else opening over TCP
-            Attempts++;
-            if (Opened.Count >= MaxConnections)
-                throw new IOException("No more connections in this test");
+            lock (_lock)
+            {
+                _attempts++;
+                if (_opened.Count >= MaxConnections)
+                    throw new IOException("No more connections in this test");
+            }
             RenewableConnection connection = new RenewableConnection(await new TcpTransportConnector().ConnectAsync(host, port, cancellationToken));
-            Opened.Add(connection);
+            lock (_lock)
+                _opened.Add(connection);
 
             // Function's return
             return connection;
