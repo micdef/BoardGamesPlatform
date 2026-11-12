@@ -1,5 +1,5 @@
 /*
- *	@file	test/BoardGamesPlatform.Database.Tests/AuditCollection.cs
+ *	@file	test/BoardGamesPlatform.Database.Tests/AuditSchemaChanges.cs
  *	@author	Defraene Michaël (AKA Sonic) (co-written by Claude)
  *
  *	@brief	Collection of the test classes that change the schema around the audit, so that they never run at the same time
@@ -27,7 +27,7 @@ namespace BoardGamesPlatform.Database.Tests;
 /// <para><b>Behavior:</b> holds no shared state: the collection only orders the classes.</para>
 /// </remarks>
 [CollectionDefinition(Name)]
-public sealed class AuditCollection
+public sealed class AuditSchemaChanges
 {
     #region Members
 
