@@ -30,6 +30,7 @@ namespace BoardGamesPlatform.Database.Tests.Security;
 /// of Views over the audit) and in another schema. Every temporary object is dropped at the end of its test, even when a check fails. Skipped
 /// when no throwaway database is configured (see <see cref="TestDatabase"/>).</para>
 /// </remarks>
+[Collection(AuditCollection.Name)]
 public sealed class ApplicationRoleTests
 {
     #region Members

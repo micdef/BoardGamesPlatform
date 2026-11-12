@@ -31,6 +31,7 @@ namespace BoardGamesPlatform.Database.Tests.Platform;
 /// owner of the database (their history and their audit rows stay, as they would for any setting). Skipped when no throwaway database is
 /// configured (see <see cref="TestDatabase"/>).</para>
 /// </remarks>
+[Collection(AuditCollection.Name)]
 public sealed class SettingsProceduresTests
 {
     #region Members
