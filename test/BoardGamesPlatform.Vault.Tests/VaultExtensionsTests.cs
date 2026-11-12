@@ -383,16 +383,17 @@ public sealed class VaultExtensionsTests : IDisposable
     /// <param name="name">Key given to the tool</param>
     /// <param name="relativeFolder">True to give a relative folder instead of the folder of the test</param>
     /// <param name="unknownAccount">True to give an account that does not exist</param>
+    /// <param name="reason">[Can be null] Text of the refusal expected; null for the account, refused by Windows in the language of the system</param>
     /// <returns>
     /// A task that completes when the check is done
     /// </returns>
     [Theory]
-    [InlineData("..\\evil", false, false)]
-    [InlineData("bad name", false, false)]
-    [InlineData("1abc", false, false)]
-    [InlineData("Tls:CertificatePassword", true, false)]
-    [InlineData("Tls:CertificatePassword", false, true)]
-    public async Task TheToolRefusesABadNameARelativeFolderOrAnUnknownAccountAsync(string name, bool relativeFolder, bool unknownAccount)
+    [InlineData("..\\evil", false, false, "is not the key of a secret")]
+    [InlineData("bad name", false, false, "is not the key of a secret")]
+    [InlineData("1abc", false, false, "is not the key of a secret")]
+    [InlineData("Tls:CertificatePassword", true, false, "must be an absolute path")]
+    [InlineData("Tls:CertificatePassword", false, true, null)]
+    public async Task TheToolRefusesABadNameARelativeFolderOrAnUnknownAccountAsync(string name, bool relativeFolder, bool unknownAccount, string? reason)
     {
         // Skipping on other systems
         if (!OperatingSystem.IsWindows())
@@ -404,8 +405,11 @@ public sealed class VaultExtensionsTests : IDisposable
             relativeFolder ? relative : null,
             unknownAccount ? $"{Environment.MachineName}\\NoSuchAccount{Guid.NewGuid():N}" : null);
 
-        // Checks
+        // Checks: refused for its own reason, never for the missing rights of an administrator (checked after the arguments)
         result.ExitCode.ShouldBe(1);
+        if (reason is not null)
+            result.Output.ShouldContain(reason);
+        result.Output.ShouldNotContain("Run this tool as an administrator");
         result.Output.ShouldNotContain("Kx9");
         Directory.Exists(_folder).ShouldBeFalse();
         Directory.Exists(Path.Combine(Path.GetTempPath(), relative)).ShouldBeFalse();

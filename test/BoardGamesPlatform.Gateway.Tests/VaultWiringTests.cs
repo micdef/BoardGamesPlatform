@@ -30,8 +30,8 @@ namespace BoardGamesPlatform.Gateway.Tests;
 /// <para><b>Purpose:</b> the vault checks only the keys a tier gives it: a secret missing from that list would be accepted from an environment
 /// variable or the command line of a server, without any warning. The list of the tier is checked exactly, and each of its secrets is refused
 /// on the command line of a server.</para>
-/// <para><b>Behavior:</b> builds the host in the Production environment, on the in-memory test server, without vault, and reads the options of the vault only (the other
-/// settings of the tier are not needed for that).</para>
+/// <para><b>Behavior:</b> builds the host in the Production environment, on the in-memory test server, without vault, and reads the options of
+/// the vault only (the other settings of the tier are not needed for that).</para>
 /// </remarks>
 public sealed class VaultWiringTests
 {
@@ -141,19 +141,17 @@ public sealed class VaultWiringTests
     }
 
     /// <summary>
-    /// Each secret of the Gateway on the command line of a server is refused, naming the secret and never its value
+    /// The secret of the Gateway on the command line of a server is refused, naming the secret and never its value
     /// </summary>
-    /// <param name="key">Configuration key of the secret</param>
-    [Theory]
-    [InlineData("Tls:CertificatePassword")]
-    public void ASecretOnTheCommandLineOfAServerIsRefused(string key)
+    [Fact]
+    public void ASecretOnTheCommandLineOfAServerIsRefused()
     {
         // Building the host with the secret on its command line
-        using WebApplication host = BuildServer($"--{key}=Kx9secret");
+        using WebApplication host = BuildServer("--Tls:CertificatePassword=Kx9secret");
 
         // Checks
         OptionsValidationException exception = Should.Throw<OptionsValidationException>(() => host.Services.GetRequiredService<IOptions<VaultOptions>>().Value);
-        exception.Message.ShouldContain(key);
+        exception.Message.ShouldContain("Tls:CertificatePassword");
         exception.Message.ShouldNotContain("Kx9");
     }
 
