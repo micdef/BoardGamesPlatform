@@ -20,7 +20,7 @@
  *	*********************************************************************************
  *	* Type		| Work Column(s)	| Check												*
  *	*********************************************************************************
- *	* Unique	| Code				| One row per code: each result names its row		*
+ *	* Unique	| Code				| One row per code, compared without case: each result names its row	*
  *	* Check		| Code				| Code is not empty or whitespace					*
  *	* Check		| Kind				| Kind is not empty or whitespace					*
  *	*********************************************************************************

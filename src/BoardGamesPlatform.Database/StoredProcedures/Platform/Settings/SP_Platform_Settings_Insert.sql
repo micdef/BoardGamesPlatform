@@ -9,7 +9,7 @@
  *	*************************************************************************************************************************************************************
  *	* Name		| Type								| Size	| Null	| ReadOnly	| Output	| Brief																*
  *	*************************************************************************************************************************************************************
- *	* Rows		| Types.TVP_Platform_Settings_Insert|		| [ ]	| [x]		| [ ]		| Settings to insert (1 000 rows at most)							*
+ *	* Rows		| Types.TVP_Platform_Settings_Insert|		| [ ]	| [x]		| [ ]		| Settings to insert (1000 rows at most)							*
  *	* IdActor	| UNIQUEIDENTIFIER					|		| [ ]	| [ ]		| [ ]		| Actor who asks for the change (see Functions.IsValidActorId)		*
  *	* Result	| NVARCHAR							| MAX	| [ ]	| [ ]		| [x]		| Result of every input row, success or reason, formatted in JSON	*
  *	*************************************************************************************************************************************************************
@@ -20,7 +20,7 @@
  *	* Code	| Trigger								| Brief																										*
  *	*************************************************************************************************************************************************************
  *	* 51000	| Rows holds no row						| At least one row is required: nothing is written															*
- *	* 51000	| Rows holds more than 1 000 rows		| At most 1 000 rows are accepted per call: nothing is written												*
+ *	* 51000	| Rows holds more than 1000 rows		| At most 1000 rows are accepted per call: nothing is written												*
  *	* 51000	| IdActor is NULL, Guid.Empty or unknown| The actor is unknown: nothing is written																	*
  *	*************************************************************************************************************************************************************
  *	- Every other problem is a problem of one row: the row is rejected in the result with its reason, the other rows are written
@@ -132,7 +132,7 @@ BEGIN
 			INSERT INTO @results ([Id], [Code], [Kind], [Value], [Comment], [IsSuccess], [Error])
 			SELECT NULL, r.[Code], r.[Kind], r.[Value], r.[Comment], 0, N'Kind is not Boolean, Integer or Text'
 			FROM @Rows r
-			WHERE r.[Kind] NOT IN (N'Boolean', N'Integer', N'Text')
+			WHERE (r.[Kind] + N'|') COLLATE Latin1_General_BIN2 NOT IN (N'Boolean|', N'Integer|', N'Text|')
 				AND NOT EXISTS (SELECT 1 FROM @results o WHERE o.[Code] = r.[Code]);
 
 			/* Eject values that do not fit their kind */

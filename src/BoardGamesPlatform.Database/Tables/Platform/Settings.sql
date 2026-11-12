@@ -28,7 +28,7 @@
  *	* UK_Platform_Settings_Code	| Unique		| Code				| #N/A			| #N/A																		*
  *	* CK_Platform_Settings_Id	| Check			| Id				| #N/A			| Id is not Guid.Empty														*
  *	* CK_Platform_Settings_Code	| Check			| Code				| #N/A			| Functions.IsValidSettingCode: Area.Name, letters, digits and dots			*
- *	* CK_Platform_Settings_Kind	| Check			| Kind				| #N/A			| Kind is Boolean, Integer or Text											*
+ *	* CK_Platform_Settings_Kind	| Check			| Kind				| #N/A			| Kind is exactly Boolean, Integer or Text (case and trailing spaces count)	*
  *	* CK_Platform_Settings_Value| Check			| Kind, Value		| #N/A			| Functions.IsValidSettingValue: the value fits its kind					*
  *	*************************************************************************************************************************************************************
  *
@@ -64,7 +64,7 @@ CREATE TABLE [Platform].[Settings]
 	CONSTRAINT [UK_Platform_Settings_Code] UNIQUE ([Code]),
 	CONSTRAINT [CK_Platform_Settings_Id] CHECK ([Id] <> '00000000-0000-0000-0000-000000000000'),
 	CONSTRAINT [CK_Platform_Settings_Code] CHECK ([Functions].[IsValidSettingCode]([Code]) = 1),
-	CONSTRAINT [CK_Platform_Settings_Kind] CHECK ([Kind] IN (N'Boolean', N'Integer', N'Text')),
+	CONSTRAINT [CK_Platform_Settings_Kind] CHECK (([Kind] + N'|') COLLATE Latin1_General_BIN2 IN (N'Boolean|', N'Integer|', N'Text|')),
 	CONSTRAINT [CK_Platform_Settings_Value] CHECK ([Functions].[IsValidSettingValue]([Kind], [Value]) = 1)
 ) ON [Core]
 WITH (SYSTEM_VERSIONING = ON (HISTORY_TABLE = [History].[Platform_Settings]));
