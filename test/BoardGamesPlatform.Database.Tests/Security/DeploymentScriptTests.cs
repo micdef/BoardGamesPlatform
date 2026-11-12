@@ -30,8 +30,9 @@ namespace BoardGamesPlatform.Database.Tests.Security;
 /// <para><b>Behavior:</b> the guard is always run with -WhatIf, so that a regression of the guard can never drop a real database. The deployment
 /// test deploys a database of its own (DEV_Test_ followed by a GUID) on the server of the throwaway database, twice, then drops the database and
 /// its login in every case; it takes about a minute and a half. It needs Windows (MSBuild, SqlPackage) and is skipped when no throwaway database
-/// is configured (see <see cref="TestDatabase"/>). The password itself is kept nowhere (-SecretTarget None): that it opens a session is checked
-/// by hand (doc/dev/database.md, Tests).</para>
+/// is configured (see <see cref="TestDatabase"/>); without pwsh it is skipped, and a missing tool of the script (MSBuild, SqlPackage, sqlcmd)
+/// fails it on purpose: the gate of the SQL tests needs them. The password itself is kept nowhere (-SecretTarget None): that a second run
+/// gives a new one, and that it opens a session, is checked by hand (doc/dev/database.md, Tests).</para>
 /// </remarks>
 public sealed class DeploymentScriptTests
 {
@@ -48,7 +49,10 @@ public sealed class DeploymentScriptTests
 
     #region Variables
 
-    // #N/A
+    /// <summary>
+    /// Arguments of pwsh before those of the script
+    /// </summary>
+    private static readonly string[] _pwshArguments = new string[] { "-NoProfile", "-NonInteractive", "-File" };
 
     #endregion
 
@@ -107,11 +111,12 @@ public sealed class DeploymentScriptTests
     /// <summary>
     /// Method used to run the script with pwsh
     /// </summary>
+    /// <param name="cancellationToken">Token of the test: a cancelled test kills the script and what it started</param>
     /// <param name="arguments">[Cannot be null] Arguments of the script</param>
     /// <returns>
     /// The exit code and what the script printed (output and errors), or null when pwsh cannot be started
     /// </returns>
-    private static async Task<(int ExitCode, string Output)?> RunScriptAsync(params string[] arguments)
+    private static async Task<(int ExitCode, string Output)?> RunScriptAsync(CancellationToken cancellationToken, params string[] arguments)
     {
         // Setting the call
         string script = Path.Combine(RepositoryPaths.GetRoot(), "tools", "database", "Deploy-TestDatabase.ps1");
@@ -121,7 +126,7 @@ public sealed class DeploymentScriptTests
             RedirectStandardError = true,
             UseShellExecute = false,
         };
-        foreach (string argument in new string[] { "-NoProfile", "-NonInteractive", "-File", script }.Concat(arguments))
+        foreach (string argument in _pwshArguments.Append(script).Concat(arguments))
             start.ArgumentList.Add(argument);
 
         // Running the script
@@ -139,14 +144,15 @@ public sealed class DeploymentScriptTests
         {
             Task<string> output = process!.StandardOutput.ReadToEndAsync();
             Task<string> error = process.StandardError.ReadToEndAsync();
-            using CancellationTokenSource timeout = new CancellationTokenSource(ScriptTimeoutMilliseconds);
+            using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(ScriptTimeoutMilliseconds);
             try
             {
                 await process.WaitForExitAsync(timeout.Token);
             }
             catch (OperationCanceledException)
             {
-                // Never leaving a script running after the test: killing it, and waiting for its streams to end
+                // Never leaving a script running after the test (timeout or cancellation): killing it, and waiting for its streams to end
                 process.Kill(entireProcessTree: true);
                 await Task.WhenAll(output, error);
                 throw;
@@ -202,24 +208,25 @@ public sealed class DeploymentScriptTests
     public async Task TheGuardRefusesAWrongNameBeforeAnyBuildAsync(string name)
     {
         // Running the script with -WhatIf, so that nothing can ever be dropped
-        (int ExitCode, string Output)? result = await RunScriptAsync("-DatabaseName", name, "-WhatIf");
+        (int ExitCode, string Output)? result = await RunScriptAsync(TestContext.Current.CancellationToken, "-DatabaseName", name, "-WhatIf");
         if (result is null)
             Assert.Skip("pwsh is not installed");
 
-        // Checks
+        // Checks: refused, before the script reached anything that -WhatIf reports (the build, the drop)
         result.Value.ExitCode.ShouldBe(1);
         result.Value.Output.ShouldContain("Refused");
+        result.Value.Output.ShouldNotContain("What if:");
     }
 
     /// <summary>
     /// A deployment from scratch makes the login with the password policy and without expiration, its user member of the application role;
-    /// a second run replaces the password; no run prints a password or a connection string
+    /// a second run drops and recreates the login; no run prints a password or a connection string
     /// </summary>
     /// <returns>
     /// A task that completes when the check is done
     /// </returns>
     [Fact]
-    public async Task ADeploymentFromScratchThenASecondRunReplacesThePasswordAsync()
+    public async Task ADeploymentFromScratchThenASecondRunRecreatesTheLoginAsync()
     {
         // Skipping outside Windows, and without a throwaway database (its server is the server of the deployment)
         if (!OperatingSystem.IsWindows())
@@ -230,11 +237,12 @@ public sealed class DeploymentScriptTests
         try
         {
             // Deploying twice, the second time without building
-            (int ExitCode, string Output)? first = await RunScriptAsync("-DatabaseName", name, "-ServerInstance", connection.DataSource);
-            first.ShouldNotBeNull("pwsh is not installed");
+            (int ExitCode, string Output)? first = await RunScriptAsync(token, "-DatabaseName", name, "-ServerInstance", connection.DataSource);
+            if (first is null)
+                Assert.Skip("pwsh is not installed");
             first.Value.ExitCode.ShouldBe(0, first.Value.Output);
             (string Hash, string Policy)? afterFirst = await ReadLoginAsync(connection, name, token);
-            (int ExitCode, string Output)? second = await RunScriptAsync("-DatabaseName", name, "-ServerInstance", connection.DataSource, "-SkipBuild");
+            (int ExitCode, string Output)? second = await RunScriptAsync(token, "-DatabaseName", name, "-ServerInstance", connection.DataSource, "-SkipBuild");
             second.ShouldNotBeNull();
             second.Value.ExitCode.ShouldBe(0, second.Value.Output);
             (string Hash, string Policy)? afterSecond = await ReadLoginAsync(connection, name, token);
@@ -249,10 +257,12 @@ public sealed class DeploymentScriptTests
             // Checks
             afterFirst.ShouldNotBeNull().Policy.ShouldBe($"1|0|{name}");
             afterSecond.ShouldNotBeNull().Policy.ShouldBe($"1|0|{name}");
-            afterSecond.Value.Hash.ShouldNotBe(afterFirst.Value.Hash, "The second run must give the login a new password");
+            afterSecond.Value.Hash.ShouldNotBe(afterFirst.Value.Hash, "The second run must drop and recreate the login (a hash is salted: this does not prove a new password)");
             roles.ShouldBe("ApplicationRole");
             (first.Value.Output + second.Value.Output).ShouldNotContain("Password=", Case.Insensitive);
             (first.Value.Output + second.Value.Output).ShouldNotContain("PASSWORD =", Case.Insensitive);
+            (first.Value.Output + second.Value.Output).ShouldNotContain("User ID=", Case.Insensitive);
+            (first.Value.Output + second.Value.Output).ShouldNotContain("Encrypt=", Case.Insensitive);
         }
         finally
         {

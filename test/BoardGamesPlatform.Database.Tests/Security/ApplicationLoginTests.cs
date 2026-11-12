@@ -25,8 +25,10 @@ namespace BoardGamesPlatform.Database.Tests.Security;
 /// the procedures but cannot read the tables; an update of the audit is rejected (doc/dev/database.md, Application principal).</para>
 /// <para><b>Behavior:</b> the login and the user are named after the database, as the script makes them; the tests play the real login with
 /// EXECUTE AS LOGIN (the password is kept nowhere by the script when it deploys a test database). A database deployed without its login fails
-/// these tests: deploy it with the script. Skipped when no throwaway database is configured (see <see cref="TestDatabase"/>).</para>
+/// these tests: deploy it with the script. Runs in the collection <see cref="AuditSchemaChanges"/>, never while a test of the settings opens the
+/// registration switch for a moment. Skipped when no throwaway database is configured (see <see cref="TestDatabase"/>).</para>
 /// </remarks>
+[Collection(AuditSchemaChanges.Name)]
 public sealed class ApplicationLoginTests
 {
     #region Members
