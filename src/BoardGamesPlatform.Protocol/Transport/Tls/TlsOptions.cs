@@ -24,7 +24,7 @@ namespace BoardGamesPlatform.Protocol.Transport.Tls;
 /// <para><b>Purpose:</b> the same section in the Gateway, the Back and the Very Back; checked at startup by <see cref="TlsOptionsValidator"/>, so
 /// that a tier never starts without valid certificates (fail closed).</para>
 /// <para><b>Behavior:</b> a relative path is taken from the folder of the tier (its content root). The password is a secret: empty in the
-/// committed files, given by the user secrets in development and by an environment variable of the service on the servers
+/// committed files, given by the user secrets in development and by the vault of the tier on the servers (0.7.0)
 /// (<c>Tls__CertificatePassword</c>).</para>
 /// </remarks>
 public sealed class TlsOptions

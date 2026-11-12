@@ -6,6 +6,7 @@
  */
 
 // Using
+using System.Buffers;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Options;
 
@@ -26,7 +27,9 @@ namespace BoardGamesPlatform.VeryBack.Settings;
 /// <para><b>Behavior:</b> fails when the main connection string is missing, empty or white spaces, or when the SQL client cannot read it.
 /// The message names the setting and never repeats its value nor the error of the SQL client: for a malformed string, that error quotes the
 /// unknown keyword, which can be a piece of a password holding a semicolon. Whether the server, the database and the login are right is
-/// only known when a connection opens.</para>
+/// only known when a connection opens. Outside the Development environment, the connection must also be encrypted (doc/dev/database.md,
+/// Application principal): <c>Encrypt</c> is <c>Mandatory</c> (the default) or <c>Strict</c>, and the certificate of the server is checked,
+/// unless the server is the local machine, whose SQL Server presents a self-signed certificate (the rule of the deployment script).</para>
 /// </remarks>
 public sealed class ConnectionStringsOptionsValidator : IValidateOptions<ConnectionStringsOptions>
 {
@@ -40,7 +43,20 @@ public sealed class ConnectionStringsOptionsValidator : IValidateOptions<Connect
 
     #region Variables
 
-    // #N/A
+    /// <summary>
+    /// Names of the local machine, whose self-signed certificate may be trusted (with or without the prefix tcp: and a port or an instance)
+    /// </summary>
+    private static readonly string[] _localServers = new string[] { "localhost", ".", "(local)", "127.0.0.1", "[::1]", "::1" };
+
+    /// <summary>
+    /// Characters after which a data source names a port (",1433") or an instance ("\GAMES"), not the machine
+    /// </summary>
+    private static readonly SearchValues<char> _serverSeparators = SearchValues.Create(",\\");
+
+    /// <summary>
+    /// Whether the rules of a developer machine apply (no rule on the encryption)
+    /// </summary>
+    private readonly bool _isDevelopment;
 
     #endregion
 
@@ -82,7 +98,29 @@ public sealed class ConnectionStringsOptionsValidator : IValidateOptions<Connect
 
     #region Constructors
 
-    // #N/A
+    /// <summary>
+    /// Constructor used to check the connection strings with the rules of a server (the encryption required)
+    /// </summary>
+    public ConnectionStringsOptionsValidator()
+    {
+        // Setting
+        _isDevelopment = false;
+    }
+
+    /// <summary>
+    /// Constructor used to check the connection strings with the rules of the environment of the host
+    /// </summary>
+    /// <param name="svcEnvironment">[Cannot be null] Environment of the host</param>
+    /// <exception cref="ArgumentNullException">If the environment is null</exception>
+    public ConnectionStringsOptionsValidator(IHostEnvironment svcEnvironment)
+    {
+        // Check
+        if (svcEnvironment is null)
+            throw new ArgumentNullException(nameof(svcEnvironment), $"The value of the parameter: {nameof(svcEnvironment)} cannot be null");
+
+        // Setting
+        _isDevelopment = svcEnvironment.IsDevelopment();
+    }
 
     #endregion
 
@@ -96,7 +134,27 @@ public sealed class ConnectionStringsOptionsValidator : IValidateOptions<Connect
 
     #region Privates
 
-    // #N/A
+    /// <summary>
+    /// Method used to know whether a data source names the local machine
+    /// </summary>
+    /// <param name="dataSource">[Cannot be null] Data source of the connection string ("tcp:localhost,1433", "sql01\\GAMES"...)</param>
+    /// <returns>
+    /// True  ==> the server is the local machine
+    /// False ==> it is another machine
+    /// </returns>
+    private static bool IsLocalServer(string dataSource)
+    {
+        // Keeping the name of the machine only: without the protocol prefix, the port and the instance
+        string server = dataSource.Trim();
+        if (server.StartsWith("tcp:", StringComparison.OrdinalIgnoreCase))
+            server = server[4..];
+        int end = server.AsSpan().IndexOfAny(_serverSeparators);
+        if (end >= 0)
+            server = server[..end];
+
+        // Function's return
+        return _localServers.Contains(server.Trim(), StringComparer.OrdinalIgnoreCase);
+    }
 
     #endregion
 
@@ -144,12 +202,28 @@ public sealed class ConnectionStringsOptionsValidator : IValidateOptions<Connect
         if (string.IsNullOrWhiteSpace(options.Main))
         {
             return ValidateOptionsResult.Fail($"{ConnectionStringsOptions.SectionName}:{nameof(ConnectionStringsOptions.Main)} is missing: set it with " +
-                "'dotnet user-secrets' in development or the environment variable ConnectionStrings__Main on a server (see doc/adm/configuration.md)");
+                "'dotnet user-secrets' in development or in the vault of the Very Back on a server (see doc/adm/configuration.md)");
         }
         if (!IsWellFormed(options.Main))
         {
             return ValidateOptionsResult.Fail($"{ConnectionStringsOptions.SectionName}:{nameof(ConnectionStringsOptions.Main)} is not a connection string " +
                 "the SQL client can read (unknown keyword, invalid value or unbalanced quote; a value holding a semicolon must be quoted)");
+        }
+
+        // Checking the encryption on a server (the builder reads the string the check above accepted)
+        if (!_isDevelopment)
+        {
+            SqlConnectionStringBuilder builder = new SqlConnectionStringBuilder(options.Main);
+            if (builder.Encrypt == SqlConnectionEncryptOption.Optional)
+            {
+                return ValidateOptionsResult.Fail($"{ConnectionStringsOptions.SectionName}:{nameof(ConnectionStringsOptions.Main)} must encrypt the " +
+                    "connection outside Development: Encrypt=Mandatory (the default) or Encrypt=Strict, never False or Optional");
+            }
+            if (builder.TrustServerCertificate && !IsLocalServer(builder.DataSource))
+            {
+                return ValidateOptionsResult.Fail($"{ConnectionStringsOptions.SectionName}:{nameof(ConnectionStringsOptions.Main)} trusts the certificate " +
+                    "of a remote SQL Server outside Development: remove TrustServerCertificate, and give the server a certificate the machine trusts");
+            }
         }
 
         // Function's return

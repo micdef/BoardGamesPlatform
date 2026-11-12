@@ -10,6 +10,7 @@ using BoardGamesPlatform.Gateway.BackLink;
 using BoardGamesPlatform.Gateway.Hubs;
 using BoardGamesPlatform.Protocol.Transport;
 using BoardGamesPlatform.Protocol.Transport.Tls;
+using BoardGamesPlatform.Vault;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
@@ -112,18 +113,24 @@ public static class GatewayExtensions
     /// <para><b>Behavior:</b> binds "Gateway" to <see cref="GatewayOptions"/>, validated at startup: when <see cref="MapPlatformHub"/> reads the hub path, and again by ValidateOnStart as a safety net (the hub path must start with
     /// a slash); binds "Back" to <see cref="BackClientOptions"/>, validated by ValidateOnStart (fail closed: an invalid setting stops the
     /// startup); adds SignalR with detailed errors off, so that no internal message reaches a front; registers a <see cref="BackClient"/>
-    /// on plain TCP as the client of the Back when none is registered yet (the tests register their own).</para>
+    /// on plain TCP as the client of the Back when none is registered yet (the tests register their own). Adds first the vault of the system,
+    /// which gives the secret of the Gateway (the password of its PFX) and refuses, outside Development, a secret from any other source
+    /// (doc/dev/database.md, The vault).</para>
     /// </remarks>
     /// <param name="builder">[Cannot be null] Builder of the web host</param>
     /// <returns>
     /// The same builder, to chain the calls
     /// </returns>
     /// <exception cref="ArgumentNullException">If the builder is null</exception>
+    /// <exception cref="VaultException">If the vault is configured but cannot be read safely</exception>
     public static WebApplicationBuilder AddPlatformGateway(this WebApplicationBuilder builder)
     {
         // Check
         if (builder is null)
             throw new ArgumentNullException(nameof(builder), $"The value of the parameter: {nameof(builder)} cannot be null");
+
+        // Secrets from the vault of the system
+        builder.AddPlatformVault($"{TlsOptions.SectionName}:{nameof(TlsOptions.CertificatePassword)}");
 
         // Reading the settings, refused at startup when invalid
         builder.Services.AddOptions<GatewayOptions>()

@@ -61,22 +61,22 @@ Keep `platform-ca.pfx` and its password on one machine, off the network when pos
 4. Copy `back.crt` and `platform-ca.crt` (both public) back to the machine of the tier.
 5. **On the machine of the tier**: `install --key back.key --certificate back.crt --authority platform-ca.crt --out back.pfx`, then delete `back.key`: the PFX holds it.
 6. Give the PFX to the account of the service, readable by it alone (see [Protecting the files](#protecting-the-files)): `install` writes it readable by the user who runs it, an administrator, so the service cannot read it yet and would refuse to start.
-7. Point the settings of the tier to the PFX and to `platform-ca.crt`, and set the password as `Tls__CertificatePassword` for the service (see [Protecting the files](#protecting-the-files) and [configuration.md](configuration.md)).
+7. Point the settings of the tier to the PFX and to `platform-ca.crt`, and write the password as the secret `Tls__CertificatePassword` of the vault of the tier (see [Protecting the files](#protecting-the-files) and [configuration.md](configuration.md#acceptance-and-production-the-vault-from-070)).
 
 ## Protecting the files
 
 | What | Windows | Fedora |
 |------|---------|--------|
 | PFX of a tier | Readable by the account of the service only: `icacls back.pfx /inheritance:r /grant:r "NT SERVICE\<service>:R" /grant:r "Administrators:F"` (a folder created under `C:\` gives read rights to every user by inheritance) | Owned by the account of the service, mode `0400`: `chown <account>: back.pfx` then `chmod 0400 back.pfx` |
-| Password of the PFX | The `Environment` value of the service in the registry, writable by the administrators only | An `EnvironmentFile=` of the unit, owned by `root`, mode `0600` (`Tls__CertificatePassword=…`), or `LoadCredential=`; **never** `Environment=` in the unit, whose variables are exposed to unprivileged clients through D-Bus ([systemd.exec](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html)) |
+| Password of the PFX | The secret `Tls__CertificatePassword` of the DPAPI vault of the tier, written by `tools/vault/Set-VaultSecret.ps1` ([configuration.md](configuration.md#windows-dpapi-folder)) | The credential `Tls__CertificatePassword` of the unit, encrypted by `systemd-creds` and named by `LoadCredentialEncrypted=` ([configuration.md](configuration.md#fedora-credentials-of-systemd)); **never** an environment variable: the tier refuses it outside Development |
 | Root key `platform-ca.pfx` and `issued.csv` | The folder of the authority readable by its administrator only (`icacls <folder> /inheritance:r /grant:r "<administrator>:F"`) | Written mode `0600` by the tool; keep the folder `0700` |
 | Signing key `<role>-signing.key` (Back, Very Back) | Readable by the account of the service, writable by the administrators only: `icacls back-signing.key /inheritance:r /grant:r "NT SERVICE\<service>:R" /grant:r "Administrators:F"` | Owned by `root`, group of the service, mode `0640`: the service reads it and never writes it |
 | Public keys of the peer (the file of `Handshake:PeerPublicKeysPath`) | **A trust anchor**: whoever writes it adds a key, taken within a minute. Text in ASCII or UTF-8 (a byte order mark is accepted), never UTF-16: on Windows PowerShell 5, write it with `Set-Content -Encoding ascii`, not `Out-File`. To revoke a key, remove its line, never the file: a missing file keeps the current keys. Readable by the account of the service, writable by the administrators only, as the signing key | Owned by `root`, mode `0644` or `0640` with the group of the service |
-| Password of the signing key | As the password of the PFX (`Handshake__SigningKeyPassword=…`), and never the same password | As the password of the PFX |
+| Password of the signing key | As the password of the PFX (the secret `Handshake__SigningKeyPassword`), and never the same password | As the password of the PFX |
 
 A key file is replaced **atomically**: write the new content to a temporary file in the same folder, created with the rights above (`install -o root -g <group> -m 640 …` on Fedora, then `restorecon` after the move), then move it over the old one (`mv`, or `Move-Item -Force` on Windows), so that a tier never reads a file half written.
 
-The exact commands per host are written with the native installation (0.25.0); the password moves to the vault of the platform in 0.7.0.
+The exact commands per host are written with the native installation (0.25.0); the passwords are in the vault of the tier from 0.7.0.
 
 ## Settings
 
@@ -86,7 +86,7 @@ The same section `Tls` in the Gateway, the Back and the Very Back:
 |-----|---------|---------|
 | `Tls:IdentitySuffix` | `bgp.internal` | Suffix of the deployment in the names of the certificates; lower-case DNS labels. The same in every tier |
 | `Tls:CertificatePath` | empty | PFX of the tier. A relative path is taken from the folder of the tier |
-| `Tls:CertificatePassword` | empty | Password of the PFX. **A secret**: user secrets in development, environment variable `Tls__CertificatePassword` of the service on the servers |
+| `Tls:CertificatePassword` | empty | Password of the PFX. **A secret**: user secrets in development, the secret `Tls__CertificatePassword` of the vault of the tier on the servers |
 | `Tls:TrustedRootsPath` | empty | PEM file of the roots of the platform (`platform-ca.crt`), the only ones trusted; it may hold several roots during a change of root |
 | `Tls:RefusedThumbprints` | none | SHA-256 thumbprints (64 hexadecimal characters) of the certificates refused, whatever their validity |
 | `Tls:ExpiryWarning` | `30.00:00:00` | Delay before the expiry under which a warning is logged; at most 365 days |
@@ -127,7 +127,7 @@ Setting it up, on each of the two machines:
 
 1. Make the signing key of the tier: `signing-key --role back --out <folder>` on the Back, `--role veryback` on the Very Back; the password comes from `BOARDGAMESPLATFORM_SIGNING_KEY_PASSWORD` or the prompt. The tool shows the key id.
 2. Copy the `.pub` file of each tier to the other: it is public, but it decides who is trusted, so copy it by a channel you trust and compare the key id shown by the tool with the one logged by the peer (event 9057).
-3. Set the `Handshake` section of each tier: `SigningKeyPath` (its `.key`), `PeerPublicKeysPath` (the file of the public keys of the other), and the password in `Handshake__SigningKeyPassword`.
+3. Set the `Handshake` section of each tier: `SigningKeyPath` (its `.key`), `PeerPublicKeysPath` (the file of the public keys of the other), and the password as the secret `Handshake__SigningKeyPassword` of the vault of the tier ([configuration.md](configuration.md#acceptance-and-production-the-vault-from-070)).
 
 Rotation of the key of a tier, without a cut of the link:
 

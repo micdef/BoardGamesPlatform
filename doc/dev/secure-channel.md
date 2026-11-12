@@ -148,7 +148,7 @@ Each end has **one signing key** of its own and a **list of the public keys of i
 | Setting | Meaning |
 |---------|---------|
 | `Handshake:SigningKeyPath` | The PEM file of the signing key |
-| `Handshake:SigningKeyPassword` | Its password, a secret: `Handshake__SigningKeyPassword` in the environment of the service, distinct from the password of the PFX, until the vault (0.7.0) |
+| `Handshake:SigningKeyPassword` | Its password, a secret: `Handshake__SigningKeyPassword` in the vault of the tier from 0.7.0 (an environment variable of the service in 0.6.0), distinct from the password of the PFX |
 | `Handshake:PeerPublicKeysPath` | The file of the public keys of the peer |
 
 A relative path is taken from the folder of the tier, as for the `Tls` settings.
@@ -263,7 +263,7 @@ The events take the range 9051-9069 of `Protocol.Transport.Secure`:
 
 ### Out of scope, residual risks
 
-- **A compromised machine of a tier**: its signing key and the password of it sit on the same machine, until the vault of 0.7.0. The channel protects against a stolen PFX or a compromised authority, not against an attacker who controls the tier.
+- **A compromised machine of a tier**: its signing key and the password of it sit on the same machine; from 0.7.0 the password is encrypted at rest by the vault of the machine, but a tier that runs can read it. The channel protects against a stolen PFX or a compromised authority, not against an attacker who controls the tier.
 - **A stolen signing key**: the thief can pass for the tier until its key is removed from the file of the peer, which then also closes its connections within a minute (at once with a restart). Past sessions stay protected (forward secrecy: the ephemeral keys are erased; whether OpenSSL clears their memory at disposal is not verified).
 - **No binding to the TLS session itself**: no exporter of keying material was found for `SslStream` in .NET 10 (not proven absent), so the channel binds to the certificates of the session, not to its keys. Its keys are its own, and the binding to the certificates detects a party in the middle that ends TLS; a binding to the session can come when .NET offers an exporter.
 - **Denial of service** before TLS: the role of the firewall and of the limits of 0.5.0.

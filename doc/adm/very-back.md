@@ -18,7 +18,7 @@ The Very Back **refuses to start**, before it listens, and says which setting is
 
 Whether the server, the database and the login are right is only known when the first request reaches the database.
 
-As environment variables: `VeryBack__ListenAddress`, `VeryBack__Port`, `ConnectionStrings__Main`.
+As environment variables: `VeryBack__ListenAddress`, `VeryBack__Port`. The connection string is a secret of the vault of the Very Back (`ConnectionStrings__Main`, see [configuration.md](configuration.md#acceptance-and-production-the-vault-from-070)): outside Development, the Very Back refuses it from an environment variable, and refuses a connection that is not encrypted (`Encrypt=False` or `Optional`) or that trusts the certificate of a remote server (`TrustServerCertificate=True`).
 
 The certificate of the Very Back (role `veryback`: server for the Back) is set in the `Tls` section, described in [certificates.md](certificates.md); without a valid one, the Very Back does not start.
 
