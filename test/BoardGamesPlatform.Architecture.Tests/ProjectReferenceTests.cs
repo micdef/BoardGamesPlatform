@@ -52,6 +52,7 @@ public sealed class ProjectReferenceTests
         { "Codes", Array.Empty<string>() },
         { "Protocol", Array.Empty<string>() },
         { "Observability", Array.Empty<string>() },
+        { "Vault", Array.Empty<string>() },
 
         // Tools: the offline certificate authority knows the identity of the roles, defined by the protocol
         { "CertificateAuthority", new string[] { "Protocol" } },
@@ -66,13 +67,13 @@ public sealed class ProjectReferenceTests
         { "Platform.Domain", new string[] { "Codes" } },
         { "Platform.Application", new string[] { "Platform.Domain", "Games.Abstractions" } },
         { "Platform.Infrastructure", new string[] { "Platform.Application", "VeryBack.Contracts", "Protocol" } },
-        { "Back", new string[] { "Observability", "Platform.Application", "Platform.Infrastructure", "Back.Contracts", "Protocol" } },
+        { "Back", new string[] { "Observability", "Vault", "Platform.Application", "Platform.Infrastructure", "Back.Contracts", "Protocol" } },
 
         // Very Back: the only access to the database
-        { "VeryBack", new string[] { "Observability", "VeryBack.Contracts", "Protocol" } },
+        { "VeryBack", new string[] { "Observability", "Vault", "VeryBack.Contracts", "Protocol" } },
 
         // Gateway: knows the fronts' contract and the Back's contract, no game
-        { "Gateway", new string[] { "Observability", "Gateway.Contracts", "Back.Contracts", "Protocol" } },
+        { "Gateway", new string[] { "Observability", "Vault", "Gateway.Contracts", "Back.Contracts", "Protocol" } },
 
         // Fronts: only the Gateway's contract
         { "Web", new string[] { "Observability", "Gateway.Contracts" } }

@@ -9,6 +9,7 @@
   <!-- Projects -->
   <ItemGroup>
     <ProjectReference Include="..\BoardGamesPlatform.Observability\BoardGamesPlatform.Observability.csproj" />
+    <ProjectReference Include="..\BoardGamesPlatform.Vault\BoardGamesPlatform.Vault.csproj" />
     <ProjectReference Include="..\BoardGamesPlatform.Gateway.Contracts\BoardGamesPlatform.Gateway.Contracts.csproj" />
     <ProjectReference Include="..\BoardGamesPlatform.Back.Contracts\BoardGamesPlatform.Back.Contracts.csproj" />
     <ProjectReference Include="..\BoardGamesPlatform.Protocol\BoardGamesPlatform.Protocol.csproj" />

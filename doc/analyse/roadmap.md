@@ -99,15 +99,15 @@ Other UIs   ┘
 - **Done**: each hot path has a test of its cost per byte and of its fixed cost, which fails on the regression it names (the read of a record had nothing to fix: its test keeps it so); the bytes on the wire do not change.
 - **Tests**: `AllocationMeter`, the complexity tests of the frames, the envelopes and the records, the erasure of the records, the writer of the messages against the rules of the reader.
 - **Branches**, in order: `perf/frame-allocations`, `perf/secure-record-allocations`, then `fix/request-write-check` (found in the review of the changelog).
-- **Prerequisite**: the .NET SDK 10.0.404 and the runtime 10.0.15, which fix 17 CVEs.
+- **Prerequisite**: the .NET SDK 10.0.404 and the runtime 10.0.15 (16 CVEs listed in the release metadata of 10.0.15, one of them already in 10.0.13).
 
 #### 0.7.0 — Database foundation [SEC]
 
-- **Content**: schemas, filegroups, temporal tables, immutable audit, table-valued parameter and JSON-result patterns; `DEV_`, `ACC_` and `TEST_` databases; one application SQL user per database with a random password stored in a vault; the vault also holds the passwords of the PFX of the tiers (`Tls:CertificatePassword`, an environment variable of the service since 0.5.0); the deployment script.
+- **Content**: schemas, filegroups, temporal tables, immutable audit with its purge by dates, table-valued parameter and JSON-result patterns, proved on the settings of the platform (first setting: the registration switch of 0.8.0); `DEV_` and `TEST_` databases deployed by the script (the `ACC_` database comes with the native installation, 0.25.0); one application SQL user per database with a random password stored in a vault; the vault also holds the passwords of the keys of the tiers (`Tls:CertificatePassword` since 0.5.0, `Handshake:SigningKeyPassword` since 0.6.0, environment variables of the services until now); the deployment script. Specified, with its threat model, in `doc/dev/database.md`, written and reviewed before the code, then aligned with what the code and its tests proved.
 - **Deployment script**: it drops and recreates a `DEV_` or `TEST_` database, and refuses to drop any database without one of these prefixes.
 - **Done**: `DEV_` is deployed from scratch by one script; the application user can execute procedures but cannot read tables; an update of the audit is rejected.
 - **Tests**: the SQL test suite becomes the standard: one test class per procedure group, audit immutability, permission matrix, temporal history. A new procedure without a test fails the review.
-- **Branches**: `feature/db-schemas-and-audit`, `feature/tvp-json-pattern`, `chore/db-deploy-script`, `feature/vault-secrets`.
+- **Branches**, in order: `docs/database-foundation`, `feature/db-schemas-and-audit`, `feature/tvp-json-pattern`, `feature/vault-secrets`, `chore/db-deploy-script` (the script hands the password of the application user to the vault, so it comes after it).
 
 ### Block 2 — Platform
 
@@ -322,7 +322,7 @@ Every tier communicates through the network. All ports are configurable; the def
 | Hosting | Every executable, the website and the gateway included, runs on Kestrel as a Windows service or a Linux systemd daemon; no IIS required. The website is exposed to the Internet behind a reverse proxy (Nginx; IIS possible); the gateway stays in the server zone, reached only by the website. Every tier can run on its own machine or container. Docker variant offered for other deployments |
 | Back ↔ Very Back | Raw TCP sockets, TLS 1.3 with mutual authentication, plus an authenticated ECDH handshake |
 | Gateway ↔ Back | Raw TCP sockets, TLS 1.3 with mutual authentication |
-| Certificates of the links (0.5.0, decided by the project lead after a second reading by the architect agent) | A private authority of the platform, as an offline tool that opens no port (`init`, `request`, `sign`, `install`, `list`); its self-signed root is the only trust anchor, never the store of the system. A tier makes its own key and sends a request: its key never leaves its machine. Identity by role (DNS name `<role>.<suffix>` and the usages of its side), no pinning of a leaf certificate, withdrawal by a refused list of thumbprints. PFX files everywhere, their password in an environment variable of the service until the vault (0.7.0). The public wildcard of the author serves the website only. Specified in `doc/adm/certificates.md` |
+| Certificates of the links (0.5.0, decided by the project lead after a second reading by the architect agent) | A private authority of the platform, as an offline tool that opens no port (`init`, `request`, `sign`, `install`, `list`); its self-signed root is the only trust anchor, never the store of the system. A tier makes its own key and sends a request: its key never leaves its machine. Identity by role (DNS name `<role>.<suffix>` and the usages of its side), no pinning of a leaf certificate, withdrawal by a refused list of thumbprints. PFX files everywhere, their password in an environment variable of the service until the vault (moved to the vault in 0.7.0). The public wildcard of the author serves the website only. Specified in `doc/adm/certificates.md` |
 | Largest frame per link (0.5.0, decided by the project lead) | 64 KiB on Gateway → Back and Back → Very Back, part of the contract of the link: the memory a peer can make a server hold is connections × 64 requests in flight × 64 KiB (4 MiB per connection, against 64 MiB at the default 1 MiB; with 8 connections served at most, 32 MiB against 512 MiB), with two orders of magnitude of margin over the operations of 0.5.0. A ceiling, not a measure: checked again against the game states of 0.13.0; lists are paged from 0.11.0 |
 | Signing keys of the handshake (0.6.0, decided by the project lead) | The public ECDSA keys are pinned by each end, in a file named by its settings, as a list for rotation; the key files are taken again cold and hot (before each new connection and every minute, so that a removed key closes its connections within a minute); no second authority, since the link has one key per end. Unlike the TLS certificates (no leaf is pinned, so that a renewal changes nothing on the peer), these keys are the identity of each end itself: there is no certificate to renew, and a key is rotated through the list. Distinct from the TLS certificates, so that a valid certificate alone never passes the handshake |
 | Instances (1.0.0 scope, decided by the project lead after a second reading by the architect agent) | One instance of each tier until 1.0.0; several instances in 1.1. The client of each link calls one host and one port, and several website instances need sticky sessions (see the render mode below): spreading the load is new work, not needed at the expected scale |
@@ -337,6 +337,8 @@ Every tier communicates through the network. All ports are configurable; the def
 | Database | SQL Server only until 1.0.0; the SQL project keeps its original format (DACPAC, opened by Visual Studio 2026) and is never converted to the SDK style; built by a separate CI job with the MSBuild of Visual Studio |
 | SQL access | Plain ADO.NET (`Microsoft.Data.SqlClient`) calling the stored procedures, never Entity Framework (decided in 0.3.0): the database stays the master of its schema and its rules, and the code keeps control of the connections. Each tier that holds a connection string clears its pool when it stops, so that no session stays open on SQL Server after a stop or a redeployment |
 | Development databases | `DEV_` and `ACC_` rebuilt freely until the first beta; no migration scripts before then |
+| Vault of the secrets (0.7.0, decided by the project lead) | Native to the operating system, behind one entry point: DPAPI on Windows, `systemd-creds` on Fedora; read as a configuration source, so that the tiers read their secrets under their usual keys. No vault product or server of secrets. Specified in `doc/dev/database.md` |
+| Audit (0.7.0, decided by the project lead) | An ordinary table protected by `INSTEAD OF` triggers, as in the author's reference project; never a ledger table, in which deleting older data is not supported (Microsoft Learn, Ledger considerations and limitations): the audit is purged in place, by dates, sliding, after its rows have reached a backup (the mechanism is left to the project lead, see Choices left for later). Specified in `doc/dev/database.md` |
 | Match history | Every move recorded; training logs pseudonymized |
 | Spectators | Public view: the match is visible, the fleets never are |
 | Rating | A rating system (Elo or Glicko), per game |
@@ -348,7 +350,12 @@ Every tier communicates through the network. All ports are configurable; the def
 
 | Choice | Decided in |
 |--------|------------|
-| Vault product | 0.7.0 |
+| How the audit rows reach a backup before their purge | 0.7.0, by the project lead |
+| Validation of the choices of 0.7.0 proposed in `doc/dev/database.md` and not yet approved: DPAPI scope `LocalMachine`, its access lists checked at startup (the service reads only); a login of the server with SQL authentication (`CHECK_POLICY` on, no expiration) rather than a contained user; an encrypted connection required outside Development | 0.7.0, by the project lead |
+| A server-level SQL Server Audit, written to a file outside the database, to see what the administrators do | 0.25.0 |
+| `VIEW DEFINITION` of the application on the database, or on the schemas of the platform only (which would hide the principals) | 0.8.0 |
+| Whether the history of a temporal table may hold a column that is a secret or its hash | 0.8.0, with the first such column |
+| GDPR and NIS2 for the audit: the history tables are not purged, and the login of an administrator is personal data | The GDPR work of the project lead |
 | How clients present the session token to the SignalR hub | 0.10.0 |
 | Chat retention and GDPR (hiding versus deleting) | 0.12.0 |
 | Elo or Glicko | 0.19.0 |

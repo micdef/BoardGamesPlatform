@@ -7,6 +7,7 @@
 
 // Using
 using BoardGamesPlatform.VeryBack.Settings;
+using Microsoft.Extensions.Hosting;
 
 // Static using
 // #N/A
@@ -219,6 +220,51 @@ public sealed class OptionsValidationTests
         result.Failed.ShouldBeTrue();
         result.FailureMessage.ShouldContain("ConnectionStrings:Main");
         result.FailureMessage.ShouldNotContain("Kx9secret", Case.Insensitive);
+    }
+
+    /// <summary>
+    /// Outside Development, a connection that is not encrypted, or that trusts the certificate of a remote server, is refused at startup, and the
+    /// message repeats nothing of the string
+    /// </summary>
+    /// <param name="connectionString">Connection string holding the text "Kx9secret" as its password</param>
+    [Theory]
+    [InlineData("Server=sql01;Database=X;User Id=app;Password=Kx9secret;Encrypt=False")]
+    [InlineData("Server=sql01;Database=X;User Id=app;Password=Kx9secret;Encrypt=Optional")]
+    [InlineData("Server=sql01;Database=X;User Id=app;Password=Kx9secret;TrustServerCertificate=True")]
+    [InlineData("Server=tcp:sql01,1433;Database=X;User Id=app;Password=Kx9secret;TrustServerCertificate=True")]
+    [InlineData("Server=localhost;Database=X;User Id=app;Password=Kx9secret;Failover Partner=sql02;TrustServerCertificate=True")]
+    [InlineData("Server=localhost.example.com;Database=X;User Id=app;Password=Kx9secret;TrustServerCertificate=True")]
+    [InlineData("Server=tcp:127.0.0.1.example.com,1433;Database=X;User Id=app;Password=Kx9secret;TrustServerCertificate=True")]
+    public void AnUnprotectedConnectionIsRefusedOnAServer(string connectionString)
+    {
+        // Validating with the rules of a server, then of a developer machine
+        Microsoft.Extensions.Options.ValidateOptionsResult server = new ConnectionStringsOptionsValidator(new TestEnvironment(Environments.Production))
+            .Validate(null, new ConnectionStringsOptions { Main = connectionString });
+        Microsoft.Extensions.Options.ValidateOptionsResult developer = new ConnectionStringsOptionsValidator(new TestEnvironment(Environments.Development))
+            .Validate(null, new ConnectionStringsOptions { Main = connectionString });
+
+        // Checks
+        server.Failed.ShouldBeTrue();
+        server.FailureMessage.ShouldContain("ConnectionStrings:Main");
+        server.FailureMessage.ShouldNotContain("Kx9secret", Case.Insensitive);
+        developer.Succeeded.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// Outside Development, an encrypted connection is accepted, and so is the trust of the self-signed certificate of the local SQL Server
+    /// </summary>
+    /// <param name="connectionString">Connection string</param>
+    [Theory]
+    [InlineData("Server=sql01;Database=X;User Id=app;Password=p")]
+    [InlineData("Server=sql01;Database=X;User Id=app;Password=p;Encrypt=Strict")]
+    [InlineData("Server=localhost;Database=X;Integrated Security=True;TrustServerCertificate=True")]
+    [InlineData("Server=tcp:127.0.0.1,1433;Database=X;Integrated Security=True;TrustServerCertificate=True")]
+    [InlineData("Server=.\\SQLEXPRESS;Database=X;Integrated Security=True;TrustServerCertificate=True")]
+    public void AnEncryptedConnectionIsAcceptedOnAServer(string connectionString)
+    {
+        // Check
+        new ConnectionStringsOptionsValidator(new TestEnvironment(Environments.Production))
+            .Validate(null, new ConnectionStringsOptions { Main = connectionString }).Succeeded.ShouldBeTrue();
     }
 
     #endregion

@@ -114,7 +114,7 @@ public sealed class HandshakeOptionsValidator : IValidateOptions<HandshakeOption
         if (string.IsNullOrWhiteSpace(options.SigningKeyPath))
             failures.Add($"{section}:{nameof(HandshakeOptions.SigningKeyPath)} must give the PEM file of the signing key of the tier");
         if (string.IsNullOrEmpty(options.SigningKeyPassword) || options.SigningKeyPassword.Length < HandshakeOptions.MinPasswordLength)
-            failures.Add($"{section}:{nameof(HandshakeOptions.SigningKeyPassword)} must be set, with {HandshakeOptions.MinPasswordLength} characters at least (user secrets in development, the environment variable Handshake__SigningKeyPassword on a server)");
+            failures.Add($"{section}:{nameof(HandshakeOptions.SigningKeyPassword)} must be set, with {HandshakeOptions.MinPasswordLength} characters at least (user secrets in development, the vault of the tier on a server: see doc/adm/configuration.md)");
         if (string.IsNullOrWhiteSpace(options.PeerPublicKeysPath))
             failures.Add($"{section}:{nameof(HandshakeOptions.PeerPublicKeysPath)} must give the file of the public keys of the peer");
 

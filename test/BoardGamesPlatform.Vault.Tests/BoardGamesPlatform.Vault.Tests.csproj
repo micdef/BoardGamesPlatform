@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Tests of the vault: the names of the secrets, the store of systemd (both systems), the store of DPAPI and the tool that writes it
+       (Windows only, skipped elsewhere), the check of the sources of the secrets, and the extension of the hosts -->
+
+  <!-- Projects: the vault under test, and the TestKit to find the files of the repository -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BoardGamesPlatform.Vault\BoardGamesPlatform.Vault.csproj" />
+    <ProjectReference Include="..\BoardGamesPlatform.TestKit\BoardGamesPlatform.TestKit.csproj" />
+  </ItemGroup>
+
+</Project>

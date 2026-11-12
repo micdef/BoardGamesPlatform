@@ -23,13 +23,13 @@
 
   <!-- Hosting: Back and Very Back worker services -->
   <ItemGroup>
-    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.15" />
   </ItemGroup>
 
   <!-- Observability: system logs of the machine, OpenTelemetry logs, traces and metrics -->
   <ItemGroup>
-    <PackageVersion Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.14" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.EventLog" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.EventLog" Version="10.0.15" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.20.1" />
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.20.1" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.20.1" />
@@ -39,12 +39,19 @@
 
   <!-- Logging: abstractions used by the libraries that log (the hosts choose the providers) -->
   <ItemGroup>
-    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.15" />
   </ItemGroup>
 
   <!-- Options: the validator of the TLS settings, shared by the tiers, lives with the TLS layer of the protocol -->
   <ItemGroup>
-    <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.15" />
+  </ItemGroup>
+
+  <!-- Vault: DPAPI of Windows (not in Microsoft.NETCore.App; the Worker projects need the package), used by BoardGamesPlatform.Vault only.
+       Also pinned on this line for the projects that get version 9.0.18 transitively through Microsoft.Data.SqlClient 7.1.1
+       (System.Configuration.ConfigurationManager) -->
+  <ItemGroup>
+    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.15" />
   </ItemGroup>
 
   <!-- Database: SQL client of the SQL tests (and of the Very Back, the only tier allowed to use it) -->
@@ -55,8 +62,17 @@
   <!-- Pinned transitive dependencies (CentralPackageTransitivePinningEnabled), each with the advisory it fixes -->
   <ItemGroup>
     <!-- Brought by Microsoft.Data.SqlClient 7.1.1 in version 9.0.18, vulnerable to CVE-2026-84008 (GHSA-846f-f764-76mx, high)
-         and CVE-2026-70162 (GHSA-2fmv-rv2c-59x7, medium), both fixed in 10.0.13; aligned on the other 10.0.x packages -->
-    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.14" />
+         and CVE-2026-70162 (GHSA-2fmv-rv2c-59x7, medium), both fixed in 10.0.13; aligned on the other 10.0.x packages (10.0.15: 16 CVEs of .NET
+         listed in its release metadata) -->
+    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.15" />
+    <!-- Brought by Microsoft.Data.SqlClient 7.1.1 (and the TestKit) in version 9.0.18, and by the test framework in 10.0.10: no advisory known on
+         2026-11-12, aligned on the line 10.0.15 so that no part of .NET stays behind (CVE audit of 0.7.0) -->
+    <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.Extensions.Caching.Abstractions" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.Bcl.Cryptography" Version="10.0.15" />
+    <PackageVersion Include="System.Threading.RateLimiting" Version="10.0.15" />
+    <PackageVersion Include="System.Diagnostics.EventLog" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyModel" Version="10.0.15" />
   </ItemGroup>
 
   <!-- Tests: xUnit v3 on Microsoft.Testing.Platform, Test Explorer adapter, assertions, coverage and TRX extensions,
@@ -73,8 +89,8 @@
 
   <!-- SignalR client: used by the website to call the Gateway, and by the Gateway tests to call its hub; Mvc.Testing starts the Gateway in process -->
   <ItemGroup>
-    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.14" />
-    <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.15" />
   </ItemGroup>
 
   <!-- Website tests: bUnit renders the Razor components in memory, without a browser -->
