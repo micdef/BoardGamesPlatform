@@ -120,6 +120,30 @@ internal static class TestDatabase
         return await Guard.OpenAsync(connectionString, cancellationToken);
     }
 
+    /// <summary>
+    /// Method used to open a connection to the throwaway database with changed settings, or to skip the calling test when none is configured
+    /// </summary>
+    /// <param name="configure">[Cannot be null] Changes the settings of the connection (pool, application name...), never the database</param>
+    /// <param name="cancellationToken">Token of the test</param>
+    /// <returns>
+    /// The open connection, owned by the caller, who disposes it
+    /// </returns>
+    /// <exception cref="InvalidOperationException">If the database of the connection string does not start with TEST_ or DEV_</exception>
+    public static async Task<SqlConnection> OpenAsync(Action<SqlConnectionStringBuilder> configure, CancellationToken cancellationToken)
+    {
+        // Skipping the test when no database is configured
+        string? connectionString = Guard.ReadConnectionString();
+        if (connectionString is null)
+            Assert.Skip(Guard.SkipReason);
+
+        // Changing the settings; the guard reads the name of the database from the open connection, so a change of it is refused anyway
+        SqlConnectionStringBuilder builder = new SqlConnectionStringBuilder(connectionString);
+        configure(builder);
+
+        // Function's return
+        return await Guard.OpenAsync(builder.ConnectionString, cancellationToken);
+    }
+
     #endregion
 
     #endregion

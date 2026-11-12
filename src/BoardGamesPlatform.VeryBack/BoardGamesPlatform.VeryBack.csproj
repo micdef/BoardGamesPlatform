@@ -14,6 +14,7 @@
   <!-- Projects -->
   <ItemGroup>
     <ProjectReference Include="..\BoardGamesPlatform.Observability\BoardGamesPlatform.Observability.csproj" />
+    <ProjectReference Include="..\BoardGamesPlatform.Vault\BoardGamesPlatform.Vault.csproj" />
     <ProjectReference Include="..\BoardGamesPlatform.VeryBack.Contracts\BoardGamesPlatform.VeryBack.Contracts.csproj" />
     <ProjectReference Include="..\BoardGamesPlatform.Protocol\BoardGamesPlatform.Protocol.csproj" />
   </ItemGroup>

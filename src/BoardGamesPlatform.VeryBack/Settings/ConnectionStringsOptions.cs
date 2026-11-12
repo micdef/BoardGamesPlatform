@@ -22,8 +22,8 @@ namespace BoardGamesPlatform.VeryBack.Settings;
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> a connection string is a secret: it is read from the configuration, never written in a committed file.</para>
-/// <para><b>Behavior:</b> read from the "ConnectionStrings" section (user secrets in development, the environment variable
-/// <c>ConnectionStrings__Main</c> on the servers). It is empty in appsettings.json to document the key, and <see cref="ConnectionStringsOptionsValidator"/>
+/// <para><b>Behavior:</b> read from the "ConnectionStrings" section (user secrets in development, the secret
+/// <c>ConnectionStrings__Main</c> of the vault of the Very Back on the servers). It is empty in appsettings.json to document the key, and <see cref="ConnectionStringsOptionsValidator"/>
 /// stops the host at startup while it is missing (fail closed). Its value is never logged.</para>
 /// </remarks>
 public sealed class ConnectionStringsOptions

@@ -25,6 +25,8 @@
     <File Path="tools/changelog/Merge-ChangelogFragments.ps1" />
     <File Path="tools/database/Deploy-TestDatabase.ps1" />
     <File Path="tools/database/README.md" />
+    <File Path="tools/vault/README.md" />
+    <File Path="tools/vault/Set-VaultSecret.ps1" />
   </Folder>
   <Folder Name="/doc/">
     <File Path="doc/adm/certificates.md" />
@@ -43,6 +45,7 @@
     <Project Path="src/BoardGamesPlatform.Codes/BoardGamesPlatform.Codes.csproj" />
     <Project Path="src/BoardGamesPlatform.Observability/BoardGamesPlatform.Observability.csproj" />
     <Project Path="src/BoardGamesPlatform.Protocol/BoardGamesPlatform.Protocol.csproj" />
+    <Project Path="src/BoardGamesPlatform.Vault/BoardGamesPlatform.Vault.csproj" />
   </Folder>
   <Folder Name="/0 - Tools/">
     <Project Path="src/BoardGamesPlatform.CertificateAuthority/BoardGamesPlatform.CertificateAuthority.csproj" />
@@ -89,6 +92,7 @@
     <Project Path="test/BoardGamesPlatform.Platform.Infrastructure.Tests/BoardGamesPlatform.Platform.Infrastructure.Tests.csproj" />
     <Project Path="test/BoardGamesPlatform.Protocol.Tests/BoardGamesPlatform.Protocol.Tests.csproj" />
     <Project Path="test/BoardGamesPlatform.TestKit/BoardGamesPlatform.TestKit.csproj" />
+    <Project Path="test/BoardGamesPlatform.Vault.Tests/BoardGamesPlatform.Vault.Tests.csproj" />
     <Project Path="test/BoardGamesPlatform.VeryBack.Tests/BoardGamesPlatform.VeryBack.Tests.csproj" />
     <Project Path="test/BoardGamesPlatform.Web.Tests/BoardGamesPlatform.Web.Tests.csproj" />
   </Folder>

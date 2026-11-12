@@ -116,7 +116,7 @@ public sealed class TlsOptionsValidator : IValidateOptions<TlsOptions>
         if (string.IsNullOrWhiteSpace(options.CertificatePath))
             failures.Add($"{section}:{nameof(TlsOptions.CertificatePath)} must give the PFX of the tier");
         if (string.IsNullOrEmpty(options.CertificatePassword))
-            failures.Add($"{section}:{nameof(TlsOptions.CertificatePassword)} must be set (user secrets in development, the environment variable Tls__CertificatePassword on a server)");
+            failures.Add($"{section}:{nameof(TlsOptions.CertificatePassword)} must be set (user secrets in development, the vault of the tier on a server: see doc/adm/configuration.md)");
         if (string.IsNullOrWhiteSpace(options.TrustedRootsPath))
             failures.Add($"{section}:{nameof(TlsOptions.TrustedRootsPath)} must give the PEM file of the roots of the platform");
         if (options.RefusedThumbprints is null || options.RefusedThumbprints.Any(thumbprint => thumbprint is null || thumbprint.Length != 64 || !thumbprint.All(char.IsAsciiHexDigit)))

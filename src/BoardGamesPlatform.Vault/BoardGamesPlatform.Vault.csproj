@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Vault of the secrets of the tiers, native to the operating system: DPAPI files on Windows, credentials of systemd on Fedora,
+       read as a configuration source (doc/dev/database.md, The vault) -->
+
+  <!-- Packages (versions in Directory.Packages.props) -->
+  <ItemGroup>
+    <!-- Hosting: configuration, options and logging of the hosts that use the vault -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <!-- Cryptography: DPAPI (Windows only, guarded by OperatingSystem.IsWindows) -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" />
+  </ItemGroup>
+
+  <!-- Tests of the internal members -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="BoardGamesPlatform.Vault.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -25,8 +25,8 @@
 	- Why the rule exists : sp_ designates system procedures. If Microsoft creates a system procedure with the same
 	  name later, an UNQUALIFIED call binds to the system procedure instead of ours. The model collation is CI,
 	  so the prefix SP_ is seen as sp_.
-	- Why it is accepted : SP_ is the project naming convention. The procedures live in dedicated schemas (ServerCore)
-	  and every call is schema-qualified ([ServerCore].[SP_...]), in T-SQL and in the Very Back. The conflict only
+	- Why it is accepted : SP_ is the project naming convention. The procedures live in dedicated schemas (ServerCore, Logs, StorProc)
+	  and every call is schema-qualified ([ServerCore].[SP_...], [Logs].[SP_...], [StorProc].[SP_...]), in T-SQL and in the Very Back. The conflict only
 	  happens for calls without schema, so it cannot happen here; the full names (SP_<Schema>_<Subject>_<Action>) also
 	  make a collision with a system procedure name unrealistic.
 	- Condition : every call (T-SQL AND Very Back) stays schema-qualified.
@@ -36,11 +36,37 @@
 	- Why it is accepted : the only path that does not set @Result is the CATCH block, which always ends with THROW.
 	  The procedure never ends normally without @Result : the caller receives the error, not a result.
 	- Condition : the CATCH block always ends with THROW.
+
+	SR0004 - Avoid using columns that do not have an index as test expressions in IN predicates (performance)
+	- Why the rule exists : an IN on a column without an index can scan a large table.
+	- Why it is accepted : the IN of StorProc.SP_Platform_Settings_Insert tests the column Kind of the table-valued parameter, which holds
+	  1 000 rows at most (checked by the procedure) and is read once: there is no table to scan and nothing an index would speed up.
+	- Condition : the IN only tests columns of the table-valued parameter of the call, never a column of a table.
 -->
 <StaticCodeAnalysis version="2" xmlns="urn:Microsoft.Data.Tools.Schema.StaticCodeAnalysis">
 
 	<!-- ServerCore.Server -->
 	<SuppressedFile FilePath="StoredProcedures\ServerCore\Server\SP_ServerCore_Server_Ping.sql">
+		<SuppressedRule Category="Microsoft.Rules.Data" RuleId="SR0016" />
+		<SuppressedRule Category="Microsoft.Rules.Data" RuleId="SR0013" />
+	</SuppressedFile>
+
+	<!-- Logs.Audit -->
+	<SuppressedFile FilePath="StoredProcedures\Logs\Audit\SP_Logs_Audit_Insert.sql">
+		<SuppressedRule Category="Microsoft.Rules.Data" RuleId="SR0016" />
+	</SuppressedFile>
+	<SuppressedFile FilePath="StoredProcedures\Logs\Audit\SP_Logs_Audit_Purge.sql">
+		<SuppressedRule Category="Microsoft.Rules.Data" RuleId="SR0016" />
+		<SuppressedRule Category="Microsoft.Rules.Data" RuleId="SR0013" />
+	</SuppressedFile>
+
+	<!-- Platform.Settings -->
+	<SuppressedFile FilePath="StoredProcedures\Platform\Settings\SP_Platform_Settings_Insert.sql">
+		<SuppressedRule Category="Microsoft.Rules.Data" RuleId="SR0016" />
+		<SuppressedRule Category="Microsoft.Rules.Data" RuleId="SR0013" />
+		<SuppressedRule Category="Microsoft.Rules.Data" RuleId="SR0004" />
+	</SuppressedFile>
+	<SuppressedFile FilePath="StoredProcedures\Platform\Settings\SP_Platform_Settings_Update.sql">
 		<SuppressedRule Category="Microsoft.Rules.Data" RuleId="SR0016" />
 		<SuppressedRule Category="Microsoft.Rules.Data" RuleId="SR0013" />
 	</SuppressedFile>

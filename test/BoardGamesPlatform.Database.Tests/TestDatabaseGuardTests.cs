@@ -140,6 +140,27 @@ public sealed class TestDatabaseGuardTests
     }
 
     /// <summary>
+    /// Without a connection string, the SQL tests are skipped, unless the run requires the database: then they fail
+    /// </summary>
+    /// <param name="require">Value of the variable that requires the database [Can be null]</param>
+    /// <param name="fails">True when the missing database must fail the run</param>
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("0", false)]
+    [InlineData("1", true)]
+    public void AMissingDatabaseFailsOnlyWhenTheRunRequiresIt(string? require, bool fails)
+    {
+        // Setting the variables of the run: no connection string
+        string? ReadVariable(string name) => name == Guard.RequireVariable ? require : null;
+
+        // Checks
+        if (fails)
+            Should.Throw<InvalidOperationException>(() => Guard.ReadConnectionString(ReadVariable)).Message.ShouldContain(Guard.RequireVariable);
+        else
+            Guard.ReadConnectionString(ReadVariable).ShouldBeNull();
+    }
+
+    /// <summary>
     /// A blank connection string is refused before any connection is tried
     /// </summary>
     /// <param name="connectionString">Blank connection string</param>

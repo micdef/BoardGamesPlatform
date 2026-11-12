@@ -12,6 +12,7 @@ using BoardGamesPlatform.Platform.Infrastructure.VeryBack;
 using BoardGamesPlatform.Protocol.Transport;
 using BoardGamesPlatform.Protocol.Transport.Secure;
 using BoardGamesPlatform.Protocol.Transport.Tls;
+using BoardGamesPlatform.Vault;
 using Microsoft.Extensions.Options;
 
 // Static using
@@ -109,20 +110,28 @@ public static class BackExtensions
     /// </summary>
     /// <remarks>
     /// <para><b>Purpose:</b> everything the listener of the Gateway needs, declared once.</para>
-    /// <para><b>Behavior:</b> binds "Back" (where the Back listens) and "VeryBack" (where it reaches the Very Back) with their validators,
-    /// checked when the host starts: an invalid value stops it before anything listens (fail closed). Registers one client of the Very Back,
-    /// shared by every connection of the Gateway and disposed with the host, and the listener of the Gateway.</para>
+    /// <para><b>Behavior:</b> adds the vault of the system first, which gives the two secrets of the Back (the passwords of its PFX and of its
+    /// signing key) and refuses, outside Development, a secret from any other source (doc/dev/database.md, The vault). Binds "Back" (where the
+    /// Back listens) and "VeryBack" (where it reaches the Very Back) with their validators, checked when the host starts: an invalid value stops
+    /// it before anything listens (fail closed). Registers one client of the Very Back, shared by every connection of the Gateway and disposed
+    /// with the host, and the listener of the Gateway.</para>
     /// </remarks>
     /// <param name="builder">[Cannot be null] Builder of the host</param>
     /// <returns>
     /// The same builder, to chain the calls
     /// </returns>
     /// <exception cref="ArgumentNullException">If the builder is null</exception>
+    /// <exception cref="VaultException">If the vault is configured but cannot be read safely</exception>
     public static HostApplicationBuilder AddPlatformBack(this HostApplicationBuilder builder)
     {
         // Check
         if (builder is null)
             throw new ArgumentNullException(nameof(builder), $"The value of the parameter: {nameof(builder)} cannot be null");
+
+        // Secrets from the vault of the system
+        builder.AddPlatformVault(
+            $"{TlsOptions.SectionName}:{nameof(TlsOptions.CertificatePassword)}",
+            $"{HandshakeOptions.SectionName}:{nameof(HandshakeOptions.SigningKeyPassword)}");
 
         // Settings, checked when the host starts
         builder.Services.AddSingleton<IValidateOptions<BackOptions>, BackOptionsValidator>();
