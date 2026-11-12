@@ -129,6 +129,32 @@ internal sealed class SecureRecordStream : Stream
     private readonly byte[] _receiveBuffer = new byte[MaxRecordLength + TagLength];
 
     /// <summary>
+    /// Length of the record read: kept by the stream, as the nonce and the probe below, since one reader reads at a time
+    /// </summary>
+    private readonly byte[] _receiveHeader = new byte[HeaderLength];
+
+    /// <summary>
+    /// Nonce of the record read
+    /// </summary>
+    private readonly byte[] _receiveNonce = new byte[SessionSecrets.IvLength];
+
+    /// <summary>
+    /// One byte read after the close record of the peer, which must find the end of the stream
+    /// </summary>
+    private readonly byte[] _closeProbe = new byte[1];
+
+    /// <summary>
+    /// Buffer of a whole record written, its length, its ciphertext then its tag, and the nonce of that record: kept by the stream, so that a
+    /// record allocates nothing; under <see cref="_writeLock"/>
+    /// </summary>
+    private readonly byte[] _sendRecord = new byte[HeaderLength + MaxRecordLength + TagLength];
+
+    /// <summary>
+    /// Nonce of the record written; under <see cref="_writeLock"/>
+    /// </summary>
+    private readonly byte[] _sendNonce = new byte[SessionSecrets.IvLength];
+
+    /// <summary>
     /// Plaintext of the last record read, not yet given to the reader
     /// </summary>
     private readonly byte[] _plaintext = new byte[MaxRecordLength];
@@ -142,6 +168,12 @@ internal sealed class SecureRecordStream : Stream
     /// Number of bytes of <see cref="_plaintext"/> left to give
     /// </summary>
     private int _plaintextCount;
+
+    /// <summary>
+    /// Number of bytes the last record wrote in <see cref="_plaintext"/>: only these are erased once the record is given, never the whole
+    /// buffer, so that a peer that sends tiny records cannot make each one cost the erasure of 16 KiB
+    /// </summary>
+    private int _plaintextLength;
 
     /// <summary>
     /// Sequence number of the next record sent
@@ -354,7 +386,7 @@ internal sealed class SecureRecordStream : Stream
     private async Task ReadRecordAsync(CancellationToken cancellationToken)
     {
         // Reading the length: a stream that ends there without the close record is a truncation too
-        byte[] header = new byte[HeaderLength];
+        byte[] header = _receiveHeader;
         if (!await ReadExactAsync(header, allowEndAtStart: true, cancellationToken).ConfigureAwait(false))
             throw new SecureChannelException(SecureChannelFailure.RecordAuthenticationFailed);
         int length = BinaryPrimitives.ReadUInt16BigEndian(header);
@@ -366,7 +398,7 @@ internal sealed class SecureRecordStream : Stream
 
         // Reading the ciphertext and the tag, then opening the record with the nonce of its sequence number
         await ReadExactAsync(_receiveBuffer.AsMemory(0, length + TagLength), allowEndAtStart: false, cancellationToken).ConfigureAwait(false);
-        byte[] nonce = new byte[SessionSecrets.IvLength];
+        byte[] nonce = _receiveNonce;
         BuildNonce(_receiveIv, sequence, nonce);
         try
         {
@@ -374,6 +406,8 @@ internal sealed class SecureRecordStream : Stream
         }
         catch (AuthenticationTagMismatchException exception)
         {
+            // Nothing of a refused record stays in the buffer: the cipher clears the plaintext when the tag cannot be validated (documented by
+            // AesGcm.Decrypt; checked by a test of the records)
             throw new SecureChannelException(sequence == 0 ? SecureChannelFailure.KeyConfirmationFailed : SecureChannelFailure.RecordAuthenticationFailed, exception);
         }
         Interlocked.Exchange(ref _receiveSequence, sequence + 1);
@@ -381,14 +415,14 @@ internal sealed class SecureRecordStream : Stream
         // Giving the plaintext, or taking the close: nothing may follow it
         if (length == 0)
         {
-            byte[] probe = new byte[1];
-            if (await _inner.ReadAsync(probe, cancellationToken).ConfigureAwait(false) != 0)
+            if (await _inner.ReadAsync(_closeProbe, cancellationToken).ConfigureAwait(false) != 0)
                 throw new SecureChannelException(SecureChannelFailure.RecordAuthenticationFailed);
             _hasReceivedClose = true;
             return;
         }
         _plaintextOffset = 0;
         _plaintextCount = length;
+        _plaintextLength = length;
     }
 
     /// <summary>
@@ -462,17 +496,16 @@ internal sealed class SecureRecordStream : Stream
         if (sequence >= _hardLimit || (plaintext.Length > 0 && sequence >= _hardLimit - 1))
             throw new SecureChannelException(SecureChannelFailure.RecordLimitReached);
 
-        // Sealing the record: its length, its ciphertext, then its tag
+        // Sealing the record into the buffer of the stream: its length, its ciphertext, then its tag
         int length = plaintext.Length;
-        byte[] record = new byte[HeaderLength + length + TagLength];
+        byte[] record = _sendRecord;
         BinaryPrimitives.WriteUInt16BigEndian(record, (ushort)length);
-        byte[] nonce = new byte[SessionSecrets.IvLength];
-        BuildNonce(_sendIv, sequence, nonce);
-        _sendCipher.Encrypt(nonce, plaintext.Span, record.AsSpan(HeaderLength, length), record.AsSpan(HeaderLength + length, TagLength), record.AsSpan(0, HeaderLength));
+        BuildNonce(_sendIv, sequence, _sendNonce);
+        _sendCipher.Encrypt(_sendNonce, plaintext.Span, record.AsSpan(HeaderLength, length), record.AsSpan(HeaderLength + length, TagLength), record.AsSpan(0, HeaderLength));
         Interlocked.Exchange(ref _sendSequence, sequence + 1);
 
         // Writing it
-        await _inner.WriteAsync(record, cancellationToken).ConfigureAwait(false);
+        await _inner.WriteAsync(record.AsMemory(0, HeaderLength + length + TagLength), cancellationToken).ConfigureAwait(false);
     }
 
     #endregion
@@ -551,7 +584,7 @@ internal sealed class SecureRecordStream : Stream
         _plaintextOffset += count;
         _plaintextCount -= count;
         if (_plaintextCount == 0)
-            CryptographicOperations.ZeroMemory(_plaintext);
+            CryptographicOperations.ZeroMemory(_plaintext.AsSpan(0, _plaintextLength));
 
         // Function's return
         return count;
@@ -660,13 +693,16 @@ internal sealed class SecureRecordStream : Stream
     /// <inheritdoc/>
     protected override void Dispose(bool disposing)
     {
-        // Erasing the keys once; the stream below belongs to the connection
+        // Erasing the keys once, and the nonces, which give the IV back from the sequence; the stream below belongs to the connection. The
+        // ciphers go first, so that no record is sealed with an erased IV or nonce
         if (disposing && Interlocked.Exchange(ref _isDisposed, 1) == 0)
         {
             _sendCipher.Dispose();
             _receiveCipher.Dispose();
             CryptographicOperations.ZeroMemory(_sendIv);
             CryptographicOperations.ZeroMemory(_receiveIv);
+            CryptographicOperations.ZeroMemory(_sendNonce);
+            CryptographicOperations.ZeroMemory(_receiveNonce);
             CryptographicOperations.ZeroMemory(_plaintext);
 
             // The lock of the writes is never disposed: a write may still wait for it or release it, and a semaphore whose wait handle nobody

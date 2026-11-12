@@ -1,0 +1,490 @@
+/*
+ *	@file	test/BoardGamesPlatform.Protocol.Tests/Messages/MessageSerializerComplexityTests.cs
+ *	@author	Defraene Michaël (AKA Sonic) (co-written by Claude)
+ *
+ *	@brief	Checks the memory a request costs to write and to read: in proportion to the request, and with no second copy of its body
+ */
+
+// Using
+using System.Text;
+using System.Text.Json;
+using BoardGamesPlatform.Protocol.Messages;
+using BoardGamesPlatform.TestKit;
+
+// Static using
+// #N/A
+
+// Named using
+// #N/A
+
+// Namespace
+namespace BoardGamesPlatform.Protocol.Tests.Messages;
+
+/// <summary>
+/// Tests used to check the space complexity of the envelopes of the requests
+/// </summary>
+/// <remarks>
+/// <para><b>Purpose:</b> every call between two tiers writes a request on one end and reads it on the other: a body written twice, or
+/// copied once more only to be checked, doubles the memory of every call.</para>
+/// <para><b>Behavior:</b> a request is measured with a short and a long body (<see cref="AllocationMeter"/>); the difference, divided by
+/// the difference of the sizes, is the memory paid per byte of request. Writing must allocate the request once, reading must keep the body
+/// once: at most <see cref="MaxBytesPerByte"/> per byte, where writing twice or copying the body as text costs 2 or more.</para>
+/// </remarks>
+public sealed class MessageSerializerComplexityTests
+{
+    #region Members
+
+    #region Constants
+
+    /// <summary>
+    /// Characters of the text of the short body
+    /// </summary>
+    private const int ShortText = 16;
+
+    /// <summary>
+    /// Characters of the text of the long body
+    /// </summary>
+    private const int LongText = 16 * 1024;
+
+    /// <summary>
+    /// Bytes allocated per byte of request, at most: one copy, and a margin for the growth of the buffers below one copy
+    /// </summary>
+    private const double MaxBytesPerByte = 1.5;
+
+    /// <summary>
+    /// Bytes allocated per byte of response read, at most: the text of the body is a .NET string, of 2 bytes per character, which is the
+    /// result itself, and a margin
+    /// </summary>
+    private const double MaxBytesPerByteOfTextRead = 2.5;
+
+    /// <summary>
+    /// Operation of the requests
+    /// </summary>
+    private const string Operation = "test.text";
+
+    #endregion
+
+    #region Variables
+
+    // #N/A
+
+    #endregion
+
+    #region Delegates
+
+    // #N/A
+
+    #endregion
+
+    #endregion
+
+    #region Enumerations
+
+    // #N/A
+
+    #endregion
+
+    #region Services
+
+    // #N/A
+
+    #endregion
+
+    #region Accessors/Properties
+
+    #region Members & Properties
+
+    // #N/A
+
+    #endregion
+
+    #region Delegates
+
+    // #N/A
+
+    #endregion
+
+    #endregion
+
+    #region Constructors
+
+    // #N/A
+
+    #endregion
+
+    #region Destructors
+
+    // #N/A
+
+    #endregion
+
+    #region Methods
+
+    #region Privates
+
+    /// <summary>
+    /// Method used to build a body whose text has the given number of characters, all ASCII, so that one character is one byte
+    /// </summary>
+    /// <param name="length">Characters of the text</param>
+    /// <returns>
+    /// The body
+    /// </returns>
+    private static TextBody Body(int length)
+    {
+        // Function's return
+        return new TextBody(new string('a', length));
+    }
+
+    /// <summary>
+    /// Method used to tell whether the serializer accepts a message, the documented refusals only counting as a refusal
+    /// </summary>
+    /// <param name="operation">[Cannot be null] Writing or reading of a message</param>
+    /// <returns>
+    /// True when the message is written or read; false when it is refused as documented (ArgumentException for the writer,
+    /// InvalidDataException for the reader); any other exception is a bug, and fails the test
+    /// </returns>
+    private static bool Accepts(Func<object> operation)
+    {
+        try
+        {
+            _ = operation();
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidDataException)
+        {
+            // Function's return
+            return false;
+        }
+
+        // Function's return
+        return true;
+    }
+
+    /// <summary>
+    /// Method used to measure the bytes allocated by a synchronous operation of the serializer
+    /// </summary>
+    /// <param name="operation">[Cannot be null] Operation, whose result is dropped</param>
+    /// <returns>
+    /// The bytes allocated by one run
+    /// </returns>
+    private static long Measure(Func<object> operation)
+    {
+        // Function's return
+        return AllocationMeter.PerRun(() =>
+        {
+            _ = operation();
+
+            // Function's return
+            return ValueTask.CompletedTask;
+        });
+    }
+
+    /// <summary>
+    /// Method used to measure the bytes allocated by the write of one request
+    /// </summary>
+    /// <param name="body">[Cannot be null] Body of the request</param>
+    /// <returns>
+    /// The bytes allocated by one write
+    /// </returns>
+    private static long MeasureWrite(TextBody body)
+    {
+        // Function's return
+        return AllocationMeter.PerRun(() =>
+        {
+            _ = MessageSerializer.WriteRequest(Operation, body);
+
+            // Function's return
+            return ValueTask.CompletedTask;
+        });
+    }
+
+    /// <summary>
+    /// Method used to measure the bytes allocated by the read of one request
+    /// </summary>
+    /// <param name="request">[Cannot be null] Bytes of the request</param>
+    /// <returns>
+    /// The bytes allocated by one read
+    /// </returns>
+    private static long MeasureRead(byte[] request)
+    {
+        // Function's return
+        return AllocationMeter.PerRun(() =>
+        {
+            _ = MessageSerializer.ReadRequest(request);
+
+            // Function's return
+            return ValueTask.CompletedTask;
+        });
+    }
+
+    #endregion
+
+    #region Publics
+
+    /// <summary>
+    /// A request is written once: its memory grows by about one byte per byte of request, never by a body written twice (space O(n))
+    /// </summary>
+    [Fact]
+    public void ARequestIsWrittenInOnePass()
+    {
+        // Arranging
+        TextBody shortBody = Body(ShortText);
+        TextBody longBody = Body(LongText);
+        int growth = MessageSerializer.WriteRequest(Operation, longBody).Length - MessageSerializer.WriteRequest(Operation, shortBody).Length;
+
+        // Acting
+        long allocated = MeasureWrite(longBody) - MeasureWrite(shortBody);
+
+        // Check
+        ((double)allocated / growth).ShouldBeLessThan(MaxBytesPerByte);
+    }
+
+    /// <summary>
+    /// A request is read without copying its body again to check it: its memory grows by about one byte per byte of request (space O(n))
+    /// </summary>
+    [Fact]
+    public void ARequestIsReadWithoutASecondCopyOfItsBody()
+    {
+        // Arranging
+        byte[] shortRequest = MessageSerializer.WriteRequest(Operation, Body(ShortText));
+        byte[] longRequest = MessageSerializer.WriteRequest(Operation, Body(LongText));
+        int growth = longRequest.Length - shortRequest.Length;
+
+        // Acting
+        long allocated = MeasureRead(longRequest) - MeasureRead(shortRequest);
+
+        // Check
+        ((double)allocated / growth).ShouldBeLessThan(MaxBytesPerByte);
+    }
+
+    /// <summary>
+    /// The request written in one pass holds the same bytes as before: the operation, then the body as a JSON object
+    /// </summary>
+    [Fact]
+    public void ARequestWrittenInOnePassKeepsItsForm()
+    {
+        // Acting
+        string json = Encoding.UTF8.GetString(MessageSerializer.WriteRequest(Operation, new TextBody("hi")));
+
+        // Check
+        json.ShouldBe("""{"operation":"test.text","body":{"text":"hi"}}""");
+    }
+
+    /// <summary>
+    /// A request written in one pass holds the same bytes as one written through a JSON element first, whatever its text: accents, an emoji,
+    /// characters the JSON writer escapes
+    /// </summary>
+    [Fact]
+    public void BothWaysOfWritingARequestGiveTheSameBytes()
+    {
+        // Arranging the same body as an object (written in one pass) and as a dictionary (written through a JSON element)
+        const string Text = "Çà et là, <b>\"gras\"</b> + 1,10 € ☃ \U0001F600";
+        TextBody asObject = new TextBody(Text);
+        Dictionary<string, string> asDictionary = new Dictionary<string, string> { ["text"] = Text };
+
+        // Acting
+        byte[] onePass = MessageSerializer.WriteRequest(Operation, asObject);
+        byte[] throughElement = MessageSerializer.WriteRequest(Operation, asDictionary);
+
+        // Check
+        onePass.ShouldBe(throughElement);
+    }
+
+    /// <summary>
+    /// A body with extension data is still checked before anything is sent: an extension key that repeats the name of a property would write
+    /// it twice, which the reader of the peer refuses and which would close the connection
+    /// </summary>
+    [Fact]
+    public void ABodyWritingAPropertyTwiceIsRefusedBeforeSending()
+    {
+        // Arranging a body whose extension data repeats the property "a"
+        ExtensionBody body = new ExtensionBody(1);
+        body.Extra["a"] = JsonSerializer.SerializeToElement(2);
+
+        // Acting
+        ArgumentException refusal = Should.Throw<ArgumentException>(() => MessageSerializer.WriteRequest(Operation, body));
+
+        // Check
+        refusal.ParamName.ShouldBe("body");
+    }
+
+    /// <summary>
+    /// A body with extension data that repeats no property is written, and read back by the reader of the peer
+    /// </summary>
+    [Fact]
+    public void ABodyWithDistinctExtensionDataIsWrittenAndRead()
+    {
+        // Arranging a body whose extension data adds the property "b"
+        ExtensionBody body = new ExtensionBody(1);
+        body.Extra["b"] = JsonSerializer.SerializeToElement(2);
+
+        // Acting
+        (string operation, JsonElement read) = MessageSerializer.ReadRequest(MessageSerializer.WriteRequest(Operation, body));
+
+        // Checks
+        operation.ShouldBe(Operation);
+        read.GetProperty("a").GetInt32().ShouldBe(1);
+        read.GetProperty("b").GetInt32().ShouldBe(2);
+    }
+
+    /// <summary>
+    /// A property written twice one level below the body, by extension data, is refused before anything is sent, as at the first level
+    /// </summary>
+    [Fact]
+    public void APropertyWrittenTwiceInANestedBodyIsRefusedBeforeSending()
+    {
+        // Arranging a body whose inner body repeats the property "a" through its extension data
+        ExtensionBody inner = new ExtensionBody(1);
+        inner.Extra["a"] = JsonSerializer.SerializeToElement(2);
+        NestedBody body = new NestedBody(inner);
+
+        // Acting: the writer refuses it, and the reader refuses the same request built by hand, so that the writer is never stricter
+        ArgumentException refusal = Should.Throw<ArgumentException>(() => MessageSerializer.WriteRequest(Operation, body));
+        bool isRead = Accepts(() => MessageSerializer.ReadRequest(Encoding.UTF8.GetBytes("""{"operation":""" + "\"" + Operation + "\"" + ""","body":{"inner":{"a":1,"a":2}}}""")));
+
+        // Checks
+        refusal.ParamName.ShouldBe("body");
+        isRead.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// A body written as invalid UTF-8 by its own converter is refused before anything is sent: the reader of the peer refuses it
+    /// </summary>
+    [Fact]
+    public void ARequestOfInvalidUtf8IsRefusedBeforeSending()
+    {
+        // Acting
+        ArgumentException refusal = Should.Throw<ArgumentException>(() => MessageSerializer.WriteRequest(Operation, new InvalidUtf8Body("hi")));
+
+        // Check
+        refusal.ParamName.ShouldBe("body");
+    }
+
+    /// <summary>
+    /// A response that writes a property twice one level below its body is refused before anything is sent, as a request is
+    /// </summary>
+    [Fact]
+    public void AResponseWritingAPropertyTwiceIsRefusedBeforeSending()
+    {
+        // Arranging a body whose inner body repeats the property "a" through its extension data
+        ExtensionBody inner = new ExtensionBody(1);
+        inner.Extra["a"] = JsonSerializer.SerializeToElement(2);
+
+        // Acting
+        ArgumentException refusal = Should.Throw<ArgumentException>(() => MessageSerializer.WriteResponse(new NestedBody(inner)));
+
+        // Check
+        refusal.ParamName.ShouldBe("body");
+    }
+
+    /// <summary>
+    /// A response written as invalid UTF-8 by the converter of its body is refused before anything is sent
+    /// </summary>
+    [Fact]
+    public void AResponseOfInvalidUtf8IsRefusedBeforeSending()
+    {
+        // Acting
+        ArgumentException refusal = Should.Throw<ArgumentException>(() => MessageSerializer.WriteResponse(new InvalidUtf8Body("hi")));
+
+        // Check
+        refusal.ParamName.ShouldBe("body");
+    }
+
+    /// <summary>
+    /// A body deeper than the reader allows is refused before anything is sent, with an ArgumentException, never a JSON exception
+    /// </summary>
+    [Fact]
+    public void ABodyTooDeepForTheReaderIsRefusedBeforeSending()
+    {
+        // Acting
+        ArgumentException refusal = Should.Throw<ArgumentException>(() => MessageSerializer.WriteRequest(Operation, DeepBody.Chain(MessageSerializer.MaxDepth + 4)));
+
+        // Check
+        refusal.ParamName.ShouldBe("body");
+    }
+
+    /// <summary>
+    /// The writer accepts exactly the depths the reader accepts: at each depth, the request written is read back, and a request refused by
+    /// the writer is refused by the reader too, the same JSON built by hand
+    /// </summary>
+    [Fact]
+    public void TheWriterAcceptsTheDepthsTheReaderAccepts()
+    {
+        // The comparison proves something only if both answers are met: a shallow body is written, a body far too deep is not
+        Accepts(() => MessageSerializer.WriteRequest(Operation, DeepBody.Chain(1))).ShouldBeTrue();
+        Accepts(() => MessageSerializer.WriteRequest(Operation, DeepBody.Chain(MessageSerializer.MaxDepth + 4))).ShouldBeFalse();
+
+        for (int depth = 1; depth <= MessageSerializer.MaxDepth + 4; depth++)
+        {
+            // Arranging the same request as JSON built by hand, and asking the reader
+            StringBuilder json = new StringBuilder($$"""{"operation":"{{Operation}}","body":""");
+            for (int level = 1; level < depth; level++)
+                json.Append("""{"next":""");
+            json.Append("""{"next":null}""");
+            json.Append('}', depth);
+            bool isRead = Accepts(() => MessageSerializer.ReadRequest(Encoding.UTF8.GetBytes(json.ToString())));
+
+            // Acting
+            bool isWritten = Accepts(() => MessageSerializer.WriteRequest(Operation, DeepBody.Chain(depth)));
+
+            // Check
+            isWritten.ShouldBe(isRead, $"at the depth {depth}");
+        }
+    }
+
+    /// <summary>
+    /// A response is written once: its memory grows by about one byte per byte of response (space O(n))
+    /// </summary>
+    [Fact]
+    public void AResponseIsWrittenInOnePass()
+    {
+        // Arranging
+        TextBody shortBody = Body(ShortText);
+        TextBody longBody = Body(LongText);
+        int growth = MessageSerializer.WriteResponse(longBody).Length - MessageSerializer.WriteResponse(shortBody).Length;
+
+        // Acting
+        long allocated = Measure(() => MessageSerializer.WriteResponse(longBody)) - Measure(() => MessageSerializer.WriteResponse(shortBody));
+
+        // Check
+        ((double)allocated / growth).ShouldBeLessThan(MaxBytesPerByte);
+    }
+
+    /// <summary>
+    /// A response is read into its body without any other copy: its memory grows by the text of the body, a .NET string of 2 bytes per
+    /// character, and no more (space O(n))
+    /// </summary>
+    [Fact]
+    public void AResponseIsReadIntoItsBodyOnly()
+    {
+        // Arranging
+        byte[] shortResponse = MessageSerializer.WriteResponse(Body(ShortText));
+        byte[] longResponse = MessageSerializer.WriteResponse(Body(LongText));
+        int growth = longResponse.Length - shortResponse.Length;
+
+        // Acting
+        long allocated = Measure(() => MessageSerializer.ReadResponse<TextBody>(longResponse)) - Measure(() => MessageSerializer.ReadResponse<TextBody>(shortResponse));
+
+        // Check
+        ((double)allocated / growth).ShouldBeLessThan(MaxBytesPerByteOfTextRead);
+    }
+
+    #endregion
+
+    #endregion
+
+    #region Overrides
+
+    #region Methods
+
+    // #N/A
+
+    #endregion
+
+    #region Operators
+
+    // #N/A
+
+    #endregion
+
+    #endregion
+}

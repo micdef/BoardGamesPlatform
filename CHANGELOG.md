@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-12
+
+Tests of time and space complexity for the hot paths of the protocol (the code that runs for every message), and the fixes they found; see `doc/dev/complexity.md`. A frame written, a request written or read, and a record of the secure channel no longer make a second copy of their content. A peer that sends records of 1 byte can no longer make each one cost the erasure of 16 KiB. Every request and response written is read back with the rules of the reader of the peer before it is sent. The bytes on the wire do not change. The project moves to the .NET SDK 10.0.404 and the runtime 10.0.15, which fix 17 CVEs; the minimum is now 10.0.15.
+
+### Added
+
+- Tests of time and space complexity: `AllocationMeter` (`test/BoardGamesPlatform.TestKit`) counts the bytes an operation allocates on
+  the thread of the test. The operation runs on a stream in memory, so that it finishes without waiting; the count never depends on the
+  load of the machine. The meter runs the operation in two series and keeps the smaller count. `AllocationMeterTests` checks that the
+  meter sees a known allocation.
+- Complexity tests of the frame codec: a frame written allocates the same few bytes whatever its payload; a frame read allocates its
+  payload and a fixed cost under 1 KiB; a frame that arrives byte by byte is read in one pass.
+- Complexity tests of the envelopes: a request is written once, and read without a second copy of its body; a response is written once,
+  and read into its body only; both ways of writing a request give the same bytes.
+- Tests of the message writer: a property written twice in a nested body, and invalid UTF-8 written by a converter, are refused before
+  sending, for a request and for a response; a body too deep for the reader is refused; at every depth from 1 to 20, the writer accepts
+  exactly what the reader accepts.
+- Complexity tests of the records: a record written and a record read allocate the same few bytes whatever their length. A write is cut
+  into the fewest records: one write of the stream below per 16 KiB, 18 bytes added per record.
+- Tests of the erasure of the records: once the reader has taken a record, or once a record is refused, the stream keeps no byte of its
+  plaintext. A full record, then a record of 1 byte, sealed and opened in the same buffers, are both read back whole. A disposed stream
+  keeps no nonce.
+- `doc/dev/complexity.md`: how the complexity is tested, the cost of each hot path with its test, and the collections bounded by the
+  limits of the links. A rule of the coding conventions: a hot path gets a complexity test.
+
+### Changed
+
+- Roadmap: the entry of 0.6.1, and a level "Complexity" in the test strategy.
+- Socket protocol, frames: a frame written builds its header and its payload in a buffer of the shared pool, instead of a new buffer of
+  its size. It no longer allocates per byte of payload: about 64 KiB less per frame of 64 KiB. Only the bytes of the frame are erased
+  before the buffer goes back to the pool, since a payload may hold a secret.
+- Socket protocol, messages: a request whose body is an object with properties is written in one pass, instead of its body first, then
+  the envelope. A request now allocates 1 byte per byte instead of 2.
+- Socket protocol, messages: a request read is checked as UTF-8 on its raw bytes, not on a copy as text (2 bytes per byte). It now
+  allocates 1 byte per byte instead of 3.
+- Socket protocol, messages: a request written is read back with the rules of the reader before it is sent: its depth, a property
+  appearing only once at every level (extension data included), and valid UTF-8. The check makes no copy of the request. A body that the
+  reader would refuse is an `ArgumentException` for the caller, never a `JsonException`.
+- Secure channel, records: the stream keeps one buffer of 16 KiB per connection to seal its records; the writes use it one at a time
+  (write lock). A record written no longer allocates a buffer of its size: about 16 KiB less per record of 16 KiB. A record read uses
+  buffers of the stream for its length, its nonce and the one-byte probe after the close record.
+- Secure channel, records: once the reader has taken a record, only the bytes of that record are erased, instead of the whole buffer of
+  16 KiB. A peer that sends records of 1 byte can no longer make each one cost the erasure of 16 KiB. The disposal still erases the whole
+  buffer of plaintext. The bytes on the wire do not change.
+- Secure channel, records: the disposal also erases the nonces. A nonce is the IV XOR the sequence number, so it would reveal the IV.
+  The ciphers are disposed first, so that no record is sealed with an erased nonce.
+
+### Fixed
+
+- Socket protocol, messages: a response written is read back with the rules of the reader before it is sent, like a request. Before,
+  a response that the client refuses (a property written twice, too deep, invalid UTF-8) could be sent, and the client would close the
+  connection for all its callers. On a server, the dispatcher now answers an internal error instead.
+- Tests: the renewal test of the link client waits for the log of the renewal before it disposes the client. Otherwise the client
+  logged the old connection as closed by the disposal, at random.
+- Tests: the heartbeat test of a large request written slowly moves the clock only while the client writes. Once the request is
+  written, the bytes still in the Linux socket buffers (several MiB) are read without moving it: a client that waits for a silent server
+  rightly closes after its timeout. The test failed at random on Linux.
+
+### Security
+
+- .NET: the SDK of `global.json` is 10.0.404, which brings the runtime 10.0.15. It fixes 17 CVEs; three of them are denials of service
+  over the network, and the advisories do not name their component. The CI uses this SDK. The minimum in `doc/dev/secure-channel.md` and
+  in the README is now 10.0.15 instead of 10.0.13.
+
 ## [0.6.0] - 2026-11-06
 
 An authenticated ECDH handshake on the Back → Very Back link, specified with its threat model in `doc/dev/secure-channel.md`. Inside the mutual TLS session, each end signs an ephemeral P-256 key with a long-term ECDSA key. That key is distinct from its TLS certificate and pinned by its peer. The signatures cover both TLS certificates: an attacker in the middle, even one holding valid certificates (its own, or stolen ones), can neither read nor change the traffic. The traffic then travels in AES-256-GCM records, and a connection is replaced before it reaches the limits of its keys. The signing keys are reloaded at startup and while the tier runs; a key removed from the list closes the connections that used it. Prerequisite: .NET 10.0.13 or later (see the prerequisites of `doc/dev/secure-channel.md`).
@@ -281,7 +345,8 @@ Repository bootstrap: no game code yet.
 - Contribution guide describing the branching model, commit and pull request conventions, versioning and releases.
 - Continuous integration workflow building and testing every pull request.
 
-[Unreleased]: https://github.com/micdef/BoardGamesPlatform/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/micdef/BoardGamesPlatform/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/micdef/BoardGamesPlatform/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/micdef/BoardGamesPlatform/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/micdef/BoardGamesPlatform/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/micdef/BoardGamesPlatform/compare/v0.3.0...v0.4.0
