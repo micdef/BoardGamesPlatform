@@ -56,9 +56,9 @@ Tests of time and space complexity for the hot paths of the protocol (the code t
 
 ### Fixed
 
-- Socket protocol, messages: a response written is read back with the rules of the reader before it is sent, as a request is. Before,
-  a response that the client refuses (a property written twice, too deep, invalid UTF-8) could leave, and the connection of every caller
-  closed. On a server, the dispatcher now answers an internal error instead.
+- Socket protocol, messages: a response written is read back with the rules of the reader before it is sent, like a request. Before,
+  a response that the client refuses (a property written twice, too deep, invalid UTF-8) could be sent, and the client would close the
+  connection for all its callers. On a server, the dispatcher now answers an internal error instead.
 - Tests: the renewal test of the link client waits for the log of the renewal before it disposes the client. Otherwise the client
   logged the old connection as closed by the disposal, at random.
 - Tests: the heartbeat test of a large request written slowly moves the clock only while the client writes. Once the request is
