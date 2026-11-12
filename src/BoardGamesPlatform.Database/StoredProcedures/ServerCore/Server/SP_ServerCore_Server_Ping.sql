@@ -38,7 +38,7 @@
  *	}
  *
  *	Behavior :
- *	-----------
+ *	----------
  *	The procedure only reads the clock of the server: it touches no table, writes nothing, and therefore opens no transaction and writes
  *	no audit. It is the end of the walking skeleton of version 0.3.0: a front calls the Gateway, which calls the Back, which calls the
  *	Very Back, which calls this procedure.

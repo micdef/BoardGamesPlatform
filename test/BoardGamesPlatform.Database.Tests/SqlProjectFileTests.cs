@@ -227,8 +227,13 @@ public sealed partial class SqlProjectFileTests
     }
 
     /// <summary>
-    /// Every stored procedure documents its contract, and is declared in its schema with the name SP_&lt;Schema&gt;_…
+    /// Every stored procedure documents its contract, lives in StoredProcedures\&lt;Schema&gt;\&lt;Table&gt;\, and is named SP_&lt;Schema&gt;_…
+    /// after its file, declared in its own module (internal procedures, ServerCore) or in StorProc (public procedures)
     /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> as in the reference project of the author, a public procedure is named after the table it writes
+    /// ([StorProc].[SP_Platform_Settings_Insert] in StoredProcedures\Platform\Settings), not after the schema StorProc.</para>
+    /// </remarks>
     [Fact]
     public void EveryProcedureDocumentsItsContractAndFollowsTheNaming()
     {
@@ -253,11 +258,11 @@ public sealed partial class SqlProjectFileTests
             {
                 problems.Add($"{file}: no CREATE PROCEDURE [Schema].[Name]");
             }
-            else if (declaration.Groups["schema"].Value != folderSchema
+            else if ((declaration.Groups["schema"].Value != folderSchema && declaration.Groups["schema"].Value != "StorProc")
                 || declaration.Groups["name"].Value != fileName
                 || !fileName.StartsWith($"SP_{folderSchema}_", StringComparison.Ordinal))
             {
-                problems.Add($"{file}: declared as [{declaration.Groups["schema"].Value}].[{declaration.Groups["name"].Value}], expected [{folderSchema}].[SP_{folderSchema}_…] named after the file");
+                problems.Add($"{file}: declared as [{declaration.Groups["schema"].Value}].[{declaration.Groups["name"].Value}], expected [{folderSchema}] or [StorProc], and [SP_{folderSchema}_…] named after the file");
             }
         }
 
@@ -290,6 +295,116 @@ public sealed partial class SqlProjectFileTests
 
         // Check
         problems.ShouldBeEmpty("These stored procedures do not run in the standard frame of the SQL conventions");
+    }
+
+    /// <summary>
+    /// Every group of procedures (StoredProcedures\&lt;Schema&gt;\&lt;Table&gt;) has its test class, &lt;Schema&gt;\&lt;Table&gt;ProceduresTests.cs, and
+    /// every procedure of the group is named in that class
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> the test strategy of version 0.7.0: one test class per group of procedures, and a new procedure without a test fails.
+    /// A procedure added to an existing group is caught too: its name must appear, as a whole word, in the class that tests it.</para>
+    /// </remarks>
+    [Fact]
+    public void EveryGroupOfProceduresHasItsTestClass()
+    {
+        // Listing the procedures by group, then the missing test classes and the procedures their class never names
+        string testFolder = Path.Combine(RepositoryPaths.GetRoot(), "test", "BoardGamesPlatform.Database.Tests");
+        List<string[]> procedures = FindSqlFiles()
+            .Where(file => file.StartsWith("StoredProcedures\\", StringComparison.OrdinalIgnoreCase))
+            .Select(file => file.Split('\\'))
+            .ToList();
+        List<string> problems = new List<string>();
+        foreach (IGrouping<string, string[]> group in procedures.GroupBy(parts => $"{parts[1]}\\{parts[2]}", StringComparer.Ordinal))
+        {
+            string[] first = group.First();
+            string testClass = Path.Combine(testFolder, first[1], $"{first[2]}ProceduresTests.cs");
+            if (!File.Exists(testClass))
+            {
+                problems.Add($"{group.Key}: no test class test/BoardGamesPlatform.Database.Tests/{first[1]}/{first[2]}ProceduresTests.cs");
+                continue;
+            }
+
+            string source = File.ReadAllText(testClass);
+            problems.AddRange(group
+                .Select(parts => Path.GetFileNameWithoutExtension(parts[^1]))
+                .Where(name => !Regex.IsMatch(source, $@"\b{Regex.Escape(name)}\b", RegexOptions.CultureInvariant))
+                .Select(name => $"{group.Key}: {name} is never named in {first[2]}ProceduresTests.cs"));
+        }
+
+        // Checks
+        procedures.ShouldNotBeEmpty("No procedure was found: the check reads nothing");
+        problems.ShouldBeEmpty("These procedures have no test class, or are not tested by the class of their group");
+    }
+
+    /// <summary>
+    /// Every table-valued type, view, trigger and function lives in its folder and is named after its file, with the prefix and the schema of
+    /// the SQL conventions
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> the conventions of doc/dev/database.md name every object after its schema and table, so that a name says where the
+    /// object lives and what it serves: TVP_&lt;Schema&gt;_&lt;Table&gt;_… in Types, V_&lt;Schema&gt;_&lt;Table&gt; in Views,
+    /// TR_&lt;Schema&gt;_&lt;Table&gt;_… in the schema of its table, a function in Functions.</para>
+    /// </remarks>
+    [Fact]
+    public void EveryTypeViewTriggerAndFunctionFollowsTheNaming()
+    {
+        // Checking every file of the four folders against its declaration
+        List<string> problems = new List<string>();
+        List<string> files = FindSqlFiles()
+            .Where(file => file.StartsWith("Types\\", StringComparison.OrdinalIgnoreCase) || file.StartsWith("Views\\", StringComparison.OrdinalIgnoreCase)
+                || file.StartsWith("Triggers\\", StringComparison.OrdinalIgnoreCase) || file.StartsWith("Functions\\", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        foreach (string file in files)
+        {
+            // Cut at "\", the separator of the project (SSDT), on every system
+            string[] parts = file.Split('\\');
+            string name = Path.GetFileNameWithoutExtension(parts[^1]);
+            (string Keyword, string Schema, string Prefix, int Depth) expected = parts[0] switch
+            {
+                "Types" => ("TYPE", "Types", $"TVP_{parts[1]}_{(parts.Length > 3 ? parts[2] : string.Empty)}_", 4),
+                "Views" => ("VIEW", "Views", $"V_{parts[1]}_", 3),
+                "Triggers" => ("TRIGGER", parts[1], $"TR_{parts[1]}_{(parts.Length > 3 ? parts[2] : string.Empty)}_", 4),
+                _ => ("FUNCTION", "Functions", string.Empty, 2),
+            };
+            Match declaration = Regex.Match(ReadSqlFile(file), $@"^CREATE\s+{expected.Keyword}\s+\[(?<schema>[^\]]+)\]\.\[(?<name>[^\]]+)\]",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Multiline);
+            if (parts.Length != expected.Depth)
+                problems.Add($"{file}: expected at the depth {parts[0]}{(expected.Depth > 2 ? "\\<Schema>" : string.Empty)}{(expected.Depth > 3 ? "\\<Table>" : string.Empty)}\\<Name>.sql");
+            else if (!declaration.Success)
+                problems.Add($"{file}: no CREATE {expected.Keyword} [Schema].[Name]");
+            else if (declaration.Groups["schema"].Value != expected.Schema || declaration.Groups["name"].Value != name || !name.StartsWith(expected.Prefix, StringComparison.Ordinal))
+                problems.Add($"{file}: declared as [{declaration.Groups["schema"].Value}].[{declaration.Groups["name"].Value}], expected [{expected.Schema}].[{expected.Prefix}…] named after the file");
+        }
+
+        // Checks
+        files.ShouldNotBeEmpty("No type, view, trigger or function was found: the check reads nothing");
+        problems.ShouldBeEmpty("These objects break the naming of the SQL conventions (doc/dev/database.md)");
+    }
+
+    /// <summary>
+    /// Every table of the modules is stored on the filegroup Core, and every temporal table keeps its history in the schema History
+    /// </summary>
+    [Fact]
+    public void EveryTableIsOnCoreAndKeepsItsHistoryInHistory()
+    {
+        // Checking every file of the Tables folder
+        List<string> problems = new List<string>();
+        List<string> tables = FindSqlFiles().Where(file => file.StartsWith("Tables\\", StringComparison.OrdinalIgnoreCase)).ToList();
+        foreach (string file in tables)
+        {
+            string text = ReadSqlFile(file);
+            if (!text.Contains(") ON [Core]", StringComparison.Ordinal))
+                problems.Add($"{file}: not stored ON [Core]");
+            string[] parts = file.Split('\\');
+            string expectedHistory = $"HISTORY_TABLE = [History].[{parts[1]}_{Path.GetFileNameWithoutExtension(parts[^1])}]";
+            if (text.Contains("SYSTEM_VERSIONING = ON", StringComparison.Ordinal) && !text.Contains(expectedHistory, StringComparison.Ordinal))
+                problems.Add($"{file}: temporal, but its history is not {expectedHistory}");
+        }
+
+        // Checks
+        tables.ShouldNotBeEmpty("No table was found: the check reads nothing");
+        problems.ShouldBeEmpty("These tables break the storage rules of doc/dev/database.md");
     }
 
     /// <summary>

@@ -34,6 +34,10 @@ bld/
 [Oo]bj/
 [Ll]og/
 [Ll]ogs/
+# Logs is also the module of the audit in the SQL project (schema Logs, 0.7.0): its folders are source, never output
+!src/BoardGamesPlatform.Database/**/Logs/
+!test/BoardGamesPlatform.Database.Tests/**/Logs/
+!test/BoardGamesPlatform.Database.Tests/Logs/
 
 # Visual Studio 2015/2017 cache/options directory
 .vs/
