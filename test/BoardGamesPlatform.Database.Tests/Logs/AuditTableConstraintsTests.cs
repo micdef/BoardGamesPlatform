@@ -28,6 +28,7 @@ namespace BoardGamesPlatform.Database.Tests.Logs;
 /// row in the audit, whose rows about Logs.Audit can never be purged. Skipped when no throwaway database is configured (see
 /// <see cref="TestDatabase"/>).</para>
 /// </remarks>
+[Collection(AuditSchemaChanges.Name)]
 public sealed class AuditTableConstraintsTests
 {
     #region Members
