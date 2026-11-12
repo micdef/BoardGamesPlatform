@@ -53,7 +53,23 @@ public sealed class AuditTableConstraintsTests
 
     #region Variables
 
-    // #N/A
+    /// <summary>
+    /// Every constraint and trigger of the table, sorted: type and name
+    /// </summary>
+    private static readonly string[] _objects = new string[]
+    {
+        "C|CK_Logs_Audit_Id",
+        "C|CK_Logs_Audit_IdActor",
+        "C|CK_Logs_Audit_LoginName",
+        "C|CK_Logs_Audit_NewValue",
+        "C|CK_Logs_Audit_OldValue",
+        "C|CK_Logs_Audit_SchemaName",
+        "C|CK_Logs_Audit_TableName",
+        "C|CK_Logs_Audit_Values",
+        "PK|PK_Logs_Audit_Id",
+        "TR|TR_Logs_Audit_IOfDelete",
+        "TR|TR_Logs_Audit_IOfUpdate",
+    };
 
     #endregion
 
@@ -151,6 +167,37 @@ public sealed class AuditTableConstraintsTests
 
         // Check
         await SqlBatch.ShouldFailWithAsync(connection, sql, ConstraintViolation, token);
+    }
+
+    /// <summary>
+    /// The table holds exactly its constraints and its two triggers, every CHECK enabled and trusted, every trigger enabled
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> a CHECK re-enabled WITH NOCHECK (not trusted) or a disabled trigger leaves the table open without any refusal for the
+    /// tests above to catch; the temporary triggers of the other test classes (TR_Test_…) exist only during their test and are not read.</para>
+    /// </remarks>
+    [Fact]
+    public async Task TheTableHoldsExactlyItsConstraintsAndTriggersEnabledAsync()
+    {
+        // Reading the constraints and the triggers of the table, and those disabled or not trusted
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using SqlConnection connection = await TestDatabase.OpenAsync(token);
+        List<string> objects = new List<string>();
+        await using (SqlCommand command = new SqlCommand(
+            "SELECT RTRIM([type]), [name] FROM [sys].[objects] WHERE [parent_object_id] = OBJECT_ID(N'[Logs].[Audit]') AND [type] IN ('C', 'PK', 'UQ', 'F', 'TR') AND [name] NOT LIKE N'TR[_]Test[_]%';", connection))
+        {
+            await using SqlDataReader reader = await command.ExecuteReaderAsync(token);
+            while (await reader.ReadAsync(token))
+                objects.Add($"{reader.GetString(0)}|{reader.GetString(1)}");
+        }
+        int weak = (int)(await SqlBatch.ScalarAsync(connection, """
+            SELECT (SELECT COUNT(*) FROM [sys].[check_constraints] WHERE [parent_object_id] = OBJECT_ID(N'[Logs].[Audit]') AND ([is_disabled] = 1 OR [is_not_trusted] = 1))
+                + (SELECT COUNT(*) FROM [sys].[triggers] WHERE [parent_id] = OBJECT_ID(N'[Logs].[Audit]') AND [is_disabled] = 1);
+            """, token))!;
+
+        // Checks
+        objects.Order(StringComparer.Ordinal).ShouldBe(_objects);
+        weak.ShouldBe(0, "Every CHECK constraint of the audit must be enabled and trusted, and every trigger enabled");
     }
 
     /// <summary>
