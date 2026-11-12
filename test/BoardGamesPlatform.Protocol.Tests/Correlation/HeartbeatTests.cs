@@ -608,14 +608,34 @@ public sealed class HeartbeatTests
             }
         }, token);
 
-        // Sending a short request at every interval, each one read by the server before the clock moves, then given up by its caller
+        // Sending a short request at every interval, each one read by the server before the clock moves, then given up by its caller. The
+        // client closes on a task of its own once the clock passes its timeout: a request sent while it closes may never be written, so the read
+        // is waited for together with the close, never alone
         int intervals = (int)(_timings.ClientTimeout / _timings.PingInterval) + 3;
         for (int interval = 0; interval < intervals && !client.Completion.IsCompleted; interval++)
         {
             using CancellationTokenSource caller = new CancellationTokenSource();
+            using CancellationTokenSource readWait = CancellationTokenSource.CreateLinkedTokenSource(token);
             Task<ReadOnlyMemory<byte>> pending = client.SendAsync(new byte[] { 7 }, caller.Token);
-            await requestRead.WaitAsync(token);
-            clock.Advance(_timings.PingInterval);
+            Task read = requestRead.WaitAsync(readWait.Token);
+            bool isRead = await Task.WhenAny(read, client.Completion) == read;
+            if (isRead)
+            {
+                clock.Advance(_timings.PingInterval);
+            }
+            else
+            {
+                // The client closed before the request was read: no longer waiting for it (the read may still have ended at the same time)
+                await readWait.CancelAsync();
+                try
+                {
+                    await read;
+                }
+                catch (OperationCanceledException)
+                {
+                    // The wait given up, as asked
+                }
+            }
             await caller.CancelAsync();
             await Should.ThrowAsync<Exception>(() => pending);
         }
