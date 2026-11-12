@@ -136,7 +136,7 @@ A ledger table would refuse all of these to the administrators too, but it can n
 `Logs.SP_Logs_Audit_Purge @Before DATE` deletes the audit rows written before `@Before` (UTC), and only them:
 
 1. `@Before` must be earlier than today (UTC): the rows of the current day are never purged; a `NULL` date is refused.
-2. The key `AllowAuditPurge` must not be set yet in the session: a key set read-only (`@read_only = 1`) could not be closed afterwards, so the purge refuses to start.
+2. The key `AllowAuditPurge` must not be set yet in the session: a key set read-only (`@read_only = 1`) could not be closed afterwards, so the purge refuses to start (51000). A key set read-only to NULL passes that check, and the engine then refuses to open the gate (15664): the purge fails before any delete, rolled back (found by the security review of the code).
 3. In one transaction, it opens the gate (`sp_set_session_context N'AllowAuditPurge', 1`) just before the delete, deletes the rows, closes the gate (`NULL`), then writes **one audit row of the purge itself** (the date given, the number of rows deleted, the oldest and the newest `ActionDT` deleted).
 4. **The rows that record a purge are never purged** (the rows about `Logs.Audit` itself, which only the purge writes): the chain of the purges stays complete, so a purge can never hide an earlier one.
 5. On any error, it rolls back, closes the gate and rethrows: no partial purge. The only case where the gate stays open in the session is a client that cancels the call (an attention is not caught by `CATCH`); the session is then the one of an administrator, and its reuse from a pool clears the key.

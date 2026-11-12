@@ -18,7 +18,7 @@
  *	BIT : 1 when a base table of that name exists in that schema, 0 otherwise (a view, a NULL name included)
  *
  *	Behavior :
- *	-----------
+ *	----------
  *	Reads INFORMATION_SCHEMA.TABLES, whose rows are those the caller may see: the caller needs the right to read the metadata (VIEW DEFINITION),
  *	which the application role holds. Used by the CHECK constraint of Logs.Audit and by Logs.SP_Logs_Audit_Insert, so that an audit row
  *	always names a real table.

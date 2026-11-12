@@ -17,7 +17,7 @@
  *	  Logs.SP_Logs_Audit_Purge, inside its transaction
  *
  *	Behavior :
- *	-----------
+ *	----------
  *	The gate only protects against a DELETE by mistake: the session key can be set by anyone, so the real barrier is the right to delete,
  *	which only dbo and the administrators of the database hold. The application role holds no right on the schema Logs.
  *	The key is read once, into a variable, before any statement that touches rows, and the delete runs serially (MAXDOP 1): SQL Server 2025
