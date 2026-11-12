@@ -207,12 +207,13 @@ public sealed class LinkRenewalTests
             await WaitUntilAsync(() => connector.Opened.Count == 2);
             await connector.Opened[0].Disposed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
-            // Checks
+            // Checks; the renewal is logged once the old connection ended, by a task of its own: waited for before the client is disposed,
+            // since a client disposed first logs the old connection as closed by the disposal
             connector.Opened.Count.ShouldBe(2);
             await PingAsync(client);
             connector.Opened.Count.ShouldBe(2);
+            await WaitUntilAsync(() => _logger.Entries.Any(entry => entry.Message.Contains("renewed", StringComparison.Ordinal)));
         }
-        _logger.Entries.ShouldContain(entry => entry.Message.Contains("renewed", StringComparison.Ordinal));
 
         // Stopping the peer
         await stopping.CancelAsync();

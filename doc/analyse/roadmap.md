@@ -93,6 +93,14 @@ Other UIs   ┘
 - **Tests**: test vectors, man-in-the-middle proxy, replay, downgrade, tampered AES-GCM frames.
 - **Branches**, in order: `docs/handshake-threat-model` (the specification and the threat model, reviewed by the security reviewer before any code), `feature/ecdh-handshake`, `feature/secure-channel`.
 
+#### 0.6.1 — Complexity tests [SEC]
+
+- **Content**: tests of time and space complexity for the hot paths of the protocol, asked by the project lead after 0.6.0. They found fixes: a frame written, a request written or read, and a record of the secure channel no longer make a second copy of their content, and the erasure of a record read covers its own bytes only. Every request and response written is read back with the rules of the reader before it is sent.
+- **Done**: each hot path has a test of its cost per byte and of its fixed cost, which fails on the regression it names (the read of a record had nothing to fix: its test keeps it so); the bytes on the wire do not change.
+- **Tests**: `AllocationMeter`, the complexity tests of the frames, the envelopes and the records, the erasure of the records, the writer of the messages against the rules of the reader.
+- **Branches**, in order: `perf/frame-allocations`, `perf/secure-record-allocations`, then `fix/request-write-check` (found in the review of the changelog).
+- **Prerequisite**: the .NET SDK 10.0.404 and the runtime 10.0.15, which fix 17 CVEs.
+
 #### 0.7.0 — Database foundation [SEC]
 
 - **Content**: schemas, filegroups, temporal tables, immutable audit, table-valued parameter and JSON-result patterns; `DEV_`, `ACC_` and `TEST_` databases; one application SQL user per database with a random password stored in a vault; the vault also holds the passwords of the PFX of the tiers (`Tls:CertificatePassword`, an environment variable of the service since 0.5.0); the deployment script.
@@ -268,6 +276,7 @@ If time runs short, these versions can move to 1.1 without affecting the core: *
 | Unit | Framing, serialization, cryptography helpers, token hashing, validation | 0.3.0 |
 | Integration — network and security | Real loopback sockets, mutual TLS cases, handshake (man in the middle, replay, downgrade, test vectors), reconnection | 0.3.0 to 0.6.0 |
 | SQL | Stored procedures called through the real application user: JSON results, table-valued parameters, permissions, temporal history, immutable audit | 0.3.0 |
+| Complexity | Bytes allocated per byte and fixed cost of the hot paths (frames, envelopes, records), counted on the thread of the test; work counted in operations, never in time (`doc/dev/complexity.md`) | 0.6.1 |
 | End-to-end | A headless client through the five tiers | 0.3.0 |
 | UI | Blazor component tests | 0.15.0 |
 

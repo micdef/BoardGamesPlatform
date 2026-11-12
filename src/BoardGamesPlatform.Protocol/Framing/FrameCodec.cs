@@ -6,7 +6,9 @@
  */
 
 // Using
+using System.Buffers;
 using System.Buffers.Binary;
+using System.Security.Cryptography;
 
 // Static using
 // #N/A
@@ -186,9 +188,10 @@ public sealed class FrameCodec
     /// Method used to write one frame to a stream
     /// </summary>
     /// <remarks>
-    /// <para><b>Behavior:</b> builds the header and the payload into one buffer, writes it in a single call and flushes the stream: a small
-    /// frame leaves as one network segment (one TLS record from 0.5.0) instead of two. A payload larger than the maximum is refused before
-    /// anything is written. The payload must not be modified until the returned task completes.</para>
+    /// <para><b>Behavior:</b> builds the header and the payload into one buffer taken from the shared pool (never a new one per frame, and
+    /// erased before it goes back), writes it in a single call and flushes the stream: a small frame leaves as one network segment (one TLS
+    /// record from 0.5.0) instead of two. A payload larger than the maximum is refused before anything is written. The payload must not be
+    /// modified until the returned task completes.</para>
     /// <para>The same as <see cref="WriteAsync(Stream, Frame, Action?, CancellationToken)"/>, without telling the progress.</para>
     /// <para>After an exception, see the connection rule of <see cref="FrameCodec"/>: the connection is closed. A canceled write has an
     /// unknown outcome: the frame may have been sent in full, in part or not at all.</para>
@@ -213,11 +216,14 @@ public sealed class FrameCodec
     /// Method used to write one frame to a stream, telling the caller when its bytes leave
     /// </summary>
     /// <remarks>
-    /// <para><b>Behavior:</b> builds the header and the payload into one buffer. A frame up to <see cref="WriteChunkLength"/> bytes, header
-    /// included, is written in a single call, so that a small frame leaves as one network segment (one TLS record from 0.5.0). A larger frame
-    /// is written in pieces of that length, and <paramref name="onProgress"/> is called after each one: the bytes keep leaving, so the peer
-    /// is reading them. The stream is flushed at the end. A payload larger than the maximum is refused before anything is written. The payload
-    /// must not be modified until the returned task completes.</para>
+    /// <para><b>Behavior:</b> builds the header and the payload into one buffer taken from the shared pool, so that a frame allocates no
+    /// buffer of its size. The bytes of the frame are erased before the buffer goes back, since a payload may hold a secret: this erases the
+    /// copy of the codec only, never the payload of the caller. The stream must not touch the buffer once its write task ended, as the
+    /// contract of <see cref="Stream"/> requires. A frame up to
+    /// <see cref="WriteChunkLength"/> bytes, header included, is written in a single call, so that a small frame leaves as one network
+    /// segment (one TLS record from 0.5.0). A larger frame is written in pieces of that length, and <paramref name="onProgress"/> is called
+    /// after each one: the bytes keep leaving, so the peer is reading them. The stream is flushed at the end. A payload larger than the
+    /// maximum is refused before anything is written. The payload must not be modified until the returned task completes.</para>
     /// <para>After an exception, see the connection rule of <see cref="FrameCodec"/>: the connection is closed. A canceled write has an
     /// unknown outcome: the frame may have been sent in full, in part or not at all.</para>
     /// </remarks>
@@ -242,20 +248,31 @@ public sealed class FrameCodec
         if (frame.Payload.Length > _maxPayloadLength)
             throw new ArgumentException($"The payload of the frame ({frame.Payload.Length} bytes) is larger than the maximum length ({_maxPayloadLength} bytes)", nameof(frame));
 
-        // Setting the whole frame in one buffer: the header, then the payload
-        byte[] buffer = new byte[HeaderLength + frame.Payload.Length];
-        BinaryPrimitives.WriteUInt32BigEndian(buffer.AsSpan(0, 4), (uint)frame.Payload.Length);
-        BinaryPrimitives.WriteUInt64BigEndian(buffer.AsSpan(4, 8), frame.CorrelationId);
-        frame.Payload.Span.CopyTo(buffer.AsSpan(HeaderLength));
-
-        // Writing the frame in a single call when it is small, else piece by piece, telling the progress after each piece
-        for (int offset = 0; offset < buffer.Length; offset += WriteChunkLength)
+        // Setting the whole frame in one buffer of the shared pool, which may be longer than the frame: the header, then the payload
+        int frameLength = HeaderLength + frame.Payload.Length;
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(frameLength);
+        try
         {
-            int length = Math.Min(WriteChunkLength, buffer.Length - offset);
-            await stream.WriteAsync(buffer.AsMemory(offset, length), cancellationToken).ConfigureAwait(false);
-            onProgress?.Invoke();
+            BinaryPrimitives.WriteUInt32BigEndian(buffer.AsSpan(0, 4), (uint)frame.Payload.Length);
+            BinaryPrimitives.WriteUInt64BigEndian(buffer.AsSpan(4, 8), frame.CorrelationId);
+            frame.Payload.Span.CopyTo(buffer.AsSpan(HeaderLength));
+
+            // Writing the frame in a single call when it is small, else piece by piece, telling the progress after each piece
+            for (int offset = 0; offset < frameLength; offset += WriteChunkLength)
+            {
+                int length = Math.Min(WriteChunkLength, frameLength - offset);
+                await stream.WriteAsync(buffer.AsMemory(offset, length), cancellationToken).ConfigureAwait(false);
+                onProgress?.Invoke();
+            }
+            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
-        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        finally
+        {
+            // Erasing the bytes of the frame, whatever the write did, then giving the buffer back: the next one who takes it never reads this
+            // payload. Only the bytes written are erased, never the whole buffer, which the pool may have made up to twice as long
+            CryptographicOperations.ZeroMemory(buffer.AsSpan(0, frameLength));
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
 
     /// <summary>
