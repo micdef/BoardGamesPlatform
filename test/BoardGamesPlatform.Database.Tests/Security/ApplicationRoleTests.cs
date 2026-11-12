@@ -64,8 +64,26 @@ public sealed class ApplicationRoleTests
         "SCHEMA|EXECUTE|GRANT|ServerCore",
         "SCHEMA|EXECUTE|GRANT|StorProc",
         "SCHEMA|EXECUTE|GRANT|Types",
-        "SCHEMA|REFERENCES|GRANT|Types",
         "SCHEMA|SELECT|GRANT|Views",
+    };
+
+    /// <summary>
+    /// The only permissions of the role AuditPurgeRole: class, permission, state, and schema.object or schema
+    /// </summary>
+    private static readonly string[] _purgeRolePermissions = new string[]
+    {
+        "OBJECT_OR_COLUMN|EXECUTE|GRANT|Logs.SP_Logs_Audit_Purge",
+        "SCHEMA|VIEW DEFINITION|GRANT|Logs",
+    };
+
+    /// <summary>
+    /// The permissions of public on the audit table: no user but dbo writes it
+    /// </summary>
+    private static readonly string[] _publicAuditPermissions = new string[]
+    {
+        "OBJECT_OR_COLUMN|DELETE|DENY|Logs.Audit",
+        "OBJECT_OR_COLUMN|INSERT|DENY|Logs.Audit",
+        "OBJECT_OR_COLUMN|UPDATE|DENY|Logs.Audit",
     };
 
     #endregion
@@ -139,6 +157,37 @@ public sealed class ApplicationRoleTests
         return expected.Order(StringComparer.Ordinal).ToList();
     }
 
+    /// <summary>
+    /// Method used to read the permissions held on objects and on schemas (not on the database) by a principal, outside the schema sys
+    /// </summary>
+    /// <param name="connection">[Cannot be null] Open connection</param>
+    /// <param name="principalName">[Cannot be null] Name of the role</param>
+    /// <param name="cancellationToken">Token of the test</param>
+    /// <returns>
+    /// Every permission, as class|permission|state|schema.object (or class|permission|state|schema for a schema), sorted
+    /// </returns>
+    private static async Task<List<string>> ReadObjectPermissionsAsync(SqlConnection connection, string principalName, CancellationToken cancellationToken)
+    {
+        // Reading the permissions on objects and schemas
+        const string PermissionsSql = """
+            SELECT p.[class_desc], p.[permission_name], p.[state_desc], s.[Securable]
+            FROM [sys].[database_permissions] p
+            JOIN [sys].[database_principals] r ON (r.[principal_id] = p.[grantee_principal_id])
+            CROSS APPLY (SELECT IIF(p.[class_desc] = N'SCHEMA', SCHEMA_NAME(p.[major_id]),
+                CONCAT(OBJECT_SCHEMA_NAME(p.[major_id]), N'.', OBJECT_NAME(p.[major_id]))) AS [Securable]) s
+            WHERE r.[name] = @PrincipalName AND p.[class_desc] IN (N'OBJECT_OR_COLUMN', N'SCHEMA') AND s.[Securable] NOT LIKE N'sys%'
+            """;
+        List<string> permissions = new List<string>();
+        await using SqlCommand command = new SqlCommand(PermissionsSql, connection);
+        command.Parameters.Add("@PrincipalName", SqlDbType.NVarChar, 128).Value = principalName;
+        await using SqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            permissions.Add($"{reader.GetString(0)}|{reader.GetString(1)}|{reader.GetString(2)}|{reader.GetString(3)}");
+
+        // Function's return
+        return permissions.Order(StringComparer.Ordinal).ToList();
+    }
+
     #endregion
 
     #region Publics
@@ -187,6 +236,27 @@ public sealed class ApplicationRoleTests
         // Checks
         permissions.Order(StringComparer.Ordinal).ToList().ShouldBe(ExpectedPermissions());
         memberships.ShouldBe(0, "The application role must belong to no other role");
+    }
+
+    /// <summary>
+    /// The role AuditPurgeRole only executes the purge, and public is denied every write of the audit table
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> the DENY to public is the barrier of the audit (doc/dev/database.md, The audit): losing it, or a right added to the
+    /// purge role, must break the build. The permissions of public on the objects of sys (granted by SQL Server itself) are not read.</para>
+    /// </remarks>
+    [Fact]
+    public async Task ThePurgeRoleAndTheDeniesOfPublicAreExactAsync()
+    {
+        // Reading the permissions on objects of the purge role and of public
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using SqlConnection connection = await TestDatabase.OpenAsync(token);
+        List<string> purgeRole = await ReadObjectPermissionsAsync(connection, "AuditPurgeRole", token);
+        List<string> publicRole = await ReadObjectPermissionsAsync(connection, "public", token);
+
+        // Checks
+        purgeRole.ShouldBe(_purgeRolePermissions);
+        publicRole.ShouldBe(_publicAuditPermissions);
     }
 
     /// <summary>

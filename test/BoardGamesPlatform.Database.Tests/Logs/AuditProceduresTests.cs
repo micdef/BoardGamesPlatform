@@ -150,22 +150,95 @@ public sealed class AuditProceduresTests
     }
 
     /// <summary>
+    /// Method used to create a temporary table of the schema Logs, that the old audit rows of a test name as their changed table
+    /// </summary>
+    /// <param name="connection">[Cannot be null] Open connection, as the owner of the database</param>
+    /// <param name="cancellationToken">Token of the test</param>
+    /// <returns>
+    /// The name of the table (from a GUID: safe to put in the batches); the test drops it with <see cref="DropTargetTableAsync"/>
+    /// </returns>
+    /// <remarks>
+    /// <para><b>Purpose:</b> the purge never deletes the rows about Logs.Audit itself (they record the purges), so the rows a purge test expects to
+    /// be deleted must name another table. The CHECK constraints of the audit only check the table when a row is written: a row keeps naming
+    /// the table after it is dropped.</para>
+    /// </remarks>
+    private static async Task<string> CreateTargetTableAsync(SqlConnection connection, CancellationToken cancellationToken)
+    {
+        // Creating the table
+        string tableName = $"TestAuditTarget_{Guid.NewGuid():N}";
+        await SqlBatch.ExecuteAsync(connection, $"CREATE TABLE [Logs].[{tableName}] ([Id] INT NOT NULL) ON [Core];", cancellationToken);
+
+        // Function's return
+        return tableName;
+    }
+
+    /// <summary>
+    /// Method used to drop a temporary table made by <see cref="CreateTargetTableAsync"/>, if it exists
+    /// </summary>
+    /// <param name="connection">[Cannot be null] Open connection, as the owner of the database</param>
+    /// <param name="tableName">[Cannot be null] Name of the table</param>
+    /// <returns>
+    /// A task that completes when the table is dropped
+    /// </returns>
+    private static async Task DropTargetTableAsync(SqlConnection connection, string tableName)
+    {
+        // Dropping the table
+        await SqlBatch.ExecuteAsync(connection, $"IF OBJECT_ID(N'[Logs].[{tableName}]', N'U') IS NOT NULL DROP TABLE [Logs].[{tableName}];", CancellationToken.None);
+    }
+
+    /// <summary>
     /// Method used to write an audit row dated in the past, directly in the table, as its owner
     /// </summary>
     /// <param name="connection">[Cannot be null] Open connection, as the owner of the database</param>
+    /// <param name="tableName">[Cannot be null] Table of the schema Logs that the row names as its changed table</param>
     /// <param name="actionDate">[Cannot be null] Date and time of the row, in T-SQL form ('2001-01-01T10:00:00')</param>
     /// <param name="marker">[Cannot be null] Marker of the test (a GUID)</param>
     /// <param name="cancellationToken">Token of the test</param>
     /// <returns>
     /// A task that completes when the row is written
     /// </returns>
-    private static async Task WriteOldRowAsync(SqlConnection connection, string actionDate, string marker, CancellationToken cancellationToken)
+    private static async Task WriteOldRowAsync(SqlConnection connection, string tableName, string actionDate, string marker, CancellationToken cancellationToken)
     {
         // Writing the row
         await SqlBatch.ExecuteAsync(connection, $$"""
             INSERT INTO [Logs].[Audit] ([IdActor], [ActionDT], [SchemaName], [TableName], [NewValue])
-            VALUES ('{{SystemActorId}}', '{{actionDate}}', N'Logs', N'Audit', N'{"marker":"{{marker}}"}');
+            VALUES ('{{SystemActorId}}', '{{actionDate}}', N'Logs', N'{{tableName}}', N'{"marker":"{{marker}}"}');
             """, cancellationToken);
+    }
+
+    /// <summary>
+    /// Method used to play a user without login, member of a role, for one check, then to drop it
+    /// </summary>
+    /// <param name="connection">[Cannot be null] Open connection, as the owner of the database</param>
+    /// <param name="roleName">[Cannot be null] Role of the user (a fixed role such as db_owner, or a role of the project)</param>
+    /// <param name="check">[Cannot be null] The check, run while acting as the user</param>
+    /// <param name="cancellationToken">Token of the test</param>
+    /// <returns>
+    /// A task that completes when the check has run and the user is dropped, even when the check failed
+    /// </returns>
+    private static async Task AsMemberOfAsync(SqlConnection connection, string roleName, Func<Task> check, CancellationToken cancellationToken)
+    {
+        // Creating the user, member of the role
+        string userName = $"TestAuditUser_{Guid.NewGuid():N}";
+        await SqlBatch.ExecuteAsync(connection, $"CREATE USER [{userName}] WITHOUT LOGIN; ALTER ROLE [{roleName}] ADD MEMBER [{userName}];", cancellationToken);
+        try
+        {
+            // Acting as the user for the check
+            await SqlBatch.ExecuteAsync(connection, $"EXECUTE AS USER = N'{userName}';", cancellationToken);
+            try
+            {
+                await check();
+            }
+            finally
+            {
+                await SqlBatch.ExecuteAsync(connection, "EXEC [sys].[sp_set_session_context] @key = N'AllowAuditPurge', @value = NULL; REVERT;", CancellationToken.None);
+            }
+        }
+        finally
+        {
+            // Dropping the user
+            await SqlBatch.ExecuteAsync(connection, $"ALTER ROLE [{roleName}] DROP MEMBER [{userName}]; DROP USER [{userName}];", CancellationToken.None);
+        }
     }
 
     /// <summary>
@@ -342,6 +415,22 @@ public sealed class AuditProceduresTests
     }
 
     /// <summary>
+    /// The purge refuses to start when the key of its gate is already set in the session: a key set read-only could not be closed afterwards
+    /// </summary>
+    [Fact]
+    public async Task ThePurgeRefusesAGateAlreadySetInTheSessionAsync()
+    {
+        // Setting the key read-only, then calling the purge, in a session of its own (a read-only key stays until the session ends)
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using SqlConnection connection = await TestDatabase.OpenAsync(builder => builder.Pooling = false, token);
+        await SqlBatch.ExecuteAsync(connection, "EXEC [sys].[sp_set_session_context] @key = N'AllowAuditPurge', @value = 0, @read_only = 1;", token);
+
+        // Check: the refusal of the purge itself (51000), not the error of a key that cannot be changed (15664)
+        await SqlBatch.ShouldFailWithAsync(connection, "DECLARE @result NVARCHAR(MAX); EXEC [Logs].[SP_Logs_Audit_Purge] @Before = '2001-01-01', @Result = @result OUTPUT;",
+            SqlBatch.CheckFailed, token);
+    }
+
+    /// <summary>
     /// The purge deletes the rows written before its date and only them, returns what it deleted, records itself in the audit, and leaves the
     /// gate closed
     /// </summary>
@@ -353,16 +442,18 @@ public sealed class AuditProceduresTests
         await using SqlConnection connection = await TestDatabase.OpenAsync(token);
         string olderMarker = Guid.NewGuid().ToString("N");
         string newerMarker = Guid.NewGuid().ToString("N");
-        await WriteOldRowAsync(connection, "2001-01-01T10:00:00", olderMarker, token);
-        await WriteOldRowAsync(connection, "2001-01-03T10:00:00", newerMarker, token);
+        string tableName = await CreateTargetTableAsync(connection, token);
         try
         {
+            await WriteOldRowAsync(connection, tableName, "2001-01-01T10:00:00", olderMarker, token);
+            await WriteOldRowAsync(connection, tableName, "2001-01-03T10:00:00", newerMarker, token);
+            string startedAt = (string)(await SqlBatch.ScalarAsync(connection, "SELECT CONVERT(NVARCHAR(30), SYSUTCDATETIME(), 126);", token))!;
             string result = await PurgeAsync(connection, "'2001-01-02'", token);
 
-            // Reading the result and what is left
+            // Reading the result and what is left (the row of this purge only: an earlier run of the test wrote the same JSON)
             using JsonDocument document = JsonDocument.Parse(result);
             int purgeRows = (int)(await SqlBatch.ScalarAsync(connection,
-                $"SELECT COUNT(*) FROM [Logs].[Audit] WHERE [NewValue] = N'{result.Replace("'", "''", StringComparison.Ordinal)}' AND [OldValue] IS NULL;", token))!;
+                $"SELECT COUNT(*) FROM [Logs].[Audit] WHERE [NewValue] = N'{result.Replace("'", "''", StringComparison.Ordinal)}' AND [OldValue] IS NULL AND [ActionDT] >= '{startedAt}';", token))!;
             object? gate = await SqlBatch.ScalarAsync(connection, "SELECT SESSION_CONTEXT(N'AllowAuditPurge');", token);
 
             // Checks
@@ -377,8 +468,84 @@ public sealed class AuditProceduresTests
         }
         finally
         {
-            // Purging the rows of 2001 left by the test
+            // Purging the rows of 2001 left by the test, then dropping its table
             await PurgeAsync(connection, "'2001-12-31'", CancellationToken.None);
+            await DropTargetTableAsync(connection, tableName);
+        }
+    }
+
+    /// <summary>
+    /// The purge never deletes the rows that record a purge (the rows about Logs.Audit itself), whatever their date
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> the old row about Logs.Audit written by this test stays in the audit for good, as the rows of real purges do.</para>
+    /// </remarks>
+    [Fact]
+    public async Task ThePurgeNeverDeletesTheRowsOfEarlierPurgesAsync()
+    {
+        // Writing an old row about Logs.Audit, as an earlier purge would have, then purging after its date
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using SqlConnection connection = await TestDatabase.OpenAsync(token);
+        string marker = Guid.NewGuid().ToString("N");
+        await WriteOldRowAsync(connection, "Audit", "2001-02-01T10:00:00", marker, token);
+        await PurgeAsync(connection, "'2001-12-31'", token);
+
+        // Check
+        (await CountMarkedRowsAsync(connection, marker, token)).ShouldBe(1);
+    }
+
+    /// <summary>
+    /// No user but dbo can delete an audit row, even with the key of the gate set: neither a member of db_datawriter, nor a member of db_owner
+    /// </summary>
+    /// <param name="roleName">Fixed role of the user</param>
+    /// <remarks>
+    /// <para><b>Purpose:</b> the gate is not a barrier, since anyone can set its key; the barrier is the DENY of the table to public (security
+    /// review of doc/dev/database.md, finding B2).</para>
+    /// </remarks>
+    [Theory]
+    [InlineData("db_datawriter")]
+    [InlineData("db_owner")]
+    public async Task AUserWithTheGateSetStillCannotDeleteTheAuditAsync(string roleName)
+    {
+        // Writing a row, then trying to delete it as a member of the role, with the key set
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using SqlConnection connection = await TestDatabase.OpenAsync(token);
+        string marker = Guid.NewGuid().ToString("N");
+        await SqlBatch.ExecuteAsync(connection, InsertBatch($"'{SystemActorId}', N'Logs', N'Audit', NULL, N'{{\"marker\":\"{marker}\"}}'"), token);
+        await AsMemberOfAsync(connection, roleName, () => SqlBatch.ShouldFailWithAsync(connection,
+            $"EXEC [sys].[sp_set_session_context] @key = N'AllowAuditPurge', @value = 1; DELETE FROM [Logs].[Audit] WHERE [NewValue] LIKE N'%{marker}%';",
+            SqlBatch.PermissionDenied, token), token);
+
+        // Check
+        (await CountMarkedRowsAsync(connection, marker, token)).ShouldBe(1);
+    }
+
+    /// <summary>
+    /// A member of the role AuditPurgeRole purges the audit, without any right on the table itself
+    /// </summary>
+    [Fact]
+    public async Task AMemberOfThePurgeRoleCanPurgeAsync()
+    {
+        // Writing an old row, then purging as a member of the role
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using SqlConnection connection = await TestDatabase.OpenAsync(token);
+        string marker = Guid.NewGuid().ToString("N");
+        string tableName = await CreateTargetTableAsync(connection, token);
+        try
+        {
+            await WriteOldRowAsync(connection, tableName, "2001-03-01T10:00:00", marker, token);
+            await AsMemberOfAsync(connection, "AuditPurgeRole", async () =>
+            {
+                await PurgeAsync(connection, "'2001-12-31'", token);
+                await SqlBatch.ShouldFailWithAsync(connection, "SELECT COUNT(*) FROM [Logs].[Audit];", SqlBatch.PermissionDenied, token);
+            }, token);
+
+            // Check
+            (await CountMarkedRowsAsync(connection, marker, token)).ShouldBe(0);
+        }
+        finally
+        {
+            await DropTargetTableAsync(connection, tableName);
         }
     }
 
@@ -414,9 +581,10 @@ public sealed class AuditProceduresTests
         await using SqlConnection connection = await TestDatabase.OpenAsync(token);
         string marker = Guid.NewGuid().ToString("N");
         string triggerName = $"TR_Test_Audit_FailDelete_{Guid.NewGuid():N}";
-        await WriteOldRowAsync(connection, "2001-06-01T10:00:00", marker, token);
+        string tableName = await CreateTargetTableAsync(connection, token);
         try
         {
+            await WriteOldRowAsync(connection, tableName, "2001-06-01T10:00:00", marker, token);
             await SqlBatch.ExecuteAsync(connection, $"EXEC (N'CREATE TRIGGER [Logs].[{triggerName}] ON [Logs].[Audit] AFTER DELETE AS THROW {ForcedFailure}, ''Forced failure'', 1;');", token);
             await SqlBatch.ShouldFailWithAsync(connection, "DECLARE @result NVARCHAR(MAX); EXEC [Logs].[SP_Logs_Audit_Purge] @Before = '2001-12-31', @Result = @result OUTPUT;",
                 ForcedFailure, token);
@@ -431,6 +599,7 @@ public sealed class AuditProceduresTests
             // Dropping the trigger, then purging the rows of 2001 left by the test
             await SqlBatch.ExecuteAsync(connection, $"IF OBJECT_ID(N'[Logs].[{triggerName}]', N'TR') IS NOT NULL DROP TRIGGER [Logs].[{triggerName}];", CancellationToken.None);
             await PurgeAsync(connection, "'2001-12-31'", CancellationToken.None);
+            await DropTargetTableAsync(connection, tableName);
         }
     }
 

@@ -27,7 +27,8 @@
  *	* Schema StorProc		| GRANT EXECUTE								| The writes												*
  *	* Schema ServerCore		| GRANT EXECUTE								| The Ping													*
  *	* Schema Views			| GRANT SELECT								| The reads													*
- *	* Schema Types			| GRANT EXECUTE, REFERENCES					| To declare and pass the table-valued parameters			*
+ *	* Schema Types			| GRANT EXECUTE								| To declare and pass the table-valued parameters (REFERENCES	*
+ *	*						|											|   is not needed: proved by the security review)			*
  *	* Database				| GRANT VIEW DEFINITION						| To read the metadata; the checks of the audit depend on it	*
  *	* Schemas Logs,			| DENY SELECT, INSERT, UPDATE, DELETE,		| Internal: reached only through the procedures and views	*
  *	*   Platform, History,	|   EXECUTE, ALTER, REFERENCES,				| CONTROL is NOT denied: it would also deny VIEW DEFINITION	*
@@ -46,8 +47,6 @@ GO
 GRANT SELECT ON SCHEMA::[Views] TO [ApplicationRole];
 GO
 GRANT EXECUTE ON SCHEMA::[Types] TO [ApplicationRole];
-GO
-GRANT REFERENCES ON SCHEMA::[Types] TO [ApplicationRole];
 GO
 
 /* Metadata */

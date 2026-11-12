@@ -89,6 +89,8 @@
     <Build Include="Schemas\Types.sql" />
     <Build Include="Schemas\Views.sql" />
     <Build Include="Security\ApplicationRole.sql" />
+    <Build Include="Security\AuditPurgeRole.sql" />
+    <Build Include="Security\AuditTablePermissions.sql" />
     <Build Include="StoredProcedures\Logs\Audit\SP_Logs_Audit_Insert.sql" />
     <Build Include="StoredProcedures\Logs\Audit\SP_Logs_Audit_Purge.sql" />
     <Build Include="StoredProcedures\ServerCore\Server\SP_ServerCore_Server_Ping.sql" />

@@ -20,6 +20,8 @@
  *	*************************************************************************************************************************************
  *	* 51000	| Before is NULL				| The date of the purge is required															*
  *	* 51000	| Before is today or later (UTC)| The date of the purge must be earlier than today (UTC): the rows of the current day stay	*
+ *	* 51000	| AllowAuditPurge already set	| The gate of the purge is already set in this session: a key set read-only could not be	*
+ *	*		|   in the session				|   closed afterwards, so the purge refuses to start										*
  *	*************************************************************************************************************************************
  *
  *	Response Structure :
@@ -50,12 +52,14 @@
  *
  *	Behavior :
  *	-----------
- *	In one transaction, the procedure opens the gate of the delete trigger (session key AllowAuditPurge = 1), deletes the rows written before
- *	the date, closes the gate (NULL), then writes one audit row of the purge itself (actor: the platform; login: the administrator who ran it;
- *	new value: the JSON returned). That row is dated today, so no purge of the same day can delete it: a purge always leaves a trace. On any
- *	error, everything is rolled back, the gate is closed, and the error is rethrown. The procedure lives in the schema Logs, which the
- *	application role cannot execute: a purge is an act of administration, never of the platform. The archive of the rows before their purge is
- *	a decision of the project lead (doc/dev/database.md, Decisions left to the project lead).
+ *	In one transaction, the procedure opens the gate of the delete trigger (session key AllowAuditPurge = 1) just before the delete, deletes the
+ *	rows written before the date, closes the gate (NULL), then writes one audit row of the purge itself (actor: the platform; login: the
+ *	administrator who ran it; new value: the JSON returned). The rows that record a purge (the rows about Logs.Audit itself, which only the purge
+ *	writes) are never deleted: the chain of the purges stays complete, and a purge can never hide an earlier one. On any error, everything is
+ *	rolled back, the gate is closed if the procedure opened it, and the error is rethrown; a client that cancels the call (an attention, not
+ *	caught by CATCH) can leave the gate open in its own session, which the reuse of a pooled connection clears. The procedure lives in the
+ *	schema Logs, which the application role cannot execute: a purge is an act of administration, never of the platform (role AuditPurgeRole).
+ *	The archive of the rows before their purge is a decision of the project lead (doc/dev/database.md, Decisions left to the project lead).
  */
 CREATE PROCEDURE [Logs].[SP_Logs_Audit_Purge]
 	@Before DATE,
@@ -64,6 +68,10 @@ AS
 BEGIN
 	SET NOCOUNT ON;
 	SET XACT_ABORT ON;
+
+	/* Whether this call opened the gate, so that the CATCH closes only a gate of its own */
+	DECLARE @gateOpened BIT = 0;
+
 	BEGIN TRY
 		BEGIN TRANSACTION
 
@@ -77,17 +85,21 @@ BEGIN
 			/* Checks */
 			IF @Before IS NULL THROW 51000, 'The date of the purge is required', 1;
 			IF @Before >= CAST(SYSUTCDATETIME() AS DATE) THROW 51000, 'The date of the purge must be earlier than today (UTC)', 1;
+			IF SESSION_CONTEXT(N'AllowAuditPurge') IS NOT NULL THROW 51000, 'The gate of the purge is already set in this session', 1;
 
 			/* Open the gate */
+			SET @gateOpened = 1;
 			EXEC [sys].[sp_set_session_context] @key = N'AllowAuditPurge', @value = 1;
 
-			/* Delete */
+			/* Delete, except the rows that record a purge */
 			DELETE FROM [Logs].[Audit]
 			OUTPUT deleted.[ActionDT] INTO @purged ([ActionDT])
-			WHERE [ActionDT] < CAST(@Before AS DATETIME2(7));
+			WHERE [ActionDT] < CAST(@Before AS DATETIME2(7))
+				AND NOT ([SchemaName] = N'Logs' AND [TableName] = N'Audit');
 
 			/* Close the gate */
 			EXEC [sys].[sp_set_session_context] @key = N'AllowAuditPurge', @value = NULL;
+			SET @gateOpened = 0;
 
 			/* Output */
 			SET @Result = (
@@ -105,7 +117,8 @@ BEGIN
 	BEGIN CATCH
 		IF @@TRANCOUNT > 0
 			ROLLBACK TRANSACTION;
-		EXEC [sys].[sp_set_session_context] @key = N'AllowAuditPurge', @value = NULL;
+		IF @gateOpened = 1
+			EXEC [sys].[sp_set_session_context] @key = N'AllowAuditPurge', @value = NULL;
 		THROW
 	END CATCH
 END
