@@ -158,6 +158,8 @@ public static class VaultExtensions
         builder.Services.AddSingleton<IValidateOptions<VaultOptions>, VaultOptionsValidator>();
         if (builder.Environment.IsDevelopment())
             builder.Services.AddHostedService<VaultDevelopmentWarningService>();
+        else if (store is null)
+            builder.Services.AddHostedService<VaultMissingWarningService>();
 
         // Function's return
         return store is not null;

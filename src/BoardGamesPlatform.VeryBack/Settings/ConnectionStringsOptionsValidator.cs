@@ -219,10 +219,10 @@ public sealed class ConnectionStringsOptionsValidator : IValidateOptions<Connect
                 return ValidateOptionsResult.Fail($"{ConnectionStringsOptions.SectionName}:{nameof(ConnectionStringsOptions.Main)} must encrypt the " +
                     "connection outside Development: Encrypt=Mandatory (the default) or Encrypt=Strict, never False or Optional");
             }
-            if (builder.TrustServerCertificate && !IsLocalServer(builder.DataSource))
+            if (builder.TrustServerCertificate && (!IsLocalServer(builder.DataSource) || (!string.IsNullOrEmpty(builder.FailoverPartner) && !IsLocalServer(builder.FailoverPartner))))
             {
                 return ValidateOptionsResult.Fail($"{ConnectionStringsOptions.SectionName}:{nameof(ConnectionStringsOptions.Main)} trusts the certificate " +
-                    "of a remote SQL Server outside Development: remove TrustServerCertificate, and give the server a certificate the machine trusts");
+                    "of a remote SQL Server (or failover partner) outside Development: remove TrustServerCertificate, and give the server a certificate the machine trusts");
             }
         }
 

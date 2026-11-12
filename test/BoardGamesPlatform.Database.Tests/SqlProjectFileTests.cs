@@ -121,10 +121,10 @@ public sealed partial class SqlProjectFileTests
     }
 
     /// <summary>
-    /// Method used to read the files declared as Build items in the project file
+    /// Method used to read the files declared in the project file: the objects (Build) and the scripts run before or after the publish (PreDeploy, PostDeploy)
     /// </summary>
     /// <returns>
-    /// The Include values of the Build items, as written in the project file
+    /// The Include values of those items, as written in the project file
     /// </returns>
     private static List<string> ReadBuildItems()
     {
@@ -317,7 +317,9 @@ public sealed partial class SqlProjectFileTests
             .Distinct(StringComparer.Ordinal)
             .ToList();
         List<string> missing = groups
-            .Where(group => !File.Exists(Path.Combine(testFolder, group.Split('\\')[0], $"{group.Split('\\')[1]}ProceduresTests.cs")))
+            .Select(group => group.Split('\\'))
+            .Where(parts => !File.Exists(Path.Combine(testFolder, parts[0], $"{parts[1]}ProceduresTests.cs")))
+            .Select(parts => string.Join('\\', parts))
             .ToList();
 
         // Checks

@@ -18,7 +18,7 @@
  *	*********************************************************************************
  *	* Type		| Work Column(s)	| Check												*
  *	*********************************************************************************
- *	* Unique	| Code				| One row per code: each result names its row		*
+ *	* Unique	| Code				| One row per code, compared without case: each result names its row	*
  *	* Check		| Code				| Code is not empty or whitespace					*
  *	*********************************************************************************
  *	- Only the value changes: the kind of a setting is fixed at its insert, and its comment is not part of an update

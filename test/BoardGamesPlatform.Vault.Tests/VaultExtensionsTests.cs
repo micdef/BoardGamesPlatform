@@ -128,9 +128,11 @@ public sealed class VaultExtensionsTests : IDisposable
     /// </returns>
     private static bool IsElevated()
     {
-        // Function's return
+        // Check: no elevation outside Windows
         if (!OperatingSystem.IsWindows())
             return false;
+
+        // Function's return
         using WindowsIdentity current = WindowsIdentity.GetCurrent();
         return new WindowsPrincipal(current).IsInRole(WindowsBuiltInRole.Administrator);
     }
@@ -164,7 +166,17 @@ public sealed class VaultExtensionsTests : IDisposable
         Task<string> output = process.StandardOutput.ReadToEndAsync();
         Task<string> error = process.StandardError.ReadToEndAsync();
         using CancellationTokenSource timeout = new CancellationTokenSource(ToolTimeoutMilliseconds);
-        await process.WaitForExitAsync(timeout.Token);
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Never leaving a tool running after the test: killing it, and waiting for its streams to end
+            process.Kill(entireProcessTree: true);
+            await Task.WhenAll(output, error);
+            throw;
+        }
 
         // Function's return
         return (process.ExitCode, await output + await error);
@@ -196,6 +208,25 @@ public sealed class VaultExtensionsTests : IDisposable
 
         // Check
         builder.AddPlatformVault("Tls:CertificatePassword").ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// Outside Development, a host without a vault gets the warning that names the missing vault; in Development, the warning of Development
+    /// </summary>
+    /// <param name="environmentName">Name of the environment</param>
+    /// <param name="expected">Type of the warning expected</param>
+    [Theory]
+    [InlineData("Production", typeof(VaultMissingWarningService))]
+    [InlineData("Development", typeof(VaultDevelopmentWarningService))]
+    public void TheHostWarnsOfAMissingVaultOrOfDevelopment(string environmentName, Type expected)
+    {
+        // Building a host without vault
+        HostApplicationBuilder builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings { EnvironmentName = environmentName });
+        builder.AddPlatformVault("Tls:CertificatePassword");
+        using IHost host = builder.Build();
+
+        // Check
+        host.Services.GetServices<IHostedService>().Select(service => service.GetType()).ShouldBe(new Type[] { expected });
     }
 
     /// <summary>

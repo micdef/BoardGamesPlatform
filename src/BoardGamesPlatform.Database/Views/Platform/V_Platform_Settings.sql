@@ -15,6 +15,10 @@
  *	* ValidFrom	| DATETIME2	| 7		| [ ]		| Since when the value is valid (UTC)									*
  *	*********************************************************************************************************************
  *
+ *	Indexes :
+ *	---------
+ *	#N/A (a view of a small table: the unique constraint on Code of the table serves the reads by code)
+ *
  *	Behavior :
  *	-----------
  *	Returns the current rows only: the history of the settings stays in History.Platform_Settings, read by an administrator with FOR SYSTEM_TIME

@@ -6,6 +6,7 @@
  */
 
 // Using
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -134,8 +135,8 @@ internal static class VaultText
         // Checks
         if (text.Length == 0)
             throw new VaultException($"The secret {name} of the vault {location} is empty");
-        if (text.Any(char.IsControl))
-            throw new VaultException($"The secret {name} of the vault {location} holds a control character (a line break left by an editor or by echo?): write it without one");
+        if (text.Any(character => char.IsControl(character) || char.GetUnicodeCategory(character) == UnicodeCategory.Format))
+            throw new VaultException($"The secret {name} of the vault {location} holds a control or format character (a line break left by an editor or by echo, a byte order mark left by Notepad?): write it without one");
 
         // Function's return
         return text;

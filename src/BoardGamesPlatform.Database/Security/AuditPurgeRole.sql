@@ -13,7 +13,7 @@
  *
  *	Purpose :
  *	---------
- *	- Least privilege for the purge: its members execute Logs.SP_Logs_Audit_Purge and nothing else
+ *	- Least privilege for the purge: its members execute Logs.SP_Logs_Audit_Purge, with the reading of the metadata of Logs it needs, and nothing else
  *	- The purge deletes the rows through ownership chaining, although the table denies DELETE to public
  *
  *	Access :

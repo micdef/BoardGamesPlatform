@@ -62,7 +62,7 @@ public sealed partial class VaultDevelopmentWarningService : IHostedService
     /// <summary>
     /// Logger of the tier
     /// </summary>
-    private readonly ILogger<VaultDevelopmentWarningService> _svcLogger;
+    private readonly ILogger<VaultDevelopmentWarningService> _logger;
 
     #endregion
 
@@ -87,15 +87,15 @@ public sealed partial class VaultDevelopmentWarningService : IHostedService
     /// <summary>
     /// Constructor used to log through the logger of the tier
     /// </summary>
-    /// <param name="svcLogger">[Cannot be null] Logger of the tier</param>
+    /// <param name="logger">[Cannot be null] Logger of the tier</param>
     /// <exception cref="ArgumentNullException">If the logger is null</exception>
-    public VaultDevelopmentWarningService(ILogger<VaultDevelopmentWarningService> svcLogger)
+    public VaultDevelopmentWarningService(ILogger<VaultDevelopmentWarningService> logger)
     {
         // Check
-        ArgumentNullException.ThrowIfNull(svcLogger);
+        ArgumentNullException.ThrowIfNull(logger);
 
         // Setting
-        _svcLogger = svcLogger;
+        _logger = logger;
     }
 
     #endregion

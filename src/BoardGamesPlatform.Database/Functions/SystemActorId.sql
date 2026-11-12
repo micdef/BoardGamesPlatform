@@ -13,7 +13,7 @@
  *	UNIQUEIDENTIFIER : 5778C6C3-5A1A-4C0A-8878-F36CEECB523A, fixed forever: audit rows written with it must keep their meaning
  *
  *	Behavior :
- *	-----------
+ *	----------
  *	The platform is the actor of the changes that no player asks for: the deployment, the settings written by an administrator through the
  *	platform, the purge of the audit. From version 0.8.0, it is also a row of the users, so that a foreign key can reach it.
  */

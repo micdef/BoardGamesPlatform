@@ -7,8 +7,7 @@
 
 // Using
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Configuration.CommandLine;
-using Microsoft.Extensions.Configuration.EnvironmentVariables;
+using Microsoft.Extensions.Configuration.Memory;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 
@@ -28,8 +27,8 @@ namespace BoardGamesPlatform.Vault;
 /// <para><b>Purpose:</b> rule 1 of the vault (doc/dev/database.md, The vault): a secret left in an environment variable of any prefix (the
 /// connection-string prefixes such as SQLCONNSTR_ included), in a JSON file edited on the server, or on the command line, is refused, so that
 /// the vault is the only place of the secrets of a server.</para>
-/// <para><b>Behavior:</b> asks every provider an administrator can fill on a server (the file providers, the environment variables, the command
-/// line) for each secret of the tier (<see cref="VaultSecretKeys"/>), under the key as the provider maps it, and fails on a value that is not
+/// <para><b>Behavior:</b> asks every provider but the vault itself and the in-memory ones (the file providers, the environment variables, the command
+/// line, and any provider added later: an allow-list, found by the security review of the code) for each secret of the tier (<see cref="VaultSecretKeys"/>), under the key as the provider maps it, and fails on a value that is not
 /// empty. Only the secrets of the tier are looked at: the hosts of .NET read every environment variable of the machine, whose names have nothing
 /// to do with the platform. The message names the key and the provider, never the value. The in-memory providers (code of the tier or of its
 /// tests) are not read. In Development, nothing is refused: the user secrets are the vault of a developer machine. The folder of the vault must be
@@ -135,11 +134,11 @@ public sealed class VaultOptionsValidator : IValidateOptions<VaultOptions>
     #region Privates
 
     /// <summary>
-    /// Method used to list the providers an administrator can fill on a server, through the chained configurations too
+    /// Method used to list the providers that may not hold a secret (every one but the vault and the in-memory ones), through the chained configurations too
     /// </summary>
     /// <param name="root">[Cannot be null] Root of a configuration</param>
     /// <returns>
-    /// The file, environment and command-line providers
+    /// Every provider but a vault and an in-memory one
     /// </returns>
     private static IEnumerable<IConfigurationProvider> EnumerateServerProviders(IConfigurationRoot root)
     {
@@ -151,7 +150,7 @@ public sealed class VaultOptionsValidator : IValidateOptions<VaultOptions>
                 foreach (IConfigurationProvider inner in EnumerateServerProviders(chained))
                     yield return inner;
             }
-            else if (provider is FileConfigurationProvider or EnvironmentVariablesConfigurationProvider or CommandLineConfigurationProvider)
+            else if (provider is not VaultConfigurationProvider and not MemoryConfigurationProvider)
             {
                 yield return provider;
             }

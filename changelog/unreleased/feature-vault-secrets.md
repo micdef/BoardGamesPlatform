@@ -7,7 +7,7 @@
 ### Changed
 
 - Gateway, Back, Very Back: their secrets (`Tls:CertificatePassword`, `Handshake:SigningKeyPassword`, `ConnectionStrings:Main`) come from the vault on the servers; the messages of a missing secret name the vault instead of an environment variable.
-- Dependencies: the Microsoft packages of the line 10.0.x move to 10.0.15 (17 CVEs of .NET fixed in that release); `System.Security.Cryptography.ProtectedData` 10.0.15 is pinned.
+- Dependencies: the Microsoft packages of the line 10.0.x move to 10.0.15 (16 CVEs of .NET listed in the release metadata of 10.0.15); `System.Security.Cryptography.ProtectedData` 10.0.15 is pinned.
 - Documentation: `doc/adm/configuration.md` describes the vault on Fedora and on Windows; `doc/adm/certificates.md`, `doc/adm/very-back.md` and `doc/dev/secure-channel.md` point to it.
 
 ### Security

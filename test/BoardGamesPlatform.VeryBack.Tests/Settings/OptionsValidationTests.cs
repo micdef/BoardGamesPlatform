@@ -8,7 +8,6 @@
 // Using
 using BoardGamesPlatform.VeryBack.Settings;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Hosting.Internal;
 
 // Static using
 // #N/A
@@ -233,12 +232,13 @@ public sealed class OptionsValidationTests
     [InlineData("Server=sql01;Database=X;User Id=app;Password=Kx9secret;Encrypt=Optional")]
     [InlineData("Server=sql01;Database=X;User Id=app;Password=Kx9secret;TrustServerCertificate=True")]
     [InlineData("Server=tcp:sql01,1433;Database=X;User Id=app;Password=Kx9secret;TrustServerCertificate=True")]
+    [InlineData("Server=localhost;Database=X;User Id=app;Password=Kx9secret;Failover Partner=sql02;TrustServerCertificate=True")]
     public void AnUnprotectedConnectionIsRefusedOnAServer(string connectionString)
     {
         // Validating with the rules of a server, then of a developer machine
-        Microsoft.Extensions.Options.ValidateOptionsResult server = new ConnectionStringsOptionsValidator(new HostingEnvironment { EnvironmentName = Environments.Production })
+        Microsoft.Extensions.Options.ValidateOptionsResult server = new ConnectionStringsOptionsValidator(new TestEnvironment(Environments.Production))
             .Validate(null, new ConnectionStringsOptions { Main = connectionString });
-        Microsoft.Extensions.Options.ValidateOptionsResult developer = new ConnectionStringsOptionsValidator(new HostingEnvironment { EnvironmentName = Environments.Development })
+        Microsoft.Extensions.Options.ValidateOptionsResult developer = new ConnectionStringsOptionsValidator(new TestEnvironment(Environments.Development))
             .Validate(null, new ConnectionStringsOptions { Main = connectionString });
 
         // Checks
@@ -261,7 +261,7 @@ public sealed class OptionsValidationTests
     public void AnEncryptedConnectionIsAcceptedOnAServer(string connectionString)
     {
         // Check
-        new ConnectionStringsOptionsValidator(new HostingEnvironment { EnvironmentName = Environments.Production })
+        new ConnectionStringsOptionsValidator(new TestEnvironment(Environments.Production))
             .Validate(null, new ConnectionStringsOptions { Main = connectionString }).Succeeded.ShouldBeTrue();
     }
 

@@ -27,7 +27,9 @@ namespace BoardGamesPlatform.VeryBack.Procedures;
 /// dispatcher of the operations logs the exception of a failed handler, with its inner exceptions) must therefore never receive the
 /// <see cref="SqlException"/> itself (doc/dev/database.md, Write pattern, Errors).</para>
 /// <para><b>Behavior:</b> keeps the number, the state, the procedure and the line of the first error of the SQL exception, which name what failed
-/// without any value, and the name of the procedure called by the Very Back. It holds no inner exception and no SQL message.</para>
+/// without any value, and the name of the procedure called by the Very Back. It holds no inner exception. The message of SQL Server is kept for
+/// the errors of the platform only (<see cref="AuditImmutable"/> and <see cref="CheckFailed"/>): the procedures raise them with a literal that
+/// names the rule and never a value, so a refusal such as "The actor is unknown" stays readable without depending on a line number.</para>
 /// </remarks>
 public sealed class SqlCallException : Exception
 {
@@ -35,7 +37,15 @@ public sealed class SqlCallException : Exception
 
     #region Constants
 
-    // #N/A
+    /// <summary>
+    /// Error number of the triggers of the audit, when a change of an audit row is refused
+    /// </summary>
+    public const int AuditImmutable = 50001;
+
+    /// <summary>
+    /// Error number of the procedures, when a call is refused by one of their checks
+    /// </summary>
+    public const int CheckFailed = 51000;
 
     #endregion
 
@@ -107,7 +117,7 @@ public sealed class SqlCallException : Exception
     #region Constructors
 
     /// <summary>
-    /// Constructor required by the exception conventions (RCS1194); the facts are then empty
+    /// Constructor required by the exception conventions (RCS1194), with a general message and no fact of a SQL error
     /// </summary>
     public SqlCallException()
         : this("The call of the database failed")
@@ -115,7 +125,7 @@ public sealed class SqlCallException : Exception
     }
 
     /// <summary>
-    /// Constructor required by the exception conventions (RCS1194); the facts are then empty
+    /// Constructor required by the exception conventions (RCS1194), with a message and no fact of a SQL error (empty names, zero numbers)
     /// </summary>
     /// <param name="message">[Can be null] Message of the exception, which must not quote a value of the database</param>
     public SqlCallException(string? message)
@@ -127,14 +137,18 @@ public sealed class SqlCallException : Exception
     }
 
     /// <summary>
-    /// Constructor required by the exception conventions (RCS1194); the facts are then empty
+    /// Constructor required by the exception conventions (RCS1194), with a message, an inner exception, and no fact of a SQL error
     /// </summary>
     /// <param name="message">[Can be null] Message of the exception, which must not quote a value of the database</param>
     /// <param name="innerException">[Can be null] Inner exception; never a <see cref="SqlException"/>, whose message this type exists to drop</param>
     /// <exception cref="ArgumentException">If the inner exception is a <see cref="SqlException"/></exception>
     public SqlCallException(string? message, Exception? innerException)
-        : base(message, innerException is SqlException ? throw new ArgumentException("A SQL exception is never kept inside: use the constructor that takes its facts", nameof(innerException)) : innerException)
+        : base(message, innerException)
     {
+        // Check: a SQL exception inside would bring back its message to whatever logs this exception
+        if (innerException is SqlException)
+            throw new ArgumentException("A SQL exception is never kept inside: use the constructor that takes its facts", nameof(innerException));
+
         // Setting empty facts
         CalledProcedure = string.Empty;
         ServerProcedure = string.Empty;
@@ -175,7 +189,8 @@ public sealed class SqlCallException : Exception
     /// <param name="calledProcedure">[Cannot be null] Name of the procedure the Very Back called</param>
     /// <param name="error">[Cannot be null] The SQL error</param>
     /// <returns>
-    /// The message, which names the call, the number, the state, the procedure and the line, never a value
+    /// The message, which names the call, the number, the state, the procedure and the line, and the literal message of an error of the
+    /// platform; never the message of another error, which can quote values
     /// </returns>
     /// <exception cref="ArgumentNullException">If a parameter is null</exception>
     private static string BuildMessage(string calledProcedure, SqlException error)
@@ -184,9 +199,14 @@ public sealed class SqlCallException : Exception
         ArgumentNullException.ThrowIfNull(calledProcedure);
         ArgumentNullException.ThrowIfNull(error);
 
+        // Setting the reason: the literal of the platform, or nothing
+        string reason = error.Number is AuditImmutable or CheckFailed
+            ? $"\"{error.Message}\""
+            : "the message of SQL Server is not kept: it can quote values";
+
         // Function's return
         return string.Create(CultureInfo.InvariantCulture,
-            $"The call of {calledProcedure} failed: SQL error {error.Number}, state {error.State}, in '{error.Procedure}' at line {error.LineNumber} (the message of SQL Server is not kept: it can quote values)");
+            $"The call of {calledProcedure} failed: SQL error {error.Number}, state {error.State}, in '{error.Procedure}' at line {error.LineNumber} ({reason})");
     }
 
     #endregion

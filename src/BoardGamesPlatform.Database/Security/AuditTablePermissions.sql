@@ -27,6 +27,7 @@
  *	* Logs.Audit	| DENY UPDATE				| public	| Audit rows are immutable			*
  *	* Logs.Audit	| DENY DELETE				| public	| Only the purge deletes, by dates	*
  *	*****************************************************************************************
- *	- dbo, db_owner (who can revoke this DENY) and sysadmin stay administrators: what they do is seen by a server-level audit, not prevented
+ *	- A member of db_owner cannot write the table directly, but can revoke this DENY or disable a trigger; dbo and sysadmin are not bound by it.
+ *	  These are acts of administration: a server-level audit sees them, the database cannot prevent them
  */
 DENY INSERT, UPDATE, DELETE ON OBJECT::[Logs].[Audit] TO [public];

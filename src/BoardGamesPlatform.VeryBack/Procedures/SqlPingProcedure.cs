@@ -289,6 +289,12 @@ public sealed partial class SqlPingProcedure : IPingProcedure, IDisposable
             command.Parameters.Add(result);
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
+        catch (SqlException) when (cancellationToken.IsCancellationRequested)
+        {
+            // A cancellation during the execution can surface as a SqlException (the type depends on where it happens, Microsoft Learn,
+            // "Asynchronous programming" of SqlClient): it stays a cancellation, as the contract says, without the SQL exception inside
+            throw new OperationCanceledException("The call of the Ping procedure was canceled", cancellationToken);
+        }
         catch (SqlException exception)
         {
             throw new SqlCallException(ProcedureName, exception);

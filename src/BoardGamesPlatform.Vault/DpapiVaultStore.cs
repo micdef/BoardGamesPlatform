@@ -27,18 +27,19 @@ namespace BoardGamesPlatform.Vault;
 /// <remarks>
 /// <para><b>Purpose:</b> on Windows, each secret is a file of the folder named by the setting <c>Vault:Path</c>, written by
 /// <c>tools/vault/Set-VaultSecret.ps1</c>: its name is the name of the secret, its content the value encrypted with DPAPI, scope
-/// <c>LocalMachine</c> (decided with the security review: a virtual account of a service cannot log on to write a <c>CurrentUser</c> secret).</para>
+/// <c>LocalMachine</c> (proposed with the security review: a virtual account of a service cannot log on to write a <c>CurrentUser</c> secret).</para>
 /// <para><b>Behavior:</b> with <c>LocalMachine</c>, any process of the machine can decrypt a file it can read and write a valid one, so the access
 /// lists are the protection, checked before any value is read:</para>
 /// <list type="bullet">
-/// <item><description>the owner of the folder and of each file is SYSTEM, the Administrators or the account of the service;</description></item>
-/// <item><description>no other account may write in the folder (create, delete, change a file, its rights or its owner);</description></item>
-/// <item><description>no other account has any right on a file; the rights of a file are read on the handle that reads it, so that the file cannot
-/// be swapped between the check and the read.</description></item>
+/// <item><description>the owner of the folder and of each file is SYSTEM or the Administrators (an owner can always change the rights);</description></item>
+/// <item><description>the account of the service holds read rights only: a compromised service could otherwise rewrite a secret, for example the
+/// connection string toward another server, and keep it after a restart (found by the security review of the code);</description></item>
+/// <item><description>no other account may write in the folder (create, delete, change a file, its rights or its owner), nor holds any right on a
+/// file; the rights of a file are read on the handle that reads it, so that the file cannot be swapped between the check and the read;</description></item>
+/// <item><description>the folder is not a junction or a link, and holds no subfolder.</description></item>
 /// </list>
-/// <para>The account of the service may own and write its own secrets: it can already read them all, so writing them gives it nothing more. The
-/// DPAPI entropy is the name of the file, so a file copied under another name does not decrypt. A file of more than 64 KiB is refused before it
-/// is read.</para>
+/// <para>The DPAPI entropy is the name of the file, so a file copied under another name does not decrypt. A file of more than 64 KiB is refused
+/// before it is read. An error of the file system is reported as a <see cref="VaultException"/> naming the file.</para>
 /// </remarks>
 [SupportedOSPlatform("windows")]
 public sealed class DpapiVaultStore : IVaultStore
@@ -64,14 +65,30 @@ public sealed class DpapiVaultStore : IVaultStore
         | FileSystemRights.WriteExtendedAttributes | FileSystemRights.DeleteSubdirectoriesAndFiles | FileSystemRights.Delete
         | FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
 
+    /// <summary>
+    /// Every right of a file: no other account than the owners and the service may hold any of them
+    /// </summary>
+    private const FileSystemRights AnyRight = (FileSystemRights)(-1);
+
+    /// <summary>
+    /// The only rights the account of the service may hold: read the content, the attributes and the rights, list and traverse the folder
+    /// </summary>
+    private const FileSystemRights ServiceRights = FileSystemRights.ReadData | FileSystemRights.ReadAttributes | FileSystemRights.ReadExtendedAttributes
+        | FileSystemRights.ReadPermissions | FileSystemRights.Synchronize | FileSystemRights.ExecuteFile;
+
     #endregion
 
     #region Variables
 
     /// <summary>
-    /// The accounts that may own and write the vault, and read a secret: SYSTEM, the Administrators, and the account of the service
+    /// The accounts that may own and write the vault: SYSTEM and the Administrators
     /// </summary>
-    private readonly SecurityIdentifier[] _trustedAccounts;
+    private readonly SecurityIdentifier[] _owners;
+
+    /// <summary>
+    /// The account of the service, which may read the vault only
+    /// </summary>
+    private readonly SecurityIdentifier _service;
 
     #endregion
 
@@ -122,21 +139,32 @@ public sealed class DpapiVaultStore : IVaultStore
     /// <param name="directory">[Cannot be null] Folder of the secrets (setting Vault:Path), an absolute path</param>
     /// <exception cref="ArgumentException">If the folder is empty or not an absolute path</exception>
     public DpapiVaultStore(string directory)
+        : this(directory, new SecurityIdentifier[] { new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null) }, CurrentAccount())
+    {
+    }
+
+    /// <summary>
+    /// Constructor used by the tests, which cannot make files owned by the Administrators without an elevated session, to name the owners and
+    /// the account of the service
+    /// </summary>
+    /// <param name="directory">[Cannot be null] Folder of the secrets, an absolute path</param>
+    /// <param name="owners">[Cannot be null] Accounts that may own and write the vault</param>
+    /// <param name="service">[Cannot be null] Account that may only read the vault</param>
+    /// <exception cref="ArgumentException">If the folder is empty or not an absolute path</exception>
+    /// <exception cref="ArgumentNullException">If the owners or the service are null</exception>
+    internal DpapiVaultStore(string directory, IEnumerable<SecurityIdentifier> owners, SecurityIdentifier service)
     {
         // Checks
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+        ArgumentNullException.ThrowIfNull(owners);
+        ArgumentNullException.ThrowIfNull(service);
         if (!Path.IsPathFullyQualified(directory))
             throw new ArgumentException("The folder of the vault (Vault:Path) must be an absolute path", nameof(directory));
 
-        // Setting the folder and the trusted accounts
+        // Setting the folder and the accounts
         Location = directory;
-        using WindowsIdentity current = WindowsIdentity.GetCurrent();
-        _trustedAccounts = new SecurityIdentifier[]
-        {
-            new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
-            new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
-            current.User ?? throw new InvalidOperationException("The account of the current process has no security identifier"),
-        };
+        _owners = owners.ToArray();
+        _service = service;
     }
 
     #endregion
@@ -152,39 +180,49 @@ public sealed class DpapiVaultStore : IVaultStore
     #region Privates
 
     /// <summary>
-    /// Method used to know whether an account is trusted with the vault
+    /// Method used to give the account of the current process, the account of the service
     /// </summary>
-    /// <param name="identity">[Can be null] Account of an access rule or of an owner</param>
     /// <returns>
-    /// True  ==> SYSTEM, the Administrators or the account of the service
-    /// False ==> any other account
+    /// The security identifier of the account
     /// </returns>
-    private bool IsTrusted(IdentityReference? identity)
+    /// <exception cref="InvalidOperationException">If the account has no security identifier</exception>
+    private static SecurityIdentifier CurrentAccount()
     {
         // Function's return
-        return identity is SecurityIdentifier sid && _trustedAccounts.Contains(sid);
+        using WindowsIdentity current = WindowsIdentity.GetCurrent();
+        return current.User ?? throw new InvalidOperationException("The account of the current process has no security identifier");
     }
 
     /// <summary>
     /// Method used to check the owner and the rules of a folder or a file
     /// </summary>
     /// <param name="security">[Cannot be null] Rights of the folder or the file</param>
-    /// <param name="forbiddenRights">Rights that no other account may hold</param>
+    /// <param name="forbiddenRights">Rights that no other account than the owners and the service may hold</param>
     /// <param name="what">[Cannot be null] Folder or file, for the message</param>
-    /// <exception cref="VaultException">If the owner is not trusted, or another account holds one of the forbidden rights</exception>
+    /// <exception cref="VaultException">If the owner is not SYSTEM or the Administrators, the service holds more than read rights, or another
+    /// account holds one of the forbidden rights</exception>
     private void CheckRights(FileSystemSecurity security, FileSystemRights forbiddenRights, string what)
     {
         // Checking the owner
-        if (!IsTrusted(security.GetOwner(typeof(SecurityIdentifier))))
-            throw new VaultException($"The owner of {what} must be SYSTEM, the Administrators or the account of the service (see tools/vault/Set-VaultSecret.ps1)");
+        if (security.GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier owner || !_owners.Contains(owner))
+            throw new VaultException($"The owner of {what} must be SYSTEM or the Administrators (see tools/vault/Set-VaultSecret.ps1)");
 
         // Checking every rule that allows something, except those that only pass to the children of a folder
         foreach (FileSystemAccessRule rule in security.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier)))
         {
             if (rule.AccessControlType != AccessControlType.Allow || rule.PropagationFlags.HasFlag(PropagationFlags.InheritOnly))
                 continue;
-            if (!IsTrusted(rule.IdentityReference) && (rule.FileSystemRights & forbiddenRights) != 0)
-                throw new VaultException($"The account {rule.IdentityReference.Value} holds rights on {what}: only SYSTEM, the Administrators and the account of the service may (see tools/vault/Set-VaultSecret.ps1)");
+            SecurityIdentifier account = (SecurityIdentifier)rule.IdentityReference;
+            if (_owners.Contains(account))
+                continue;
+            if (account == _service)
+            {
+                if ((rule.FileSystemRights & ~ServiceRights) != 0)
+                    throw new VaultException($"The account of the service holds more than read rights on {what}: it may only read the vault (see tools/vault/Set-VaultSecret.ps1)");
+                continue;
+            }
+            if ((rule.FileSystemRights & forbiddenRights) != 0)
+                throw new VaultException($"The account {account.Value} holds rights on {what}: only SYSTEM, the Administrators and the account of the service (read only) may (see tools/vault/Set-VaultSecret.ps1)");
         }
     }
 
@@ -199,15 +237,21 @@ public sealed class DpapiVaultStore : IVaultStore
     /// <exception cref="VaultException">If the rights of the file are too wide, the file too large, or the secret cannot be decrypted</exception>
     private string ReadSecret(string file, string name)
     {
-        // Opening the file once: the rights checked are those of the file read
-        using FileStream stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
-        CheckRights(stream.GetAccessControl(), (FileSystemRights)(-1), $"the secret {name} of the vault {Location}");
-        if (stream.Length > MaxFileLength)
-            throw new VaultException($"The secret {name} of the vault {Location} is larger than {MaxFileLength} bytes: it is not a file of the vault");
-
-        // Reading the encrypted bytes
-        byte[] encrypted = new byte[stream.Length];
-        stream.ReadExactly(encrypted);
+        // Opening the file once, and reading it: the rights checked are those of the file read; an error of the file system names the file
+        byte[] encrypted;
+        try
+        {
+            using FileStream stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
+            CheckRights(stream.GetAccessControl(), AnyRight, $"the secret {name} of the vault {Location}");
+            if (stream.Length > MaxFileLength)
+                throw new VaultException($"The secret {name} of the vault {Location} is larger than {MaxFileLength} bytes: it is not a file of the vault");
+            encrypted = new byte[stream.Length];
+            stream.ReadExactly(encrypted);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw new VaultException($"The secret {name} of the vault {Location} cannot be read by the account of the service", exception);
+        }
 
         // Decrypting with the entropy bound to the name, then decoding (which erases the clear bytes)
         byte[] clear;
@@ -229,7 +273,8 @@ public sealed class DpapiVaultStore : IVaultStore
     #region Publics
 
     /// <summary>
-    /// Method used to encrypt a secret as the vault stores it (used by the tests; the administrators use tools/vault/Set-VaultSecret.ps1)
+    /// Method used to encrypt a secret as the vault stores it; internal, for the tests (the administrators use tools/vault/Set-VaultSecret.ps1,
+    /// which encrypts the same way)
     /// </summary>
     /// <param name="name">[Cannot be null] Name of the secret in the vault ("Tls__CertificatePassword")</param>
     /// <param name="value">[Cannot be null] Value of the secret</param>
@@ -237,7 +282,7 @@ public sealed class DpapiVaultStore : IVaultStore
     /// The encrypted bytes, the content of the file of the secret
     /// </returns>
     /// <exception cref="ArgumentNullException">If a parameter is null</exception>
-    public static byte[] Protect(string name, string value)
+    internal static byte[] Protect(string name, string value)
     {
         // Checks
         ArgumentNullException.ThrowIfNull(name);
@@ -266,12 +311,16 @@ public sealed class DpapiVaultStore : IVaultStore
     /// <exception cref="VaultException">If the folder is missing or too open, holds an unknown secret, or a secret it cannot read safely</exception>
     public IReadOnlyDictionary<string, string> ReadAll(IReadOnlySet<string> knownNames)
     {
-        // Checks: the folder exists, and no other account can change what it holds
+        // Checks: the folder exists, is a real folder, holds no subfolder, and no other account can change what it holds
         ArgumentNullException.ThrowIfNull(knownNames);
         DirectoryInfo folder = new DirectoryInfo(Location);
         if (!folder.Exists)
             throw new VaultException($"The folder of the vault {Location} does not exist (Vault:Path)");
+        if (folder.Attributes.HasFlag(FileAttributes.ReparsePoint))
+            throw new VaultException($"The folder of the vault {Location} is a junction or a link: it must be a real folder");
         CheckRights(folder.GetAccessControl(), FolderWriteRights, $"the folder of the vault {Location}");
+        if (folder.EnumerateDirectories().Any())
+            throw new VaultException($"The folder of the vault {Location} holds a subfolder: it may only hold the files of the secrets");
 
         // Reading every secret; an unknown one is a mistake of the installation, never ignored
         Dictionary<string, string> secrets = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
