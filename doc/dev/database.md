@@ -231,16 +231,16 @@ The login and the user are **not part of the DACPAC**: a login is a server objec
 
 1. **Guard**, before anything: the name matches `^(DEV|TEST)_[A-Za-z0-9_]+\z`, case-sensitive.
 2. Build the DACPAC (MSBuild of Visual Studio, the project keeps its original format), unless `-SkipBuild`.
-3. **Drop the old login** of the same name, if it exists and only if its name has the same prefix: its sessions are closed first.
-4. Publish with `CreateNewDatabase=True` (the database is dropped and recreated), files under the default paths of the server.
-5. Create the login with a new random password, the user, its membership of `ApplicationRole`, and the `DENY VIEW ANY DATABASE`. The password never appears on a command line (visible in the list of processes) nor in a file in clear: the batch is given to `sqlcmd` (ODBC Driver 18, encrypted connection by default) **on its standard input**, never with `-Q` nor `-i`. PowerShell 7 ships only the former `System.Data.SqlClient`, deprecated by Microsoft, so the script does not open the connection itself. `CREATE LOGIN` only takes a literal, so the batch is dynamic SQL built in a variable with `QUOTENAME` for the login name; the name has already passed the guard, and the password, Base64, holds neither a quote nor the `$(` of a variable of `sqlcmd`. A refusal by the password policy (error 15118) draws a new password.
+3. Publish with `CreateNewDatabase=True` (the database is dropped and recreated), files under the default paths of the server; a DACPAC older than the sources of the project is refused with `-SkipBuild`.
+4. **Drop the old login** of the same name, if it exists (the guard checked the name: never another login): its sessions are closed first.
+5. Create the login with a new random password, the user, its membership of `ApplicationRole`, and the `DENY VIEW ANY DATABASE`. The password never appears on a command line (visible in the list of processes) nor in a file in clear: the batch is given to `sqlcmd` **on its standard input**, never with `-Q` nor `-i`; only the `sqlcmd` of the ODBC Driver is accepted (the one written in Go does not check a remote certificate by default), with `-Nm` for a remote server. PowerShell 7 ships only the former `System.Data.SqlClient`, deprecated by Microsoft, so the script does not open the connection itself. `CREATE LOGIN` only takes a literal, so the batch is dynamic SQL built in a variable with `QUOTENAME` for the login name; the name has already passed the guard, and the password, Base64, holds neither a quote nor the `$(` of a variable of `sqlcmd`. A refusal by the password policy (error 15118) draws a new password.
 6. Send the connection string to the place named by `-SecretTarget`:
    - `None` (default): nowhere; the login exists but nobody knows its password (enough for the SQL tests, which play the user with `EXECUTE AS`);
    - `UserSecrets`: the user secrets of the Very Back, as a JSON batch on the standard input of `dotnet user-secrets set` (built with `ConvertTo-Json`; never on a command line, visible in the list of processes);
    - `Vault`: the vault folder of the Very Back given by `-VaultPath`, readable by the account given by `-VaultAccount`, through `tools/vault/Set-VaultSecret.ps1` (as an administrator).
 7. Drop the references to the password (a .NET string cannot be erased: it stays in memory until the process ends, which is short).
 
-What the script never does: deploy a database without the prefix, touch another login, print or log the password, keep it in a file, install anything.
+What the script never does: deploy a database without the prefix, touch another login, print or log the password, keep it in a file of its own, install anything. The one place where it ends in clear is `-SecretTarget UserSecrets`: the user secrets of a developer machine are plain JSON in the user profile, by design of the Secret Manager of .NET. A failure after the publish says that the database is deployed but incomplete.
 
 ## The vault
 
@@ -323,7 +323,7 @@ The tool that writes a secret on Windows is `tools/vault/Set-VaultSecret.ps1`: i
 | A call with a huge table-valued parameter | A maximum number of rows per call, refused with 51000 |
 | Personal data leaked through an error of the engine (a duplicate key, a truncated or converted value) | The Very Back never logs nor returns `SqlException.Message`, only the number, state, procedure and line |
 | A secret or its hash copied into the audit | Such columns are audited as `"changed"`, never with their value |
-| The password of the application principal read from a file in clear or the list of processes | Never on a command line, never in clear in a file; sent inside the process on an encrypted connection; stored encrypted by the OS (DPAPI, `systemd-creds`) |
+| The password of the application principal read from a file in clear or the list of processes | Never on a command line, never in clear in a file but the user secrets of a developer machine; sent on the standard input of sqlcmd, on an encrypted connection; stored encrypted by the OS (DPAPI, `systemd-creds`) |
 | A connection to SQL Server that is not encrypted, or that trusts any certificate | Refused at startup outside Development; the script writes `Encrypt=Mandatory` |
 | A secret left in an environment variable or in a JSON file of the server | Refused at startup outside Development; a warning when a tier runs as Development |
 | A vault file planted or replaced by another account (DPAPI `LocalMachine` lets any local process write a valid file) | Owner and access list of the file and of its folder checked at load, on the handle read |

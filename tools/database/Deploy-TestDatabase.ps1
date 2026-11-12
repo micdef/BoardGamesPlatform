@@ -14,7 +14,8 @@
 # │              │    with Visual Studio, sqlcmd (ODBC 18) with SQL Server.     │
 # │              │ 4. The password is never printed, never on a command line,   │
 # │              │    never in a file in clear: it goes to SQL Server on the    │
-# │              │    standard input of sqlcmd, then to -SecretTarget.          │
+# │              │    standard input of sqlcmd, then to -SecretTarget (the      │
+# │              │    user secrets of UserSecrets are plain JSON by design).    │
 # │ Usage        │ pwsh tools/database/Deploy-TestDatabase.ps1 `                │
 # │              │     -DatabaseName DEV_BoardGamesPlatform `                    │
 # │              │     [-SecretTarget None|UserSecrets|Vault] [-WhatIf]         │
@@ -76,6 +77,7 @@ function Invoke-Batch([string] $Sqlcmd, [string[]] $ConnectionArguments, [string
 }
 
 $password = $null
+$published = $false
 $connectionString = $null
 try
 {
@@ -121,12 +123,19 @@ try
         throw 'sqlcmd not found in the PATH (Microsoft ODBC Driver 18 tools, installed with SQL Server). Nothing is installed by this script.'
     }
 
+    # Only the sqlcmd of the ODBC driver: another one (the sqlcmd written in Go) does not check the certificate of a remote server by default
+    $sqlcmdBanner = (& $sqlcmd -? 2>&1 | Select-Object -First 1) -as [string]
+    if ($sqlcmdBanner -notmatch '^Microsoft \(R\) SQL Server Command Line Tool')
+    {
+        throw "The first sqlcmd of the PATH ('$sqlcmd') is not the tool of the Microsoft ODBC Driver: put that tool first in the PATH."
+    }
+
     # A local SQL Server presents a self-signed certificate, which the default encrypted connection refuses.
-    # Trusting it is accepted for the local machine only; any other server keeps the strict default.
+    # Trusting it is accepted for the local machine only; any other server keeps the strict default, an encryption required (-Nm).
     $isLocalServer = $ServerInstance -in 'localhost', '.', '(local)', '127.0.0.1'
     $trustArgument = if ($isLocalServer) { '/TargetTrustServerCertificate:True' } else { '/TargetTrustServerCertificate:False' }
     $sqlcmdConnection = @('-S', $ServerInstance, '-E', '-d', 'master')
-    if ($isLocalServer) { $sqlcmdConnection += '-C' }
+    $sqlcmdConnection += if ($isLocalServer) { '-C' } else { '-Nm' }
 
     if ($PSCmdlet.ShouldProcess("$ServerInstance / $DatabaseName", 'Drop and recreate the database from the DACPAC, and its application login and user'))
     {
@@ -135,12 +144,22 @@ try
             throw "DACPAC not found: '$dacpacPath'. Run without -SkipBuild."
         }
 
+        # A DACPAC older than the sources of the project would deploy something else than the code: refused with -SkipBuild
+        $projectFolder = Split-Path $projectPath -Parent
+        $newestSource = Get-ChildItem -Path $projectFolder -Recurse -File -Include '*.sql', '*.sqlproj', '*.xml' |
+            Where-Object { $_.FullName -notmatch '\\(bin|obj)\\' } | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+        if ($newestSource -and (Get-Item $dacpacPath).LastWriteTimeUtc -lt $newestSource.LastWriteTimeUtc)
+        {
+            throw "The DACPAC is older than $($newestSource.Name): run without -SkipBuild."
+        }
+
         # Step 4: drop and recreate the database from the DACPAC (CreateNewDatabase=True)
         & $sqlPackage /Action:Publish "/SourceFile:$dacpacPath" "/TargetServerName:$ServerInstance" "/TargetDatabaseName:$DatabaseName" /p:CreateNewDatabase=True $trustArgument
         if ($LASTEXITCODE -ne 0)
         {
             throw "SqlPackage failed (exit code $LASTEXITCODE)."
         }
+        $published = $true
 
         # Step 5: drop the old login of the same name (the guard checked the name: never another login), after closing its sessions
         Invoke-Batch $sqlcmd $sqlcmdConnection @"
@@ -182,7 +201,7 @@ EXEC (@sql);
             catch
             {
                 # A refusal of the password policy (error 15118) draws a new password; any other error stops the deployment
-                if ($_.Exception.Message -notmatch '15118' -or $attempt -eq 3) { throw }
+                if ($_.Exception.Message -notmatch '15118|Password validation failed' -or $attempt -eq 3) { throw }
             }
         }
         Invoke-Batch $sqlcmd $sqlcmdConnection @"
@@ -224,6 +243,7 @@ EXEC (@sql);
             default
             {
                 Write-Host 'The password of the application user is kept nowhere (-SecretTarget None): the SQL tests play the user with EXECUTE AS.'
+                Write-Host 'A connection string written by an earlier run (user secrets or vault of the Very Back) no longer works: the password is new.'
             }
         }
 
@@ -233,6 +253,11 @@ EXEC (@sql);
 catch
 {
     Write-Error $_.Exception.Message -ErrorAction Continue
+    if ($published)
+    {
+        # The database exists, but its application user, or the place of its connection string, may not: never let that pass unnoticed
+        Write-Error "The database '$DatabaseName' is deployed but incomplete (its application user or its connection string): run the script again." -ErrorAction Continue
+    }
     exit 1
 }
 finally

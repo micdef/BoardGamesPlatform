@@ -6,7 +6,7 @@ Builds the SQL project (`src/BoardGamesPlatform.Database`) into a DACPAC and dep
 
 ### The prefix rule
 
-The database name must match `^(DEV|TEST)_[A-Za-z0-9_]+$`, **case-sensitive**. Anything else (`master`, a production name, `test_X`, `DEV_`, brackets, spaces, `;`) is refused with exit code 1 **before** anything is built or any connection is opened. The login has the name of the database, so the script never drops another login.
+The database name must match `^(DEV|TEST)_[A-Za-z0-9_]+\z` (`\z`: no trailing line break), **case-sensitive**. Anything else (`master`, a production name, `test_X`, `DEV_`, brackets, spaces, `;`) is refused with exit code 1 **before** anything is built or any connection is opened. The login has the name of the database, so the script never drops another login.
 
 ### What it does
 
@@ -17,7 +17,7 @@ The database name must match `^(DEV|TEST)_[A-Za-z0-9_]+$`, **case-sensitive**. A
 5. Creates the login with a new random password (32 random bytes in Base64, drawn again if the password policy refuses it), `CHECK_POLICY = ON`, `CHECK_EXPIRATION = OFF`, its database as default, `DENY VIEW ANY DATABASE`; then its user and its membership of `ApplicationRole`.
 6. Sends the connection string of the application user (`Encrypt=Mandatory`; `TrustServerCertificate=True` for the local server only) where `-SecretTarget` says.
 
-The password travels on the standard input of `sqlcmd` and of the tool that stores it, never on a command line (visible in the list of processes) nor in a file in clear; it is never printed.
+The password travels on the standard input of `sqlcmd` and of the tool that stores it, never on a command line (visible in the list of processes) nor in a file in clear (except the user secrets of `-SecretTarget UserSecrets`, plain JSON of the developer profile by design of the Secret Manager); it is never printed. Only the `sqlcmd` of the ODBC Driver is accepted. With `-SkipBuild`, a DACPAC older than the sources is refused. A failure after the publish says that the database is deployed but incomplete: run the script again.
 
 ### Parameters
 
