@@ -83,7 +83,9 @@ The names and headers follow AckSolutions and `doc/dev/coding-conventions.md`:
 
 Constraints: the identifiers are never `Guid.Empty`; `SchemaName` and `TableName` name an existing table (`Functions.IsValidSchemaName` and `Functions.IsValidTableName`, which read `INFORMATION_SCHEMA` and therefore need the right to read the metadata, see [Permission matrix](#permission-matrix)); `OldValue` or `NewValue` is set, and each one set is valid JSON (`ISJSON`); `LoginName` is not empty.
 Not temporal: an audit row never changes, so it has no history. On the filegroup `Core`.
-A clustered index on `ActionDT` would serve the purge by dates; the primary key on `Id` stays non-clustered so that random GUIDs do not split the pages (a departure from AckSolutions, whose key is clustered).
+A clustered index on `ActionDT` serves the purge by dates and keeps new rows at the end; the primary key on `Id` stays non-clustered so that random GUIDs do not split the pages (a departure from AckSolutions, whose key is clustered).
+
+**What the audit never holds.** A column that holds a secret or its hash (a password hash, the hash of a session token, from 0.8.0) is never written to `OldValue` or `NewValue`: its change is audited as `"<column>":"changed"`. The audit must not become a second copy of the secrets. The same question for the history of the temporal tables is decided with the first such column (0.8.0).
 
 ### `Platform.Settings`
 
@@ -108,10 +110,12 @@ The `Kind` of a setting never changes after its insert: the update procedure onl
 
 | Statement | Result |
 |-----------|--------|
-| `INSERT` | Only through `Logs.SP_Logs_Audit_Insert`, called by the procedures of `StorProc` in their own transaction |
-| `UPDATE` | Always refused by the trigger `TR_Logs_Audit_IOfUpdate` (`INSTEAD OF UPDATE`, error 50001) |
-| `DELETE` | Refused by the trigger `TR_Logs_Audit_IOfDelete` (`INSTEAD OF DELETE`, error 50001), except inside the purge |
-| `TRUNCATE`, `ALTER TABLE`, `DISABLE TRIGGER`, `DROP` | Not caught by a DML trigger: they need `ALTER` on the table, which only the owner and the administrators of the database hold. The application role is explicitly denied every right on the schema `Logs` |
+| `INSERT` | Only through `Logs.SP_Logs_Audit_Insert`, called by the procedures of `StorProc` in their own transaction; `DENY INSERT` to `public` on the table |
+| `UPDATE` | `DENY UPDATE` to `public`; always refused by the trigger `TR_Logs_Audit_IOfUpdate` (`INSTEAD OF UPDATE`, error 50001) |
+| `DELETE` | `DENY DELETE` to `public`; refused by the trigger `TR_Logs_Audit_IOfDelete` (`INSTEAD OF DELETE`, error 50001), except inside the purge |
+| `TRUNCATE`, `ALTER TABLE`, `DISABLE TRIGGER`, `DROP` | Not caught by a DML trigger: they need `ALTER` on the table, which only the owner, `db_owner` and `db_ddladmin` hold. The application role is explicitly denied every right on the schema `Logs` |
+
+The `DENY INSERT, UPDATE, DELETE ON [Logs].[Audit] TO public` binds every user of the database except `dbo`, members of `db_owner` and `db_datawriter` included (a DENY wins over a grant, and every user is a member of `public`). The procedures still write and purge the table, because ownership chaining checks no permission on the objects it reaches (proved by the security review of this document, on SQL Server 2025).
 
 A ledger table would refuse all of these to the administrators too, but it can never be purged: the purge of the audit is a requirement of the project lead (by dates, sliding, to a backup), so **ledger tables are excluded** (decided by the project lead in 0.7.0).
 
@@ -120,13 +124,18 @@ A ledger table would refuse all of these to the administrators too, but it can n
 `Logs.SP_Logs_Audit_Purge @Before DATE` deletes the audit rows written before `@Before` (UTC), and only them:
 
 1. `@Before` must be earlier than today (UTC): the rows of the current day are never purged; a `NULL` date is refused.
-2. In one transaction, it opens the gate (`sp_set_session_context N'AllowAuditPurge', 1`), deletes the rows, closes the gate (`NULL`), then writes **one audit row of the purge itself** (the date given, the number of rows deleted, the oldest and the newest `ActionDT` deleted). The purge leaves a trace that it cannot erase, since that row is dated today.
-3. On any error, it rolls back, closes the gate and rethrows: no partial purge, no gate left open in the session.
+2. The key `AllowAuditPurge` must not be set yet in the session: a key set read-only (`@read_only = 1`) could not be closed afterwards, so the purge refuses to start.
+3. In one transaction, it opens the gate (`sp_set_session_context N'AllowAuditPurge', 1`) just before the delete, deletes the rows, closes the gate (`NULL`), then writes **one audit row of the purge itself** (the date given, the number of rows deleted, the oldest and the newest `ActionDT` deleted).
+4. **The rows that record a purge are never purged** (the rows about `Logs.Audit` itself, which only the purge writes): the chain of the purges stays complete, so a purge can never hide an earlier one.
+5. On any error, it rolls back, closes the gate and rethrows: no partial purge. The only case where the gate stays open in the session is a client that cancels the call (an attention is not caught by `CATCH`); the session is then the one of an administrator, and its reuse from a pool clears the key.
 
 The procedure is in the schema `Logs`, which the application cannot execute: **a purge is an act of administration**, never of the platform.
+A role `AuditPurgeRole` holds `EXECUTE` on `Logs.SP_Logs_Audit_Purge` and nothing else, so that purging does not require being a member of `db_owner`; it has no member in the project, an administrator adds one.
 The archive of the rows before their purge (export, or a backup of the database proved before the purge) is left to the project lead.
 
-**Strength of the gate.** The session key can be set by anyone (`sp_set_session_context` is granted to public), so the gate itself only protects against a `DELETE` by mistake. The real barrier is the right to delete: only `dbo` and the members of `db_owner` hold `DELETE` on `Logs.Audit`, and they can also disable the trigger. The audit is therefore immutable against the application and against any principal limited like it, not against an administrator of the database; that is a residual risk (see [Threat model](#threat-model)).
+**Strength of the gate.** The gate is not a barrier: anyone can set the session key (`sp_set_session_context` is available to every user). The barrier is the `DENY` to `public` above: no user but `dbo` can delete a row, with or without the key. The gate only protects `dbo` against a `DELETE` by mistake. A member of `db_owner` can still revoke the `DENY` or disable the trigger, and `dbo` or a `sysadmin` can do anything; these are acts of administration that a server-level audit sees, not something the database can prevent (see [Threat model](#threat-model)).
+
+**The gate is read once.** SQL Server 2025 documents that `SESSION_CONTEXT` may return wrong results in parallel plans (known issue, workaround: trace flag 11042). The delete trigger reads the key once into a variable, before any statement that touches rows, and its delete runs with `MAXDOP 1`. A test purges over a pooled connection and checks that the key is cleared when the connection is reused.
 
 ### The actor
 
@@ -135,7 +144,7 @@ Until 0.8.0 there are no accounts. Every procedure of `StorProc` takes the actor
 - in 0.7.0, the only known actor is **the platform itself**, a fixed identifier returned by `Functions.SystemActorId()` (the deployment, the settings written by an administrator through the platform);
 - in 0.8.0, `IsValidActorId` also accepts the identifiers of `Identity.Users`, and a foreign key is added from `Logs.Audit.IdActor` to the users, with the platform as a row of its own.
 
-The actor is what the caller claims; `LoginName` is what SQL Server knows. Both are kept, so that a wrong actor sent by a tier never hides which login wrote.
+The actor is what the caller claims; `LoginName` is what SQL Server knows. Both are kept. Their limit must be written down, since the pitch of the platform is to prove who did what: **the audit proves that the platform made the change on behalf of the actor it claimed, not the intent of that actor.** Every write of the platform uses the one application login, so a compromised Very Back can attribute a change to any valid actor; `LoginName` separates the platform from the administrators, not one player from another.
 
 ## Write pattern
 
@@ -146,7 +155,7 @@ SP_<Schema>_<Table>_<Action> @Rows [Types].[TVP_<Schema>_<Table>_<Action>] READO
 ```
 
 1. `SET NOCOUNT ON; SET XACT_ABORT ON;`, `TRY`, one transaction.
-2. **Checks of the call**, each one `THROW 51000` and nothing written: no row; `@IdActor` empty or unknown.
+2. **Checks of the call**, each one `THROW 51000` and nothing written: no row; more rows than the maximum of the procedure (1 000 by default, named in its header); `@IdActor` empty or unknown.
 3. **Checks of the rows**, one step per rule, in a fixed order; a failing row goes to a table `@results` with `IsSuccess = 0` and the reason of **its first failing rule**.
 4. The remaining rows are written, with `OUTPUT` of their identifiers; they go to `@results` with `IsSuccess = 1`.
 5. One audit row per written row, through `Logs.SP_Logs_Audit_Insert`.
@@ -166,6 +175,8 @@ The correlation key of a write is the business key of the table (`Code` for the 
 
 **Errors.** `51000` for a refused call (its message names the rule, never a value), `50001` for a refused change of the audit. Any other error is the engine's own and is rethrown as it is. These numbers become the codes of the Very Back with its first business call (0.8.0).
 
+**The messages of the engine carry values** (2627 and 2601, a duplicate key "value is …"; 2628, a "truncated value"; 245, a conversion of a "value"). From 0.8.0 these values are e-mail addresses and nicknames. So **the Very Back never logs nor returns `SqlException.Message`**: it logs the error `Number`, `State`, `Procedure`, `LineNumber` and the operation, and answers its client with a code. This rule applies from 0.7.0 to the Ping, the only procedure the Very Back calls today.
+
 ## Read pattern
 
 The application reads through the views of `Views` only (`V_<Schema>_<Table>`): one view per table it needs, with the columns it needs, never `SELECT *`.
@@ -181,9 +192,11 @@ The application principal of a database is a member of `ApplicationRole` and of 
 | Schema `StorProc` | `EXECUTE` | The writes |
 | Schema `ServerCore` | `EXECUTE` | The Ping |
 | Schema `Views` | `SELECT` | The reads |
-| Schema `Types` | `EXECUTE`, `REFERENCES` | To declare and pass the table-valued parameters |
+| Schema `Types` | `EXECUTE` | To declare and pass the table-valued parameters (`REFERENCES`, granted in AckSolutions, is not needed: proved by the security review) |
 | Database | `VIEW DEFINITION` | To read the metadata (it sees the tables without being able to query them); the checks of the audit (`IsValidSchemaName`, `IsValidTableName`) depend on it |
-| Schemas `Logs`, `Platform`, `History`, `Functions`, `dbo` | `DENY` of every right (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `EXECUTE`, `ALTER`, `CONTROL`) | A grant added by mistake later, directly or through `public`, cannot open them |
+| Schemas `Logs`, `Platform`, `History`, `Functions`, `dbo` | `DENY SELECT, INSERT, UPDATE, DELETE, EXECUTE, ALTER, REFERENCES, TAKE OWNERSHIP` | A grant added by mistake later, directly or through `public`, cannot open them |
+
+**No DENY may cover `VIEW DEFINITION` on a schema of the platform**, and `CONTROL` implies it: the checks of the audit read the metadata with the rights of the caller, even inside a procedure owned by `dbo` (metadata visibility is not part of ownership chaining). A `DENY CONTROL` on `Logs` makes every audited write fail its CHECK constraint (proved by the security review).
 
 The test of the permission matrix reads every permission and membership of the role and compares it with this list, then plays a member of the role: every procedure of `StorProc` and every view can be used; every table, the purge, the insert of the audit and any creation are refused with error 229.
 
@@ -192,8 +205,9 @@ The test of the permission matrix reads every permission and membership of the r
 | Topic | Choice | Why |
 |-------|--------|-----|
 | Kind | A **login of the server** and a user of the database mapped to it, both named after the database (`DEV_BoardGamesPlatform`) | A contained user needs the server option `contained database authentication` and a partially contained database: a change of the configuration of the server, refused for the author's servers |
-| Authentication | SQL authentication, `CHECK_POLICY = ON`, `CHECK_EXPIRATION = OFF`, `DEFAULT_DATABASE` set | The Very Back can run on Fedora, where a Windows account is not available; the password is long and random, so expiration only breaks the service |
-| Password | 32 random bytes (`RandomNumberGenerator`), written in Base64, made by the deployment script, never shown, never written to a file in clear | Strong enough to make guessing useless; the script is the only one to see it |
+| Authentication | SQL authentication, `CHECK_POLICY = ON`, `CHECK_EXPIRATION = OFF`, `DEFAULT_DATABASE` set | The Very Back can run on Fedora, where a Windows account is not available; the password is long and random, so expiration only breaks the service. `CHECK_POLICY` also brings the lockout of the account after failed logins (threshold of the Windows policy): see the threat model |
+| Password | 32 random bytes (`RandomNumberGenerator`), written in Base64, made by the deployment script, never shown, never written to a file in clear; drawn again when the policy refuses it (a Base64 text without digit nor `+` or `/` happens about once in 7 500 draws) | Strong enough to make guessing useless; the script is the only one to see it |
+| Connection string | Built with `SqlConnectionStringBuilder`, `Encrypt=Mandatory`; `TrustServerCertificate=True` only for the local server of a developer machine. Outside Development, the Very Back refuses a connection string whose `Encrypt` is `False` or `Optional`, or which trusts the server certificate, naming the key, never the value | The connection to SQL Server carries the password and the data: its encryption is a rule, not an assumption |
 | Server rights | `CONNECT SQL` only, plus `DENY VIEW ANY DATABASE` | The login does not even list the other databases of the server |
 | Where it goes | The vault of the Very Back (or its user secrets on a developer machine), as the full connection string `ConnectionStrings:Main` | The Very Back is the only tier that reaches the database |
 
@@ -207,12 +221,12 @@ The login and the user are **not part of the DACPAC**: a login is a server objec
 2. Build the DACPAC (MSBuild of Visual Studio, the project keeps its original format), unless `-SkipBuild`.
 3. **Drop the old login** of the same name, if it exists and only if its name has the same prefix: its sessions are closed first.
 4. Publish with `CreateNewDatabase=True` (the database is dropped and recreated), files under the default paths of the server.
-5. Create the login with a new random password, the user, its membership of `ApplicationRole`, and the `DENY VIEW ANY DATABASE`.
+5. Create the login with a new random password, the user, its membership of `ApplicationRole`, and the `DENY VIEW ANY DATABASE`. The password travels **inside the process**: the script sends the batch through `Microsoft.Data.SqlClient` on an encrypted connection (never `sqlcmd -Q`, visible on a command line, nor `-i`, a file in clear). `CREATE LOGIN` only takes a literal, so the batch is dynamic SQL built with `QUOTENAME` for the login name and the password quoted (`'` doubled); the name itself has already passed the guard. A refusal by the password policy draws a new password.
 6. Send the connection string to the place named by `-SecretTarget`:
    - `None` (default): nowhere; the login exists but nobody knows its password (enough for the SQL tests, which play the user with `EXECUTE AS`);
-   - `UserSecrets`: the user secrets of the Very Back, through the standard input of `dotnet user-secrets set` (never on a command line, visible in the list of processes);
+   - `UserSecrets`: the user secrets of the Very Back, as a JSON batch on the standard input of `dotnet user-secrets set` (built with `ConvertTo-Json`; never on a command line, visible in the list of processes);
    - `Vault`: the vault folder of the Very Back given by `-VaultPath`, through `tools/vault/Set-VaultSecret.ps1`.
-7. Clear the password from the memory of the script.
+7. Drop the references to the password (a .NET string cannot be erased: it stays in memory until the process ends, which is short).
 
 What the script never does: deploy a database without the prefix, touch another login, print or log the password, keep it in a file, install anything.
 
@@ -240,22 +254,25 @@ builder.Configuration.AddPlatformVault(builder.Environment);
 
 | Host | Source | Where the secrets are |
 |------|--------|-----------------------|
-| Fedora, systemd unit | `$CREDENTIALS_DIRECTORY`, read by the key-per-file provider of Microsoft (`Microsoft.Extensions.Configuration.KeyPerFile`) | Each secret is encrypted by `systemd-creds encrypt` (key of the host, and the TPM2 when present) under `/etc/credstore.encrypted/`; the unit names it with `LoadCredentialEncrypted=<name>:<file>`; systemd decrypts it at start into a private, non-swappable folder that only the service can read |
-| Windows service | A provider of the platform over the folder named by `Vault:Path` | Each secret is a file encrypted with DPAPI (`ProtectedData`), whose access list gives read to the account of the service and to the administrators only |
+| Fedora, systemd unit | `$CREDENTIALS_DIRECTORY`, read by the key-per-file provider of Microsoft (`Microsoft.Extensions.Configuration.KeyPerFile`), restricted to the names of the known secrets | Each secret is encrypted by `systemd-creds encrypt --name=<name>` (key of the host, and the TPM2 when present) under `/etc/credstore.encrypted/`; the unit names it with `LoadCredentialEncrypted=<name>:<file>`, and a file renamed to another name is refused by systemd; systemd decrypts it at start into a read-only, non-swappable folder readable by root and **by the user of the service**, so each tier runs under its own system user (or `DynamicUser=yes`), never a shared one |
+| Windows service | A provider of the platform over the folder named by `Vault:Path`, with DPAPI `LocalMachine` | Each secret is a file encrypted with DPAPI (`ProtectedData`); its owner is SYSTEM or Administrators, and its access list gives read to the account of the service, SYSTEM and Administrators only, write to SYSTEM and Administrators only, on the file and on its folder |
 | Developer machine, tests | None | User secrets (Development) and in-memory settings, as today |
 
 The name of a secret is its configuration key with `__` for `:` (`Tls__CertificatePassword`), the form both providers map back to the key.
 
 Rules:
 
-1. **Outside the `Development` environment, a secret comes from the vault only.** A secret key (same rule as the CI: a segment ending with `Password`, `Pwd`, `Secret`, `ApiKey`, `Token`, `PrivateKey` or `ConnectionString`) set by an environment variable or a command-line argument stops the startup, naming the key. The environment variables of 0.5.0 and 0.6.0 are therefore removed from the services when the vault is set up.
-2. **A vault that is configured but unreadable stops the startup**: a missing folder, a file that cannot be decrypted, a file readable by other accounts (Windows), each named, never its content.
-3. On Windows, each file is bound to its name: the DPAPI entropy is the name of the secret, so a file copied under another name does not decrypt.
-4. No secret is ever logged; the error messages name the setting and the file, never a value (rule 3 of [configuration.md](../adm/configuration.md)).
+1. **Outside the `Development` environment, a secret key may have a non-empty value only from the vault.** A secret key (same rule as the CI: a segment ending with `Password`, `Pwd`, `Secret`, `ApiKey`, `Token`, `PrivateKey` or `ConnectionString`) set by any other source stops the startup, naming the key and the source: a JSON file edited on the server, an environment variable of any prefix (the `DOTNET_` and `ASPNETCORE_` providers, and the connection-string prefixes such as `SQLCONNSTR_`, which map to `ConnectionStrings:`), a command-line argument. The check reads the keys as each provider maps them, never the raw names of the variables. The environment variables of 0.5.0 and 0.6.0 are therefore removed from the services when the vault is set up.
+2. **In the `Development` environment the check is off**, so a tier logs a warning at startup when it runs as Development: an environment set to Development by mistake on a server is visible in the journal.
+3. **A vault that is configured but unreadable stops the startup**: a missing folder, a file that cannot be decrypted, a value that holds a control character (a line break left by an editor), a file or folder whose owner or access list allows more than the table above (Windows), each named, never its content. The access list is checked on the handle of the file that is read, so that the file cannot be swapped between the check and the read.
+4. On Windows, each file is bound to its name: the DPAPI entropy is the name of the secret, so a file copied under another name does not decrypt. On Fedora, `systemd-creds` embeds the name and refuses another one.
+5. No secret is ever logged; the error messages name the setting and the file, never a value (rule 3 of [configuration.md](../adm/configuration.md)).
 
-**DPAPI scope.** `CurrentUser` binds a secret to the account of the service: another account of the machine cannot decrypt it even with a wrong access list, but the file must be written while running as that account (a virtual account `NT SERVICE\<name>` cannot log on). `LocalMachine` lets any process of the machine decrypt a file it can read, so its protection is the access list of the file, like the credentials of systemd (readable by root and the service). The choice is made with the security review of this document; the default proposed is `LocalMachine` with the access list checked at load, the same model on both systems.
+**DPAPI scope: `LocalMachine` (decided with the security review).** `CurrentUser` would bind a secret to the account of the service, but it needs the profile of that account loaded to write the file, and a virtual account `NT SERVICE\<name>` cannot log on to provision it; the DPAPI of CNG protects only to a domain group or to web credentials, not to a local account. With `LocalMachine`, any process of the machine can decrypt a file it can read **and write a valid one** (the entropy, the name of the secret, is public): the access list of the file and of its folder is therefore the protection, checked at load, on both the read and the write side. It is the same model as `systemd-creds` without a TPM: the secret is safe at rest on another machine, but not in a full copy of the disk of its host, which holds the key of the machine (the DPAPI master key of the machine is protected by keys stored in the registry; `/var/lib/systemd/credential.secret` on Fedora). Hence: `--with-key=host+tpm2` where a TPM2 exists (a vTPM for the virtual machines), and an encrypted disk (BitLocker, LUKS); otherwise a residual risk.
 
-The tool that writes a secret on Windows is `tools/vault/Set-VaultSecret.ps1` (reads the value from the standard input or a prompt, never from an argument; encrypts; sets the access list). On Fedora, the commands of `systemd-creds` are documented in [configuration.md](../adm/configuration.md); the full installation of the units comes with 0.25.0.
+The tool that writes a secret on Windows is `tools/vault/Set-VaultSecret.ps1`: run as an administrator, after the service exists; it reads the value from the standard input or a prompt, never from an argument; it encrypts it; it sets the owner (Administrators) and the access list (read for the account of the service; full control for SYSTEM and Administrators; no inheritance) on the file and checks the folder. On Fedora, `systemd-ask-password -n | systemd-creds encrypt --name=<name> - /etc/credstore.encrypted/<name>` writes a secret without a line break; the commands are documented in [configuration.md](../adm/configuration.md), and the full installation of the units comes with 0.25.0.
+
+**Packages.** `Microsoft.Extensions.Configuration.KeyPerFile` (the Back and the Very Back, Worker projects; the Gateway gets it from the shared framework of ASP.NET Core) and `System.Security.Cryptography.ProtectedData` (Windows only, behind `OperatingSystem.IsWindows()`), both on the line 10.0.15 of the other Microsoft packages, whose update to 10.0.15 comes with them (CVE audit of this document).
 
 ## Threat model
 
@@ -268,7 +285,8 @@ The tool that writes a secret on Windows is `tools/vault/Set-VaultSecret.ps1` (r
 
 - The SQL Server, its host and the hosts of the tiers are administered by trusted people; their operating systems and .NET are kept up to date.
 - The link Back → Very Back is protected by 0.5.0 and 0.6.0: only the Very Back connects to the database.
-- The SQL Server is reached over an encrypted connection (`Encrypt=True`, the default of `Microsoft.Data.SqlClient`).
+- SQL Server 2025, tested on 17.0.1155.3 (RTM-GDR, the latest build of its branch on 2026-11-12), kept up to date.
+- Port 1433 of the SQL Server is open only to the hosts of the Very Back (and to the administrators).
 
 ### In scope
 
@@ -276,35 +294,46 @@ The tool that writes a secret on Windows is `tools/vault/Set-VaultSecret.ps1` (r
 |--------|------------|
 | A compromised or buggy Very Back reads or changes a table directly | The application principal has no right on the tables; it only executes the procedures and reads the views; `DENY` on the internal schemas |
 | SQL injection through the inputs | No dynamic SQL in the procedures; inputs are parameters and table-valued parameters; the Very Back never builds SQL text |
-| A change or a deletion of the audit by the application | No right on `Logs`; triggers refuse `UPDATE` and `DELETE`; the purge is not executable by the application |
+| A change or a deletion of the audit by the application, or by any user of the database but `dbo` (a member of `db_datawriter` that sets the key of the gate, a grant added by mistake) | `DENY INSERT, UPDATE, DELETE` to `public` on the table; no right on `Logs`; triggers refuse `UPDATE` and `DELETE`; the purge is not executable by the application |
 | A write without its audit, or an audit without its write | Same transaction, `XACT_ABORT ON`, rollback on any error |
-| A purge that hides itself | The purge writes its own audit row, dated today, which no purge of the same day can delete |
-| A gate of purge left open in a pooled session | The purge closes it in its `CATCH`; `sp_reset_connection` clears the session context when a pooled connection is reused |
-| A wrong actor claimed by a tier | `LoginName` records the login; an unknown actor is refused |
+| A purge that hides itself or an earlier one | The purge writes its own audit row, and the rows that record a purge are never purged |
+| A gate of purge left open in a session | The purge closes it in its `CATCH` and refuses to start with a key already set; the reset of a pooled connection clears the session context (tested); a canceled call can leave it open in the session of an administrator only |
+| A wrong `SESSION_CONTEXT` in a parallel plan (known issue of SQL Server 2025) | The key is read once, the delete of the trigger runs with `MAXDOP 1` |
+| A wrong actor claimed by a tier | An unknown actor is refused; `LoginName` separates the platform from the administrators (the limit of this proof is written in [The actor](#the-actor)) |
 | A partial write, a row lost without a reason | One result per input row, success or reason |
-| The password of the application principal read from a file, a backup of a disk, the list of processes | Never on a command line, never in clear in a file; stored encrypted by the OS (DPAPI, `systemd-creds`) |
-| A secret left in an environment variable | Refused at startup outside Development |
+| A call with a huge table-valued parameter | A maximum number of rows per call, refused with 51000 |
+| Personal data leaked through an error of the engine (a duplicate key, a truncated or converted value) | The Very Back never logs nor returns `SqlException.Message`, only the number, state, procedure and line |
+| A secret or its hash copied into the audit | Such columns are audited as `"changed"`, never with their value |
+| The password of the application principal read from a file in clear or the list of processes | Never on a command line, never in clear in a file; sent inside the process on an encrypted connection; stored encrypted by the OS (DPAPI, `systemd-creds`) |
+| A connection to SQL Server that is not encrypted, or that trusts any certificate | Refused at startup outside Development; the script writes `Encrypt=Mandatory` |
+| A secret left in an environment variable or in a JSON file of the server | Refused at startup outside Development; a warning when a tier runs as Development |
+| A vault file planted or replaced by another account (DPAPI `LocalMachine` lets any local process write a valid file) | Owner and access list of the file and of its folder checked at load, on the handle read |
 | A stolen vault file copied to another machine | DPAPI and `systemd-creds` keys belong to the machine (and its TPM2 on Fedora when present) |
+| Another process of the same user reads the credentials of a systemd unit | Each tier runs under its own system user |
 | The deployment script run against a real database | The prefix guard, before any build or connection; the login dropped only with the same prefix |
 | The login used to explore the server | `CONNECT SQL` only, `DENY VIEW ANY DATABASE` |
+| The login of the application locked by failed logins (`CHECK_POLICY` brings the lockout of the Windows policy; the name of the login is public, it is the name of the database) | Port 1433 open only to the hosts of the Very Back; the lockout is watched (`LOGINPROPERTY(…, 'IsLocked')`); the deployment script fails when the policy refuses the password |
 
 ### Out of scope, residual risks
 
-- **An administrator of the database or of the server** can disable the triggers, change or truncate the audit, read every secret of the machine where he is administrator. The audit is immutable against the platform, not against its administrators. A server-level SQL Server Audit, written outside the database, would detect it; it belongs to the installation (0.25.0) and is noted for the project lead.
-- **The metadata right** (`VIEW DEFINITION`) lets the application read the definition of every object; the code is public in the repository, so this discloses nothing new.
-- **Secrets in memory**: a .NET `string` cannot be erased, so a dump of the memory of a tier shows its secrets; the vault protects them at rest only.
+- **An administrator of the database or of the server** (`dbo`, `db_owner`, `db_ddladmin`, `sysadmin`) can revoke the `DENY`, disable the triggers, change or truncate the audit, and read every secret of the machine where they are administrator. The audit is immutable against the platform and the limited users, not against its administrators. A server-level SQL Server Audit, written outside the database (to a file: SQL Server 2025 has a pending fix for its Windows Security log target), would detect it; it belongs to the installation (0.25.0) and is noted for the project lead.
+- **A full copy of the disk of a host** holds the key of the machine: DPAPI `LocalMachine` and `systemd-creds` without TPM2 protect the secrets against a copy of their files, not against a copy of the whole disk (VHDX, backup). Mitigation where available: TPM2 (`host+tpm2`), encrypted disks.
+- **The metadata right** (`VIEW DEFINITION` on the database) lets the application read the definition of every object (the code is public in the repository), and also every principal and role membership (who may purge) and the number of rows of every table (`sys.partitions`). Accepted: the project lead's design gives the application the reading of the metadata; granting it only on the schemas of the platform would hide the principals, and is noted as an option.
+- **Secrets in memory**: a .NET `string` cannot be erased, so a dump of the memory of a tier shows its secrets, and its heap can be swapped; the vault protects them at rest only.
 - **A tier compromised while running** can use its own login as the platform does: the permission matrix limits the damage to what the procedures allow.
 - **The archive before the purge**: until its mechanism is decided, a purge deletes the rows without proof that a backup holds them.
+- **Personal data and GDPR**: the purge does not touch the history tables (`History.*`), and the `LoginName` of a purge is the personal login of an administrator. Both belong to the work on NIS2 and GDPR planned by the project lead.
 
 ## Tests
 
 - **Per group of procedures**, one test class: the insert and update of the settings (success, each rule of rejection, a row that breaks two rules comes out once, the call refused with no row or an unknown actor, one JSON result per input row in the documented shape).
-- **Audit**: one row per written row, same transaction (a failure after the write leaves neither); the values only; `UPDATE` and `DELETE` refused with 50001, even as `dbo`; the gate opened by hand does not let the application delete; the purge deletes only before the date, refuses today, a future date and `NULL`, writes its own row, and leaves the gate closed after a failure.
+- **Audit**: one row per written row, same transaction (a failure after the write leaves neither); the values only; `UPDATE` and `DELETE` refused with 50001, even as `dbo`; the gate opened by hand does not let the application, a member of `db_datawriter` or of `db_owner` delete (229); the purge deletes only before the date, never the rows of an earlier purge, refuses today, a future date, `NULL` and a key already set, writes its own row, and leaves the gate closed after a failure; a gate left open is cleared when its pooled connection is reused.
+- **Very Back**: a failing SQL call is logged with its number and without the message of the engine.
 - **Temporal history**: an update leaves the former value in `History.Platform_Settings` with its period; `FOR SYSTEM_TIME AS OF` returns the former value.
 - **Permission matrix**: the declared permissions and memberships of the role, then a member of the role (and the real application user deployed by the script) is allowed every procedure and view, and refused every table, `Logs`, `Functions`, a creation, with error 229.
 - **Conventions**: every object of the project has its header; every procedure of `StorProc` has a test class (a new procedure without a test fails); every table of a module is on the filegroup `Core`; every temporal table has its history in `History`.
 - **Deployment**: the guard refuses a wrong name before any build; a deployment from scratch creates the login, the user and its role; a second run replaces the password; the password never appears in the output.
-- **Vault**: Windows (DPAPI): a secret written by the tool is read under its key; a file with another name, a corrupted file, a file readable by everyone, a missing folder each stop the startup; Fedora: a credential given by `systemd-run -p LoadCredentialEncrypted=` is read under its key (in the WSL `FedoraLinux-44`); everywhere: a secret key from an environment variable stops the startup outside Development and is accepted in Development; no message holds a value.
+- **Vault**: Windows (DPAPI): a secret written by the tool is read under its key; a file with another name, a corrupted file, a file or folder readable or writable by another account, a missing folder, a value with a line break each stop the startup; Fedora: a credential given by `systemd-run -p LoadCredentialEncrypted=` is read under its key, another file of the folder is ignored (in the WSL `FedoraLinux-44`); everywhere: a secret key from an environment variable (any prefix, `SQLCONNSTR_` included), a JSON file or the command line stops the startup outside Development and is accepted in Development, with the warning; a connection string not encrypted or trusting the certificate stops the Very Back outside Development; no message holds a value.
 - **Done criterion of 0.7.0**: `DEV_` is deployed from scratch by one script; the application user executes the procedures but cannot read the tables; an update of the audit is rejected.
 
 ## Decisions left to the project lead
@@ -312,4 +341,4 @@ The tool that writes a secret on Windows is `tools/vault/Set-VaultSecret.ps1` (r
 | Decision | Options | Proposed |
 |----------|---------|----------|
 | How the rows reach a backup before their purge | (a) The purge refuses to run unless a full backup of the database finished after the newest row to purge (read from `msdb`); (b) an export of the rows (JSON or BCP) by the administration before the purge; (c) the backup policy of the server, outside the database | None: to be decided |
-| DPAPI scope on Windows | `LocalMachine` with a checked access list, or `CurrentUser` of the account of the service | `LocalMachine`, unless the security review says otherwise |
+| Updates of the development tools | SQL Server 2025 CU10 + GDR (17.0.5045.3) instead of the GDR branch; Visual Studio 2026 updated for SqlPackage 170.5.96 or later (fixes of the deployment of triggers and default constraints) | Both, by the author on his machines (CVE audit of this document) |
