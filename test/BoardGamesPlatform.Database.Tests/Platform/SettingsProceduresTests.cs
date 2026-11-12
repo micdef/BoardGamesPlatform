@@ -8,6 +8,7 @@
 // Using
 using System.Data;
 using System.Text.Json;
+using BoardGamesPlatform.TestKit;
 using Microsoft.Data.SqlClient;
 
 // Static using
@@ -66,6 +67,11 @@ public sealed class SettingsProceduresTests
     /// Expected properties of an audit value of a setting, in this order
     /// </summary>
     private static readonly string[] _auditProperties = new string[] { "Id", "Code", "Kind", "Value", "Comment" };
+
+    /// <summary>
+    /// Expected columns of the view of the settings, in this order
+    /// </summary>
+    private static readonly string[] _viewColumns = new string[] { "Code", "Kind", "Value", "ValidFrom" };
 
     #endregion
 
@@ -310,6 +316,9 @@ public sealed class SettingsProceduresTests
             string? audit = (string?)await SqlBatch.ScalarAsync(connection,
                 $"SELECT [NewValue] FROM [Logs].[Audit] WHERE [TableName] = N'Settings' AND [OldValue] IS NULL AND [NewValue] LIKE N'%\"{second}\"%';", token);
             using JsonDocument auditDocument = JsonDocument.Parse(audit.ShouldNotBeNull());
+            string? commentedAudit = (string?)await SqlBatch.ScalarAsync(connection,
+                $"SELECT [NewValue] FROM [Logs].[Audit] WHERE [TableName] = N'Settings' AND [OldValue] IS NULL AND [NewValue] LIKE N'%\"{first}\"%';", token);
+            using JsonDocument commentedDocument = JsonDocument.Parse(commentedAudit.ShouldNotBeNull());
 
             // Checks: shape and order of the results, the values written, the audit
             rows.Count.ShouldBe(2);
@@ -322,6 +331,7 @@ public sealed class SettingsProceduresTests
             auditDocument.RootElement.EnumerateObject().Select(property => property.Name).ShouldBe(_auditProperties);
             auditDocument.RootElement.GetProperty("Id").GetGuid().ShouldBe(ResultOf(document, second).GetProperty("Id").GetGuid());
             auditDocument.RootElement.GetProperty("Value").GetString().ShouldBe("-42");
+            commentedDocument.RootElement.GetProperty("Comment").GetString().ShouldBe("A comment");
         }
         finally
         {
@@ -342,6 +352,8 @@ public sealed class SettingsProceduresTests
     [InlineData("Has space.Inside", "Text", "x", "Code is not valid")]
     [InlineData("Accént.Inside", "Text", "x", "Code is not valid")]
     [InlineData("Ends.With.", "Text", "x", "Code is not valid")]
+    [InlineData("Has_underscore.x", "Text", "x", "Code is not valid")]
+    [InlineData("a-b.c", "Text", "x", "Code is not valid")]
     [InlineData("{new}", "Date", "x", "Kind is not Boolean, Integer or Text")]
     [InlineData("{new}", "Boolean", "True", "Value does not fit its kind")]
     [InlineData("{new}", "Boolean", "1", "Value does not fit its kind")]
@@ -469,6 +481,181 @@ public sealed class SettingsProceduresTests
     }
 
     /// <summary>
+    /// A failure of the audit of an update rolls back the new value: the setting keeps its value, gets no history row and no audit row of the
+    /// update
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> the same temporary AFTER INSERT trigger as for the insert, armed after the insert of the setting, so that it fails the
+    /// audit of the update only; it is dropped in every case.</para>
+    /// </remarks>
+    [Fact]
+    public async Task AFailureOfTheAuditRollsTheUpdateBackAsync()
+    {
+        // Inserting a setting, making its next audit fail, then updating it
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using SqlConnection connection = await TestDatabase.OpenAsync(token);
+        string code = NewCode();
+        string triggerName = $"TR_Test_Audit_FailUpdate_{Guid.NewGuid():N}";
+        try
+        {
+            await InsertAsync(connection, InsertRows((code, "Integer", "1", null)), token);
+            await SqlBatch.ExecuteAsync(connection, $"EXEC (N'CREATE TRIGGER [Logs].[{triggerName}] ON [Logs].[Audit] AFTER INSERT AS IF EXISTS (SELECT 1 FROM inserted WHERE [OldValue] IS NOT NULL AND [NewValue] LIKE N''%{code}%'') THROW {ForcedFailure}, ''Forced failure'', 1;');", token);
+            SqlException exception = await Should.ThrowAsync<SqlException>(() => UpdateAsync(connection, UpdateRows((code, "2")), token));
+            string value = (string)(await SqlBatch.ScalarAsync(connection, $"SELECT [Value] FROM [Platform].[Settings] WHERE [Code] = N'{code}';", token))!;
+            int historyRows = (int)(await SqlBatch.ScalarAsync(connection, $"SELECT COUNT(*) FROM [History].[Platform_Settings] WHERE [Code] = N'{code}';", token))!;
+            int updateAudits = (int)(await SqlBatch.ScalarAsync(connection,
+                $"SELECT COUNT(*) FROM [Logs].[Audit] WHERE [TableName] = N'Settings' AND [OldValue] IS NOT NULL AND [NewValue] LIKE N'%\"{code}\"%';", token))!;
+
+            // Checks
+            exception.Number.ShouldBe(ForcedFailure);
+            value.ShouldBe("1");
+            historyRows.ShouldBe(0);
+            updateAudits.ShouldBe(0);
+        }
+        finally
+        {
+            await SqlBatch.ExecuteAsync(connection, $"IF OBJECT_ID(N'[Logs].[{triggerName}]', N'TR') IS NOT NULL DROP TRIGGER [Logs].[{triggerName}];", CancellationToken.None);
+            await DeleteAsync(connection, code);
+        }
+    }
+
+    /// <summary>
+    /// The insert and the update accept a call of exactly 1 000 rows, the limit of the contract
+    /// </summary>
+    [Fact]
+    public async Task ACallOfExactly1000RowsIsAcceptedAsync()
+    {
+        // Inserting 1 000 settings, then updating all of them
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using SqlConnection connection = await TestDatabase.OpenAsync(token);
+        string[] codes = Enumerable.Range(0, 1000).Select(_ => NewCode()).ToArray();
+        try
+        {
+            string insert = await InsertAsync(connection, InsertRows(codes.Select(code => (code, "Text", "x", (string?)null)).ToArray()), token);
+            string update = await UpdateAsync(connection, UpdateRows(codes.Select(code => (code, "y")).ToArray()), token);
+            using JsonDocument insertDocument = JsonDocument.Parse(insert);
+            using JsonDocument updateDocument = JsonDocument.Parse(update);
+
+            // Checks
+            insertDocument.RootElement.GetArrayLength().ShouldBe(1000);
+            updateDocument.RootElement.GetArrayLength().ShouldBe(1000);
+            insertDocument.RootElement.EnumerateArray().ShouldAllBe(row => row.GetProperty("IsSuccess").GetBoolean());
+            updateDocument.RootElement.EnumerateArray().ShouldAllBe(row => row.GetProperty("IsSuccess").GetBoolean());
+        }
+        finally
+        {
+            await DeleteAsync(connection, codes);
+        }
+    }
+
+    /// <summary>
+    /// A change of the case of a text only is a change of its value: the update accepts it
+    /// </summary>
+    [Fact]
+    public async Task AChangeOfCaseOnlyIsAChangeOfTheValueAsync()
+    {
+        // Inserting a text, then updating it with the same letters in upper case
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using SqlConnection connection = await TestDatabase.OpenAsync(token);
+        string code = NewCode();
+        try
+        {
+            await InsertAsync(connection, InsertRows((code, "Text", "Same", null)), token);
+            string result = await UpdateAsync(connection, UpdateRows((code, "SAME")), token);
+            using JsonDocument document = JsonDocument.Parse(result);
+            string value = (string)(await SqlBatch.ScalarAsync(connection, $"SELECT [Value] FROM [Views].[V_Platform_Settings] WHERE [Code] = N'{code}';", token))!;
+
+            // Checks
+            ResultOf(document, code).GetProperty("IsSuccess").GetBoolean().ShouldBeTrue();
+            value.ShouldBe("SAME");
+        }
+        finally
+        {
+            await DeleteAsync(connection, code);
+        }
+    }
+
+    /// <summary>
+    /// The table-valued parameters refuse by themselves a blank code or kind, and twice the same code in one call, compared without case
+    /// </summary>
+    /// <param name="sql">The batch that fills the table-valued parameter</param>
+    /// <param name="expectedError">Error number expected: 547 for a CHECK constraint, 2627 for the unique constraint</param>
+    [Theory]
+    [InlineData("DECLARE @rows [Types].[TVP_Platform_Settings_Insert]; INSERT INTO @rows ([Code], [Kind], [Value]) VALUES (N' ', N'Text', N'x');", 547)]
+    [InlineData("DECLARE @rows [Types].[TVP_Platform_Settings_Insert]; INSERT INTO @rows ([Code], [Kind], [Value]) VALUES (N'Test.Blank', N' ', N'x');", 547)]
+    [InlineData("DECLARE @rows [Types].[TVP_Platform_Settings_Insert]; INSERT INTO @rows ([Code], [Kind], [Value]) VALUES (N'Test.Twice', N'Text', N'x'), (N'TEST.twice', N'Text', N'y');", 2627)]
+    [InlineData("DECLARE @rows [Types].[TVP_Platform_Settings_Update]; INSERT INTO @rows ([Code], [Value]) VALUES (N' ', N'x');", 547)]
+    [InlineData("DECLARE @rows [Types].[TVP_Platform_Settings_Update]; INSERT INTO @rows ([Code], [Value]) VALUES (N'Test.Twice', N'x'), (N'TEST.twice', N'y');", 2627)]
+    public async Task TheTableValuedParametersRefuseABlankOrDuplicateRowAsync(string sql, int expectedError)
+    {
+        // Filling the parameter
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using SqlConnection connection = await TestDatabase.OpenAsync(token);
+
+        // Check
+        await SqlBatch.ShouldFailWithAsync(connection, sql, expectedError, token);
+    }
+
+    /// <summary>
+    /// The view of the settings exposes exactly the code, the kind, the value and the start of its validity, in this order
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> the identifier and the comment are not part of the contract of the application (doc/dev/database.md); a column added to
+    /// the view by mistake would be read by the application.</para>
+    /// </remarks>
+    [Fact]
+    public async Task TheViewExposesExactlyItsContractAsync()
+    {
+        // Reading the columns of the view
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using SqlConnection connection = await TestDatabase.OpenAsync(token);
+        List<string> columns = new List<string>();
+        await using (SqlCommand command = new SqlCommand("SELECT [name] FROM [sys].[columns] WHERE [object_id] = OBJECT_ID(N'[Views].[V_Platform_Settings]') ORDER BY [column_id];", connection))
+        {
+            await using SqlDataReader reader = await command.ExecuteReaderAsync(token);
+            while (await reader.ReadAsync(token))
+                columns.Add(reader.GetString(0));
+        }
+
+        // Check
+        columns.ShouldBe(_viewColumns);
+    }
+
+    /// <summary>
+    /// The post-deployment script, run again, keeps the value an administrator gave to the registration switch and writes no audit row: a
+    /// redeployment never reopens the registration
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Behavior:</b> SSDT runs this script after every publish; the test runs its text against the database, after opening the switch
+    /// through the update procedure, then closes it again in every case.</para>
+    /// </remarks>
+    [Fact]
+    public async Task ARedeploymentKeepsTheValueOfTheRegistrationSwitchAsync()
+    {
+        // Opening the switch, then running the post-deployment script again
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using SqlConnection connection = await TestDatabase.OpenAsync(token);
+        string script = File.ReadAllText(Path.Combine(RepositoryPaths.GetRoot(), "src", "BoardGamesPlatform.Database", "Scripts", "Script.PostDeployment.sql"));
+        const string InsertAudits = "SELECT COUNT(*) FROM [Logs].[Audit] WHERE [TableName] = N'Settings' AND [OldValue] IS NULL AND [NewValue] LIKE N'%\"Registration.IsOpen\"%';";
+        try
+        {
+            (await UpdateAsync(connection, UpdateRows(("Registration.IsOpen", "true")), token)).ShouldContain("\"IsSuccess\":true");
+            int auditsBefore = (int)(await SqlBatch.ScalarAsync(connection, InsertAudits, token))!;
+            await SqlBatch.ExecuteAsync(connection, script, token);
+            string value = (string)(await SqlBatch.ScalarAsync(connection, "SELECT [Value] FROM [Views].[V_Platform_Settings] WHERE [Code] = N'Registration.IsOpen';", token))!;
+            int auditsAfter = (int)(await SqlBatch.ScalarAsync(connection, InsertAudits, token))!;
+
+            // Checks
+            value.ShouldBe("true");
+            auditsAfter.ShouldBe(auditsBefore);
+        }
+        finally
+        {
+            await UpdateAsync(connection, UpdateRows(("Registration.IsOpen", "false")), CancellationToken.None);
+        }
+    }
+
+    /// <summary>
     /// The update changes the value, keeps the former value in the history with its period, and audits the row before and after
     /// </summary>
     [Fact]
@@ -495,6 +682,9 @@ public sealed class SettingsProceduresTests
             string? oldValue = (string?)await SqlBatch.ScalarAsync(connection,
                 $"SELECT [OldValue] FROM [Logs].[Audit] WHERE [TableName] = N'Settings' AND [OldValue] IS NOT NULL AND [NewValue] LIKE N'%\"{code}\"%';", token);
             using JsonDocument oldDocument = JsonDocument.Parse(oldValue.ShouldNotBeNull());
+            string? newValue = (string?)await SqlBatch.ScalarAsync(connection,
+                $"SELECT [NewValue] FROM [Logs].[Audit] WHERE [TableName] = N'Settings' AND [OldValue] IS NOT NULL AND [NewValue] LIKE N'%\"{code}\"%';", token);
+            using JsonDocument newDocument = JsonDocument.Parse(newValue.ShouldNotBeNull());
 
             // Checks
             row.EnumerateObject().Select(property => property.Name).ShouldBe(_updateProperties);
@@ -505,6 +695,8 @@ public sealed class SettingsProceduresTests
             historyRows.ShouldBe(1);
             oldDocument.RootElement.EnumerateObject().Select(property => property.Name).ShouldBe(_auditProperties);
             oldDocument.RootElement.GetProperty("Value").GetString().ShouldBe("1");
+            newDocument.RootElement.EnumerateObject().Select(property => property.Name).ShouldBe(_auditProperties);
+            newDocument.RootElement.GetProperty("Value").GetString().ShouldBe("2");
         }
         finally
         {
@@ -561,9 +753,10 @@ public sealed class SettingsProceduresTests
         int audits = (int)(await SqlBatch.ScalarAsync(connection,
             "SELECT COUNT(*) FROM [Logs].[Audit] WHERE [TableName] = N'Settings' AND [OldValue] IS NULL AND [NewValue] LIKE N'%\"Registration.IsOpen\"%';", token))!;
 
-        // Checks: closed, unless a test of another run opened it (no test of this class changes it)
+        // Checks: closed (the test of the redeployment opens it and closes it again, in the same class, never at the same time); its audit row is
+        // there once, unless a purge of the audit removed it since the deployment
         value.ShouldBe("false");
-        audits.ShouldBe(1);
+        audits.ShouldBeInRange(0, 1);
     }
 
     /// <summary>

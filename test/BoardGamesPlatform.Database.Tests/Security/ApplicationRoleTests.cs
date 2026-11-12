@@ -261,6 +261,38 @@ public sealed class ApplicationRoleTests
     }
 
     /// <summary>
+    /// Every schema of the database is either a public schema of the matrix or an internal schema denied to the application role
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> the matrix above is checked against a list of schemas; a new module (Identity in version 0.8.0) must be added to that
+    /// list, with its DENY, or this test fails. The schemas of SQL Server itself (sys, INFORMATION_SCHEMA, guest) and of the fixed roles are not
+    /// read.</para>
+    /// </remarks>
+    [Fact]
+    public async Task EverySchemaOfTheDatabaseIsInThePermissionMatrixAsync()
+    {
+        // Reading the schemas of the database, outside those of SQL Server and of the fixed roles (identifiers from 16384)
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using SqlConnection connection = await TestDatabase.OpenAsync(token);
+        List<string> schemas = new List<string>();
+        await using (SqlCommand command = new SqlCommand("SELECT [name] FROM [sys].[schemas] WHERE [schema_id] < 16384 AND [name] NOT IN (N'sys', N'INFORMATION_SCHEMA', N'guest');", connection))
+        {
+            await using SqlDataReader reader = await command.ExecuteReaderAsync(token);
+            while (await reader.ReadAsync(token))
+                schemas.Add(reader.GetString(0));
+        }
+        List<string> known = _grantedPermissions
+            .Select(permission => permission.Split('|')[3])
+            .Where(schema => schema.Length > 0)
+            .Concat(_internalSchemas)
+            .ToList();
+
+        // Checks
+        schemas.ShouldNotBeEmpty("No schema was read: the check reads nothing");
+        schemas.Where(schema => !known.Contains(schema, StringComparer.Ordinal)).ShouldBeEmpty("These schemas are neither granted nor denied to the application role: add them to the matrix of doc/dev/database.md and of this test");
+    }
+
+    /// <summary>
     /// A member of the application role uses the procedures, the views and the table-valued parameters, reads the metadata, and is refused
     /// every table, every internal procedure and function, the delete of the audit even with the gate of the purge open, and any creation
     /// </summary>
