@@ -30,7 +30,7 @@ namespace BoardGamesPlatform.Database.Tests.Logs;
 /// the tests of one class in sequence), so that a purge never removes the rows of another test. Skipped when no throwaway database is
 /// configured (see <see cref="TestDatabase"/>).</para>
 /// </remarks>
-[Collection(AuditCollection.Name)]
+[Collection(AuditSchemaChanges.Name)]
 public sealed class AuditProceduresTests
 {
     #region Members
