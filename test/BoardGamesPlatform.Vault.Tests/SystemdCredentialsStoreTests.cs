@@ -6,6 +6,7 @@
  */
 
 // Using
+using System.Diagnostics;
 using System.Text;
 
 // Static using
@@ -24,8 +25,8 @@ namespace BoardGamesPlatform.Vault.Tests;
 /// <para><b>Purpose:</b> the store reads the folder systemd fills (CREDENTIALS_DIRECTORY): each file is a secret, its name the name of the
 /// secret.</para>
 /// <para><b>Behavior:</b> plays that folder with a temporary folder of plain files, as systemd leaves them after their decryption; it runs on every
-/// system, since the store only reads files. The decryption by systemd itself (systemd-creds, LoadCredentialEncrypted=) is checked by hand in
-/// the WSL FedoraLinux-44 (doc/adm/configuration.md).</para>
+/// system, since the store only reads files. On Linux, one test also encrypts and decrypts a secret with systemd-creds (key of the user); the
+/// decryption by a unit of the system (LoadCredentialEncrypted=) is checked by hand in the WSL FedoraLinux-44 (doc/adm/configuration.md).</para>
 /// </remarks>
 public sealed class SystemdCredentialsStoreTests : IDisposable
 {
@@ -122,6 +123,63 @@ public sealed class SystemdCredentialsStoreTests : IDisposable
         File.WriteAllBytes(Path.Combine(_folder, name), bytes);
     }
 
+    /// <summary>
+    /// Method used to run systemd-creds for the user, with a text on its standard input
+    /// </summary>
+    /// <param name="input">[Cannot be null] Text written on the standard input (empty for none)</param>
+    /// <param name="arguments">[Cannot be null] Arguments of systemd-creds</param>
+    /// <returns>
+    /// The exit code, or -1 when systemd-creds cannot be started (missing)
+    /// </returns>
+    private static async Task<int> RunSystemdCredsAsync(string input, params string[] arguments)
+    {
+        // Setting the call
+        ProcessStartInfo start = new ProcessStartInfo("systemd-creds")
+        {
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        start.ArgumentList.Add("--user");
+        foreach (string argument in arguments)
+            start.ArgumentList.Add(argument);
+
+        // Running it, never longer than a minute
+        Process? process;
+        try
+        {
+            process = Process.Start(start);
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            // Function's return: not installed
+            return -1;
+        }
+        using (process)
+        {
+            await process!.StandardInput.WriteAsync(input);
+            process.StandardInput.Close();
+            Task<string> output = process.StandardOutput.ReadToEndAsync();
+            Task<string> error = process.StandardError.ReadToEndAsync();
+            using CancellationTokenSource timeout = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+            try
+            {
+                await process.WaitForExitAsync(timeout.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                process.Kill(entireProcessTree: true);
+                await Task.WhenAll(output, error);
+                throw;
+            }
+            await Task.WhenAll(output, error);
+
+            // Function's return
+            return process.ExitCode;
+        }
+    }
+
     #endregion
 
     #region Publics
@@ -134,6 +192,50 @@ public sealed class SystemdCredentialsStoreTests : IDisposable
         // Deleting the folder and what it holds
         if (Directory.Exists(_folder))
             Directory.Delete(_folder, recursive: true);
+    }
+
+    /// <summary>
+    /// On Linux, a secret encrypted by systemd-creds under its name is decrypted under that name only, and read by the store as the tier expects
+    /// it (no trailing line break)
+    /// </summary>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    /// <remarks>
+    /// <para><b>Behavior:</b> uses the key of the user (systemd-creds --user), which needs no root; the decryption by a unit of the system
+    /// (LoadCredentialEncrypted=) stays a check by hand (doc/adm/configuration.md). Skipped outside Linux, and where systemd-creds or the
+    /// manager of the user is missing.</para>
+    /// </remarks>
+    [Fact]
+    public async Task OnLinuxASecretEncryptedBySystemdIsReadUnderItsNameOnlyAsync()
+    {
+        // Skipping on other systems
+        if (!OperatingSystem.IsLinux())
+            Assert.Skip("systemd-creds exists on Linux only");
+
+        // Encrypting the secret under its name, outside the folder of the credentials
+        string encrypted = Path.Combine(Path.GetTempPath(), $"BoardGamesPlatform.VaultTests.{Guid.NewGuid():N}.cred");
+        try
+        {
+            int encrypt = await RunSystemdCredsAsync("Kx9secret", "encrypt", "--name=Tls__CertificatePassword", "-", encrypted);
+            if (encrypt != 0)
+                Assert.Skip($"systemd-creds --user cannot encrypt here (exit code {encrypt}): no systemd-creds, or no manager of the user");
+
+            // Decrypting it under its name into the folder of the credentials, then under another name
+            int decrypt = await RunSystemdCredsAsync(string.Empty, "decrypt", "--name=Tls__CertificatePassword", encrypted, Path.Combine(_folder, "Tls__CertificatePassword"));
+            int renamed = await RunSystemdCredsAsync(string.Empty, "decrypt", "--name=ConnectionStrings__Main", encrypted, Path.Combine(_folder, "ConnectionStrings__Main"));
+            IReadOnlyDictionary<string, string> secrets = new SystemdCredentialsStore(_folder).ReadAll(_knownNames);
+
+            // Checks
+            decrypt.ShouldBe(0);
+            renamed.ShouldNotBe(0, "A credential decrypted under another name than its own must be refused by systemd");
+            secrets.ShouldContainKeyAndValue("Tls__CertificatePassword", "Kx9secret");
+            secrets.ContainsKey("ConnectionStrings__Main").ShouldBeFalse();
+        }
+        finally
+        {
+            File.Delete(encrypted);
+        }
     }
 
     /// <summary>

@@ -12,6 +12,7 @@ using BoardGamesPlatform.TestKit;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 // Static using
@@ -30,9 +31,10 @@ namespace BoardGamesPlatform.Vault.Tests;
 /// <para><b>Purpose:</b> the vault must give the secrets of a tier under their usual keys, win over every other source, and check the sources of
 /// the secrets when the host starts; the tool of the administrators must write files that the vault reads.</para>
 /// <para><b>Behavior:</b> the tests of this class set the process variable CREDENTIALS_DIRECTORY (Linux) and run one after the other (xUnit runs
-/// the tests of one class in sequence); no other class reads that variable. The test of the tool runs pwsh, and is skipped on other systems than
-/// Windows.</para>
+/// the tests of one class in sequence), never at the same time as the other classes of the collection <see cref="ProcessEnvironment"/>. The tests
+/// of the tool run pwsh, and are skipped on other systems than Windows.</para>
 /// </remarks>
+[Collection(ProcessEnvironment.Name)]
 public sealed class VaultExtensionsTests : IDisposable
 {
     #region Members
@@ -52,6 +54,11 @@ public sealed class VaultExtensionsTests : IDisposable
     /// Command line that holds a secret
     /// </summary>
     private static readonly string[] _secretOnTheCommandLine = new string[] { "--Tls:CertificatePassword=Kx9secret" };
+
+    /// <summary>
+    /// The key of the password of the PFX, the secret of every tier
+    /// </summary>
+    private static readonly string[] _tlsKey = new string[] { "Tls:CertificatePassword" };
 
     /// <summary>
     /// Temporary folder of the vault of a test
@@ -142,10 +149,12 @@ public sealed class VaultExtensionsTests : IDisposable
     /// </summary>
     /// <param name="name">[Cannot be null] Key of the secret</param>
     /// <param name="value">[Cannot be null] Value written on the standard input</param>
+    /// <param name="vaultPath">[Can be null] Folder of the vault; null for the folder of the test</param>
+    /// <param name="account">[Can be null] Account of the service; null for the account that runs the tests</param>
     /// <returns>
     /// The exit code of the tool and what it printed
     /// </returns>
-    private async Task<(int ExitCode, string Output)> RunToolAsync(string name, string value)
+    private async Task<(int ExitCode, string Output)> RunToolAsync(string name, string value, string? vaultPath = null, string? account = null)
     {
         // Setting the call: the value on the standard input, never as an argument
         string script = Path.Combine(RepositoryPaths.GetRoot(), "tools", "vault", "Set-VaultSecret.ps1");
@@ -155,8 +164,13 @@ public sealed class VaultExtensionsTests : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            WorkingDirectory = Path.GetTempPath(),
         };
-        foreach (string argument in new string[] { "-NoProfile", "-File", script, "-VaultPath", _folder, "-Name", name, "-Account", Environment.UserDomainName + "\\" + Environment.UserName })
+        string[] arguments = new string[]
+        {
+            "-NoProfile", "-File", script, "-VaultPath", vaultPath ?? _folder, "-Name", name, "-Account", account ?? Environment.UserDomainName + "\\" + Environment.UserName,
+        };
+        foreach (string argument in arguments)
             start.ArgumentList.Add(argument);
 
         // Running the tool
@@ -227,6 +241,50 @@ public sealed class VaultExtensionsTests : IDisposable
 
         // Check
         host.Services.GetServices<IHostedService>().Select(service => service.GetType()).ShouldBe(new Type[] { expected });
+    }
+
+    /// <summary>
+    /// The two warnings are logged as warnings, with their event identifiers: 9071 for Development, 9072 for a server without vault
+    /// </summary>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    [Fact]
+    public async Task TheWarningsAreLoggedWithTheirEventsAsync()
+    {
+        // Starting both services with a logger that keeps what it is given
+        CapturingLogger<VaultDevelopmentWarningService> development = new CapturingLogger<VaultDevelopmentWarningService>();
+        CapturingLogger<VaultMissingWarningService> missing = new CapturingLogger<VaultMissingWarningService>();
+        await new VaultDevelopmentWarningService(development).StartAsync(TestContext.Current.CancellationToken);
+        await new VaultMissingWarningService(missing).StartAsync(TestContext.Current.CancellationToken);
+
+        // Checks
+        (LogLevel Level, EventId Event, string Message) developmentEntry = development.Entries.ShouldHaveSingleItem();
+        (LogLevel Level, EventId Event, string Message) missingEntry = missing.Entries.ShouldHaveSingleItem();
+        developmentEntry.Level.ShouldBe(LogLevel.Warning);
+        developmentEntry.Event.Id.ShouldBe(9071);
+        developmentEntry.Message.ShouldContain("Development");
+        missingEntry.Level.ShouldBe(LogLevel.Warning);
+        missingEntry.Event.Id.ShouldBe(9072);
+        missingEntry.Message.ShouldContain("without a vault");
+    }
+
+    /// <summary>
+    /// The source of the vault, added last, wins over the sources added before it, and gives each secret under its configuration key (on every
+    /// system: the store is held in memory)
+    /// </summary>
+    [Fact]
+    public void TheVaultAddedLastWinsOverTheOtherSources()
+    {
+        // Building a configuration whose memory and command line hold other values of the secret, then the vault
+        ConfigurationManager configuration = new ConfigurationManager();
+        configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["Tls:CertificatePassword"] = "from the code" });
+        configuration.AddCommandLine(_secretOnTheCommandLine);
+        ((IConfigurationBuilder)configuration).Add(new VaultConfigurationSource(
+            new FakeStore(new Dictionary<string, string> { ["Tls__CertificatePassword"] = "from the vault" }), _tlsKey));
+
+        // Check
+        configuration["Tls:CertificatePassword"].ShouldBe("from the vault");
     }
 
     /// <summary>
@@ -316,6 +374,41 @@ public sealed class VaultExtensionsTests : IDisposable
         result.Output.ShouldContain("administrator");
         result.Output.ShouldNotContain("Kx9");
         Directory.Exists(_folder).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// The tool refuses a name that is not the key of a secret, a folder that is not an absolute path, and an account that does not exist,
+    /// before it asks the value, and writes nothing (with or without the rights of an administrator)
+    /// </summary>
+    /// <param name="name">Key given to the tool</param>
+    /// <param name="relativeFolder">True to give a relative folder instead of the folder of the test</param>
+    /// <param name="unknownAccount">True to give an account that does not exist</param>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    [Theory]
+    [InlineData("..\\evil", false, false)]
+    [InlineData("bad name", false, false)]
+    [InlineData("1abc", false, false)]
+    [InlineData("Tls:CertificatePassword", true, false)]
+    [InlineData("Tls:CertificatePassword", false, true)]
+    public async Task TheToolRefusesABadNameARelativeFolderOrAnUnknownAccountAsync(string name, bool relativeFolder, bool unknownAccount)
+    {
+        // Skipping on other systems
+        if (!OperatingSystem.IsWindows())
+            Assert.Skip("The tool writes the vault of Windows");
+
+        // Running the tool (a relative folder is taken from the temporary folder, its working directory)
+        string relative = $"BoardGamesPlatform.VaultTests.Relative.{Guid.NewGuid():N}";
+        (int ExitCode, string Output) result = await RunToolAsync(name, "Kx9secret",
+            relativeFolder ? relative : null,
+            unknownAccount ? $"{Environment.MachineName}\\NoSuchAccount{Guid.NewGuid():N}" : null);
+
+        // Checks
+        result.ExitCode.ShouldBe(1);
+        result.Output.ShouldNotContain("Kx9");
+        Directory.Exists(_folder).ShouldBeFalse();
+        Directory.Exists(Path.Combine(Path.GetTempPath(), relative)).ShouldBeFalse();
     }
 
     /// <summary>

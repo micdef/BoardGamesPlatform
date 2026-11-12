@@ -348,6 +348,20 @@ public sealed class AuditProceduresTests
     }
 
     /// <summary>
+    /// The insert refuses an old value that is not JSON with its own error, before the constraint of the table
+    /// </summary>
+    [Fact]
+    public async Task TheInsertRefusesAnOldValueThatIsNotJsonAsync()
+    {
+        // Calling the procedure with an old value that is not JSON
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using SqlConnection connection = await TestDatabase.OpenAsync(token);
+
+        // Check: 51000 from the procedure, not 547 from the table
+        await SqlBatch.ShouldFailWithAsync(connection, InsertBatch($"'{SystemActorId}', N'Logs', N'Audit', N'not json', N'{{}}'"), SqlBatch.CheckFailed, token);
+    }
+
+    /// <summary>
     /// The insert writes every row or none: one invalid row among valid ones leaves no row written
     /// </summary>
     [Fact]
@@ -476,7 +490,7 @@ public sealed class AuditProceduresTests
     [Fact]
     public async Task ThePurgeDeletesOnlyTheRowsBeforeItsDateAndRecordsItselfAsync()
     {
-        // Writing a row on the 1st and on the 3rd of January 2001, then purging before the 2nd
+        // Purging what earlier runs left in 2001, then writing two rows on the 1st and one on the 3rd of January 2001, and purging before the 2nd
         CancellationToken token = TestContext.Current.CancellationToken;
         await using SqlConnection connection = await TestDatabase.OpenAsync(token);
         string olderMarker = Guid.NewGuid().ToString("N");
@@ -484,6 +498,8 @@ public sealed class AuditProceduresTests
         string tableName = await CreateTargetTableAsync(connection, token);
         try
         {
+            await PurgeAsync(connection, "'2001-12-31'", token);
+            await WriteOldRowAsync(connection, tableName, "2001-01-01T09:00:00", olderMarker, token);
             await WriteOldRowAsync(connection, tableName, "2001-01-01T10:00:00", olderMarker, token);
             await WriteOldRowAsync(connection, tableName, "2001-01-03T10:00:00", newerMarker, token);
             string startedAt = (string)(await SqlBatch.ScalarAsync(connection, "SELECT CONVERT(NVARCHAR(30), SYSUTCDATETIME(), 126);", token))!;
@@ -498,7 +514,8 @@ public sealed class AuditProceduresTests
             // Checks
             document.RootElement.EnumerateObject().Select(property => property.Name).ShouldBe(_purgeProperties);
             document.RootElement.GetProperty("Before").GetString().ShouldBe("2001-01-02");
-            document.RootElement.GetProperty("Rows").GetInt32().ShouldBeGreaterThanOrEqualTo(1);
+            document.RootElement.GetProperty("Rows").GetInt32().ShouldBe(2);
+            document.RootElement.GetProperty("OldestActionDT").GetString().ShouldBe("2001-01-01T09:00:00");
             document.RootElement.GetProperty("NewestActionDT").GetString().ShouldBe("2001-01-01T10:00:00");
             (await CountMarkedRowsAsync(connection, olderMarker, token)).ShouldBe(0);
             (await CountMarkedRowsAsync(connection, newerMarker, token)).ShouldBe(1);
@@ -528,6 +545,55 @@ public sealed class AuditProceduresTests
         string marker = Guid.NewGuid().ToString("N");
         await WriteOldRowAsync(connection, "Audit", "2001-02-01T10:00:00", marker, token);
         await PurgeAsync(connection, "'2001-12-31'", token);
+
+        // Check
+        (await CountMarkedRowsAsync(connection, marker, token)).ShouldBe(1);
+    }
+
+    /// <summary>
+    /// The purge deletes the rows dated before midnight (UTC) of its date and keeps the rows dated exactly at that midnight
+    /// </summary>
+    [Fact]
+    public async Task ThePurgeKeepsARowDatedExactlyAtMidnightOfItsDateAsync()
+    {
+        // Writing a row one tick before midnight of the 2nd of January 2001 and one exactly at midnight, then purging before the 2nd
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using SqlConnection connection = await TestDatabase.OpenAsync(token);
+        string lastTickMarker = Guid.NewGuid().ToString("N");
+        string midnightMarker = Guid.NewGuid().ToString("N");
+        string tableName = await CreateTargetTableAsync(connection, token);
+        try
+        {
+            await WriteOldRowAsync(connection, tableName, "2001-01-01T23:59:59.9999999", lastTickMarker, token);
+            await WriteOldRowAsync(connection, tableName, "2001-01-02T00:00:00", midnightMarker, token);
+            await PurgeAsync(connection, "'2001-01-02'", token);
+
+            // Checks
+            (await CountMarkedRowsAsync(connection, lastTickMarker, token)).ShouldBe(0);
+            (await CountMarkedRowsAsync(connection, midnightMarker, token)).ShouldBe(1);
+        }
+        finally
+        {
+            // Purging the rows of 2001 left by the test, then dropping its table
+            await PurgeAsync(connection, "'2001-12-31'", CancellationToken.None);
+            await DropTargetTableAsync(connection, tableName);
+        }
+    }
+
+    /// <summary>
+    /// A key of the gate set to another value than 1 does not open it: a delete of the owner is still refused
+    /// </summary>
+    [Fact]
+    public async Task AGateSetToZeroStillRefusesTheDeleteAsync()
+    {
+        // Writing a row, then trying to delete it as the owner with the key set to 0, in a session of its own
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using SqlConnection connection = await TestDatabase.OpenAsync(builder => builder.Pooling = false, token);
+        string marker = Guid.NewGuid().ToString("N");
+        await SqlBatch.ExecuteAsync(connection, InsertBatch($"'{SystemActorId}', N'Logs', N'Audit', NULL, N'{{\"marker\":\"{marker}\"}}'"), token);
+        await SqlBatch.ShouldFailWithAsync(connection,
+            $"EXEC [sys].[sp_set_session_context] @key = N'AllowAuditPurge', @value = 0; DELETE FROM [Logs].[Audit] WHERE [NewValue] LIKE N'%{marker}%';",
+            SqlBatch.AuditImmutable, token);
 
         // Check
         (await CountMarkedRowsAsync(connection, marker, token)).ShouldBe(1);

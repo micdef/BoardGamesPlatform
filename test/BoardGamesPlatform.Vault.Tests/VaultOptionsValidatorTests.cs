@@ -29,6 +29,7 @@ namespace BoardGamesPlatform.Vault.Tests;
 /// <para><b>Behavior:</b> builds configurations with each kind of source; the environment variables get a prefix of their own (a GUID), so that
 /// the tests running at the same time never see them.</para>
 /// </remarks>
+[Collection(ProcessEnvironment.Name)]
 public sealed class VaultOptionsValidatorTests
 {
     #region Members
@@ -264,6 +265,41 @@ public sealed class VaultOptionsValidatorTests
 
         // Check
         Validate(configuration, Environments.Development).Succeeded.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// A secret hidden in a configuration chained into the configuration of the tier is refused on a server
+    /// </summary>
+    [Fact]
+    public void ASecretOfAChainedConfigurationIsRefusedOnAServer()
+    {
+        // Building a configuration whose command line holds a secret, chained into the configuration of the tier
+        ConfigurationManager inner = new ConfigurationManager();
+        inner.AddCommandLine(_secretOnTheCommandLine);
+        ConfigurationManager configuration = new ConfigurationManager();
+        configuration.AddConfiguration(inner);
+
+        // Checks
+        ValidateOptionsResult result = Validate(configuration, Environments.Production);
+        result.Failed.ShouldBeTrue();
+        result.FailureMessage.ShouldContain("Tls:CertificatePassword");
+        result.FailureMessage.ShouldNotContain("Kx9");
+    }
+
+    /// <summary>
+    /// On a server, a configuration whose sources cannot be listed (a section instead of the root) is refused rather than trusted
+    /// </summary>
+    [Fact]
+    public void AConfigurationThatCannotBeInspectedIsRefusedOnAServer()
+    {
+        // Giving a section of the configuration instead of its root
+        ConfigurationManager configuration = new ConfigurationManager();
+        configuration.AddCommandLine(_secretOnTheCommandLine);
+
+        // Checks
+        ValidateOptionsResult result = Validate(configuration.GetSection("Tls"), Environments.Production);
+        result.Failed.ShouldBeTrue();
+        result.FailureMessage.ShouldContain("cannot be inspected");
     }
 
     /// <summary>
