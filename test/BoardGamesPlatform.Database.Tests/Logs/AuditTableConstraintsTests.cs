@@ -142,17 +142,19 @@ public sealed class AuditTableConstraintsTests
     /// <param name="tableName">T-SQL value of the table</param>
     /// <param name="oldValue">T-SQL value of the old value</param>
     /// <param name="newValue">T-SQL value of the new value</param>
+    /// <param name="constraintNames">The constraint that must refuse the row (several, separated by '|', when the row breaks more than one by
+    /// nature: an unknown schema makes the table unknown too)</param>
     [Theory]
-    [InlineData(EmptyGuid, SystemActor, "ORIGINAL_LOGIN()", "N'Logs'", "N'Audit'", "NULL", "N'{}'")]
-    [InlineData("NEWID()", EmptyGuid, "ORIGINAL_LOGIN()", "N'Logs'", "N'Audit'", "NULL", "N'{}'")]
-    [InlineData("NEWID()", SystemActor, "N' '", "N'Logs'", "N'Audit'", "NULL", "N'{}'")]
-    [InlineData("NEWID()", SystemActor, "ORIGINAL_LOGIN()", "N'NoSuchSchema'", "N'Audit'", "NULL", "N'{}'")]
-    [InlineData("NEWID()", SystemActor, "ORIGINAL_LOGIN()", "N'Logs'", "N'NoSuchTable'", "NULL", "N'{}'")]
-    [InlineData("NEWID()", SystemActor, "ORIGINAL_LOGIN()", "N'INFORMATION_SCHEMA'", "N'TABLES'", "NULL", "N'{}'")]
-    [InlineData("NEWID()", SystemActor, "ORIGINAL_LOGIN()", "N'Logs'", "N'Audit'", "NULL", "NULL")]
-    [InlineData("NEWID()", SystemActor, "ORIGINAL_LOGIN()", "N'Logs'", "N'Audit'", "N'not json'", "N'{}'")]
-    [InlineData("NEWID()", SystemActor, "ORIGINAL_LOGIN()", "N'Logs'", "N'Audit'", "NULL", "N'not json'")]
-    public async Task TheTableRefusesAnInvalidRowEvenToTheOwnerAsync(string id, string actor, string loginName, string schemaName, string tableName, string oldValue, string newValue)
+    [InlineData(EmptyGuid, SystemActor, "ORIGINAL_LOGIN()", "N'Logs'", "N'Audit'", "NULL", "N'{}'", "CK_Logs_Audit_Id")]
+    [InlineData("NEWID()", EmptyGuid, "ORIGINAL_LOGIN()", "N'Logs'", "N'Audit'", "NULL", "N'{}'", "CK_Logs_Audit_IdActor")]
+    [InlineData("NEWID()", SystemActor, "N' '", "N'Logs'", "N'Audit'", "NULL", "N'{}'", "CK_Logs_Audit_LoginName")]
+    [InlineData("NEWID()", SystemActor, "ORIGINAL_LOGIN()", "N'NoSuchSchema'", "N'Audit'", "NULL", "N'{}'", "CK_Logs_Audit_SchemaName|CK_Logs_Audit_TableName")]
+    [InlineData("NEWID()", SystemActor, "ORIGINAL_LOGIN()", "N'Logs'", "N'NoSuchTable'", "NULL", "N'{}'", "CK_Logs_Audit_TableName")]
+    [InlineData("NEWID()", SystemActor, "ORIGINAL_LOGIN()", "N'INFORMATION_SCHEMA'", "N'TABLES'", "NULL", "N'{}'", "CK_Logs_Audit_TableName")]
+    [InlineData("NEWID()", SystemActor, "ORIGINAL_LOGIN()", "N'Logs'", "N'Audit'", "NULL", "NULL", "CK_Logs_Audit_Values")]
+    [InlineData("NEWID()", SystemActor, "ORIGINAL_LOGIN()", "N'Logs'", "N'Audit'", "N'not json'", "N'{}'", "CK_Logs_Audit_OldValue")]
+    [InlineData("NEWID()", SystemActor, "ORIGINAL_LOGIN()", "N'Logs'", "N'Audit'", "NULL", "N'not json'", "CK_Logs_Audit_NewValue")]
+    public async Task TheTableRefusesAnInvalidRowEvenToTheOwnerAsync(string id, string actor, string loginName, string schemaName, string tableName, string oldValue, string newValue, string constraintNames)
     {
         // Writing the row directly, in a transaction that the batch rolls back whatever happens (the error of a constraint ends the statement only)
         CancellationToken token = TestContext.Current.CancellationToken;
@@ -165,8 +167,9 @@ public sealed class AuditTableConstraintsTests
             ROLLBACK TRANSACTION;
             """;
 
-        // Check
-        await SqlBatch.ShouldFailWithAsync(connection, sql, ConstraintViolation, token);
+        // Checks: the error of a CHECK constraint, and the constraint expected (SQL Server names it in its message)
+        SqlException exception = await SqlBatch.ShouldFailWithAsync(connection, sql, ConstraintViolation, token);
+        constraintNames.Split('|').ShouldContain(name => exception.Message.Contains($"\"{name}\"", StringComparison.Ordinal), exception.Message);
     }
 
     /// <summary>
@@ -216,8 +219,8 @@ public sealed class AuditTableConstraintsTests
         object? written = await SqlBatch.ScalarAsync(connection, $$"""
             SET XACT_ABORT OFF;
             BEGIN TRANSACTION;
-            INSERT INTO [Logs].[Audit] ([IdActor], [SchemaName], [TableName], [OldValue], [NewValue])
-            VALUES ({{SystemActor}}, N'Logs', N'Audit', N'{}', N'{}');
+            INSERT INTO [Logs].[Audit] ([Id], [IdActor], [LoginName], [SchemaName], [TableName], [OldValue], [NewValue])
+            VALUES (NEWID(), {{SystemActor}}, ORIGINAL_LOGIN(), N'Logs', N'Audit', N'{}', N'{}');
             DECLARE @rows INT = @@ROWCOUNT;
             ROLLBACK TRANSACTION;
             SELECT @rows;
