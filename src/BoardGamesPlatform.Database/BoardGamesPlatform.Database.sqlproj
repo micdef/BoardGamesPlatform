@@ -77,6 +77,8 @@
     <Build Include="FileGroups\Core.sql" />
     <Build Include="Functions\IsValidActorId.sql" />
     <Build Include="Functions\IsValidSchemaName.sql" />
+    <Build Include="Functions\IsValidSettingCode.sql" />
+    <Build Include="Functions\IsValidSettingValue.sql" />
     <Build Include="Functions\IsValidTableName.sql" />
     <Build Include="Functions\SystemActorId.sql" />
     <Build Include="Indexes\Tables\Logs\Audit\IXC_Logs_Audit_ActionDT.sql" />
@@ -93,11 +95,20 @@
     <Build Include="Security\AuditTablePermissions.sql" />
     <Build Include="StoredProcedures\Logs\Audit\SP_Logs_Audit_Insert.sql" />
     <Build Include="StoredProcedures\Logs\Audit\SP_Logs_Audit_Purge.sql" />
+    <Build Include="StoredProcedures\Platform\Settings\SP_Platform_Settings_Insert.sql" />
+    <Build Include="StoredProcedures\Platform\Settings\SP_Platform_Settings_Update.sql" />
     <Build Include="StoredProcedures\ServerCore\Server\SP_ServerCore_Server_Ping.sql" />
     <Build Include="Tables\Logs\Audit.sql" />
+    <Build Include="Tables\Platform\Settings.sql" />
     <Build Include="Triggers\Logs\Audit\TR_Logs_Audit_IOfDelete.sql" />
     <Build Include="Triggers\Logs\Audit\TR_Logs_Audit_IOfUpdate.sql" />
     <Build Include="Types\Logs\Audit\TVP_Logs_Audit_Insert.sql" />
+    <Build Include="Types\Platform\Settings\TVP_Platform_Settings_Insert.sql" />
+    <Build Include="Types\Platform\Settings\TVP_Platform_Settings_Update.sql" />
+    <Build Include="Views\Platform\V_Platform_Settings.sql" />
+  </ItemGroup>
+  <ItemGroup>
+    <PostDeploy Include="Scripts\Script.PostDeployment.sql" />
   </ItemGroup>
   <ItemGroup>
     <None Include="StaticCodeAnalysis.SuppressMessages.xml" />

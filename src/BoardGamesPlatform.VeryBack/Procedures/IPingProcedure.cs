@@ -87,6 +87,7 @@ public interface IPingProcedure
     /// <returns>
     /// The date and time of the server, with its offset
     /// </returns>
+    /// <exception cref="SqlCallException">If the connection or the procedure fails (the facts of the SQL error, never its message)</exception>
     /// <exception cref="InvalidDataException">If the database answers something else than the documented result</exception>
     /// <exception cref="OperationCanceledException">If the call is canceled</exception>
     public Task<DateTimeOffset> GetServerTimeAsync(CancellationToken cancellationToken);

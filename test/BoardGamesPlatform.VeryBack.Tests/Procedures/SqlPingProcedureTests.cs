@@ -305,6 +305,44 @@ public sealed class SqlPingProcedureTests
         (serverTime - DateTimeOffset.UtcNow).Duration().ShouldBeLessThan(TimeSpan.FromDays(1));
     }
 
+    /// <summary>
+    /// A SQL error leaves the procedure as its facts only: its number, never its message, which quotes a value (here, the name of a database the
+    /// login cannot open), and without the SQL exception inside (skipped without a test database)
+    /// </summary>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    /// <remarks>
+    /// <para><b>Purpose:</b> the dispatcher of the operations logs the exception of a failed handler; from version 0.8.0 the values quoted by
+    /// SQL Server are e-mail addresses and nicknames (doc/dev/database.md, Write pattern, Errors).</para>
+    /// <para><b>Behavior:</b> the server of the test database, with the name of a database that does not exist: SQL Server answers the error 4060,
+    /// whose message quotes that name.</para>
+    /// </remarks>
+    [Fact(Timeout = TestTimeout)]
+    public async Task ASqlErrorLeavesWithoutItsMessageAsync()
+    {
+        // Skipping the test when no database is configured
+        CancellationToken token = TestContext.Current.CancellationToken;
+        string? connectionString = TestDatabase.ReadConnectionString();
+        if (connectionString is null)
+            Assert.Skip(TestDatabase.SkipReason);
+
+        // Naming a database that does not exist on the same server (no database is opened, so the guard of the throwaway names has nothing to
+        // protect)
+        string missingDatabase = $"TEST_Missing_{Guid.NewGuid():N}";
+        SqlConnectionStringBuilder builder = new SqlConnectionStringBuilder(connectionString) { InitialCatalog = missingDatabase, Pooling = false };
+        using SqlPingProcedure procedure = new SqlPingProcedure(Options.Create(new ConnectionStringsOptions { Main = builder.ConnectionString }));
+
+        // Calling the procedure
+        SqlCallException exception = await Should.ThrowAsync<SqlCallException>(() => procedure.GetServerTimeAsync(token));
+
+        // Checks
+        exception.Number.ShouldBe(4060);
+        exception.CalledProcedure.ShouldBe("[ServerCore].[SP_ServerCore_Server_Ping]");
+        exception.InnerException.ShouldBeNull();
+        exception.ToString().ShouldNotContain(missingDatabase);
+    }
+
     #endregion
 
     #endregion

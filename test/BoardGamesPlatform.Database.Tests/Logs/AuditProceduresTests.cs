@@ -468,9 +468,9 @@ public sealed class AuditProceduresTests
         }
         finally
         {
-            // Purging the rows of 2001 left by the test, then dropping its table
-            await PurgeAsync(connection, "'2001-12-31'", CancellationToken.None);
+            // Dropping the table of the test first (a failing purge must not leave it), then purging the rows of 2001 left by the test
             await DropTargetTableAsync(connection, tableName);
+            await PurgeAsync(connection, "'2001-12-31'", CancellationToken.None);
         }
     }
 
@@ -571,12 +571,13 @@ public sealed class AuditProceduresTests
     /// A purge that fails after its gate is open rolls everything back and leaves the gate closed in the session
     /// </summary>
     /// <remarks>
-    /// <para><b>Behavior:</b> a temporary AFTER DELETE trigger fails the delete made inside the INSTEAD OF trigger; it is dropped in every case.</para>
+    /// <para><b>Behavior:</b> a temporary AFTER DELETE trigger fails the delete made inside the INSTEAD OF trigger, only when it deletes the row of
+    /// this test, so that the tests that run at the same time are not touched; it is dropped in every case.</para>
     /// </remarks>
     [Fact]
     public async Task AFailedPurgeDeletesNothingAndLeavesTheGateClosedAsync()
     {
-        // Writing an old row, and a trigger that makes every real delete of the audit fail
+        // Writing an old row, and a trigger that makes the real delete of that row fail
         CancellationToken token = TestContext.Current.CancellationToken;
         await using SqlConnection connection = await TestDatabase.OpenAsync(token);
         string marker = Guid.NewGuid().ToString("N");
@@ -585,7 +586,7 @@ public sealed class AuditProceduresTests
         try
         {
             await WriteOldRowAsync(connection, tableName, "2001-06-01T10:00:00", marker, token);
-            await SqlBatch.ExecuteAsync(connection, $"EXEC (N'CREATE TRIGGER [Logs].[{triggerName}] ON [Logs].[Audit] AFTER DELETE AS THROW {ForcedFailure}, ''Forced failure'', 1;');", token);
+            await SqlBatch.ExecuteAsync(connection, $"EXEC (N'CREATE TRIGGER [Logs].[{triggerName}] ON [Logs].[Audit] AFTER DELETE AS IF EXISTS (SELECT 1 FROM deleted WHERE [NewValue] LIKE N''%{marker}%'') THROW {ForcedFailure}, ''Forced failure'', 1;');", token);
             await SqlBatch.ShouldFailWithAsync(connection, "DECLARE @result NVARCHAR(MAX); EXEC [Logs].[SP_Logs_Audit_Purge] @Before = '2001-12-31', @Result = @result OUTPUT;",
                 ForcedFailure, token);
             object? gate = await SqlBatch.ScalarAsync(connection, "SELECT SESSION_CONTEXT(N'AllowAuditPurge');", token);
@@ -596,10 +597,10 @@ public sealed class AuditProceduresTests
         }
         finally
         {
-            // Dropping the trigger, then purging the rows of 2001 left by the test
+            // Dropping the trigger and the table first (a failing purge must not leave them), then purging the rows of 2001 left by the test
             await SqlBatch.ExecuteAsync(connection, $"IF OBJECT_ID(N'[Logs].[{triggerName}]', N'TR') IS NOT NULL DROP TRIGGER [Logs].[{triggerName}];", CancellationToken.None);
-            await PurgeAsync(connection, "'2001-12-31'", CancellationToken.None);
             await DropTargetTableAsync(connection, tableName);
+            await PurgeAsync(connection, "'2001-12-31'", CancellationToken.None);
         }
     }
 

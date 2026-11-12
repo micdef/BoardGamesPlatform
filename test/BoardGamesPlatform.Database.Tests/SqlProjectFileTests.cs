@@ -132,8 +132,9 @@ public sealed partial class SqlProjectFileTests
         XDocument project = XDocument.Load(Path.Combine(RepositoryPaths.GetRoot(), ProjectFolder, "BoardGamesPlatform.Database.sqlproj"));
         XNamespace msbuild = "http://schemas.microsoft.com/developer/msbuild/2003";
 
-        // Function's return
-        return project.Descendants(msbuild + "Build")
+        // Function's return: the objects (Build) and the scripts run before or after the publish (PreDeploy, PostDeploy)
+        return project.Descendants()
+            .Where(item => item.Name == msbuild + "Build" || item.Name == msbuild + "PreDeploy" || item.Name == msbuild + "PostDeploy")
             .Select(item => (string?)item.Attribute("Include") ?? string.Empty)
             .ToList();
     }
