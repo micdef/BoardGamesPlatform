@@ -17,7 +17,7 @@
  *	BIT : 1 when the actor is known, 0 otherwise (NULL and Guid.Empty included)
  *
  *	Behavior :
- *	-----------
+ *	----------
  *	In version 0.7.0 the only known actor is the platform itself (Functions.SystemActorId). Version 0.8.0 also accepts the identifiers of the
  *	users. Every procedure of StorProc refuses a call whose actor is not known (error 51000): the audit never names an actor that does not exist.
  */
