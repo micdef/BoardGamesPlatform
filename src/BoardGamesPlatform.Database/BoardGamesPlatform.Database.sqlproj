@@ -113,4 +113,12 @@
   <ItemGroup>
     <None Include="StaticCodeAnalysis.SuppressMessages.xml" />
   </ItemGroup>
+  <!-- System database master, shipped with SSDT: resolves sys.sp_set_session_context and INFORMATION_SCHEMA (as in AckSolutions) -->
+  <ItemGroup>
+    <ArtifactReference Include="$(DacPacRootPath)\Extensions\Microsoft\SQLDB\Extensions\SqlServer\170\SqlSchemas\master.dacpac">
+      <HintPath>$(DacPacRootPath)\Extensions\Microsoft\SQLDB\Extensions\SqlServer\170\SqlSchemas\master.dacpac</HintPath>
+      <SuppressMissingDependenciesErrors>False</SuppressMissingDependenciesErrors>
+      <DatabaseVariableLiteralValue>master</DatabaseVariableLiteralValue>
+    </ArtifactReference>
+  </ItemGroup>
 </Project>
