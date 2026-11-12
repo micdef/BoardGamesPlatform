@@ -269,7 +269,8 @@ public sealed partial class SqlPingProcedure : IPingProcedure, IDisposable
     /// <returns>
     /// The date and time of the server, with its offset
     /// </returns>
-    /// <exception cref="SqlException">If the connection or the procedure fails</exception>
+    /// <exception cref="SqlCallException">If the connection or the procedure fails: the facts of the SQL error, never its message, which can
+    /// quote values</exception>
     /// <exception cref="InvalidDataException">If the database answers something else than the documented result</exception>
     /// <exception cref="OperationCanceledException">If the call is canceled</exception>
     /// <exception cref="ObjectDisposedException">If the procedure is disposed: a call must not open a new pool after the stop</exception>
@@ -278,13 +279,26 @@ public sealed partial class SqlPingProcedure : IPingProcedure, IDisposable
         // Check: no new session once the pool is cleared (a request that outlasts the shutdown timeout of the host ends here)
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) == 1, this);
 
-        // Opening the connection and calling the procedure
-        await using SqlConnection connection = new SqlConnection(_connectionString);
-        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using SqlCommand command = new SqlCommand(ProcedureName, connection) { CommandType = CommandType.StoredProcedure };
+        // Opening the connection and calling the procedure; a SQL error leaves as its facts only, so that no log receives its message
         SqlParameter result = new SqlParameter(ResultParameterName, SqlDbType.NVarChar, -1) { Direction = ParameterDirection.Output };
-        command.Parameters.Add(result);
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using SqlConnection connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using SqlCommand command = new SqlCommand(ProcedureName, connection) { CommandType = CommandType.StoredProcedure };
+            command.Parameters.Add(result);
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (SqlException) when (cancellationToken.IsCancellationRequested)
+        {
+            // A cancellation during the execution can surface as a SqlException (the type depends on where it happens, Microsoft Learn,
+            // "Asynchronous programming" of SqlClient): it stays a cancellation, as the contract says, without the SQL exception inside
+            throw new OperationCanceledException("The call of the Ping procedure was canceled", cancellationToken);
+        }
+        catch (SqlException exception)
+        {
+            throw new SqlCallException(ProcedureName, exception);
+        }
 
         // Function's return
         return ParseServerTime(result.Value as string);

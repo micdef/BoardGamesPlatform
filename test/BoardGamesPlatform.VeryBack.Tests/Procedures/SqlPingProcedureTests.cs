@@ -305,6 +305,84 @@ public sealed class SqlPingProcedureTests
         (serverTime - DateTimeOffset.UtcNow).Duration().ShouldBeLessThan(TimeSpan.FromDays(1));
     }
 
+    /// <summary>
+    /// A SQL error leaves the procedure as its facts only: its number, never its message, which quotes a value (here, the name of a database the
+    /// login cannot open), and without the SQL exception inside (skipped without a test database)
+    /// </summary>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    /// <remarks>
+    /// <para><b>Purpose:</b> the dispatcher of the operations logs the exception of a failed handler; from version 0.8.0 the values quoted by
+    /// SQL Server are e-mail addresses and nicknames (doc/dev/database.md, Write pattern, Errors).</para>
+    /// <para><b>Behavior:</b> the server of the test database, with the name of a database that does not exist: SQL Server answers the error 4060,
+    /// whose message quotes that name.</para>
+    /// </remarks>
+    [Fact(Timeout = TestTimeout)]
+    public async Task ASqlErrorLeavesWithoutItsMessageAsync()
+    {
+        // Skipping the test when no database is configured
+        CancellationToken token = TestContext.Current.CancellationToken;
+        string? connectionString = TestDatabase.ReadConnectionString();
+        if (connectionString is null)
+            Assert.Skip(TestDatabase.SkipReason);
+
+        // Naming a database that does not exist on the same server (no database is opened, so the guard of the throwaway names has nothing to
+        // protect)
+        string missingDatabase = $"TEST_Missing_{Guid.NewGuid():N}";
+        SqlConnectionStringBuilder builder = new SqlConnectionStringBuilder(connectionString) { InitialCatalog = missingDatabase, Pooling = false };
+        using SqlPingProcedure procedure = new SqlPingProcedure(Options.Create(new ConnectionStringsOptions { Main = builder.ConnectionString }));
+
+        // Calling the procedure
+        SqlCallException exception = await Should.ThrowAsync<SqlCallException>(() => procedure.GetServerTimeAsync(token));
+
+        // Checks
+        exception.Number.ShouldBe(4060);
+        exception.CalledProcedure.ShouldBe("[ServerCore].[SP_ServerCore_Server_Ping]");
+        exception.InnerException.ShouldBeNull();
+        exception.ToString().ShouldNotContain(missingDatabase);
+    }
+
+    /// <summary>
+    /// The literal message of an error of the platform (51000) is kept, and the message of an error of the engine that quotes a value (245, a
+    /// failed conversion) never is (skipped without a test database)
+    /// </summary>
+    /// <param name="batch">Batch that fails</param>
+    /// <param name="expectedNumber">Number of the SQL error</param>
+    /// <param name="keepsMessage">True when the message of SQL Server must be kept</param>
+    /// <returns>
+    /// A task that completes when the check is done
+    /// </returns>
+    [Theory(Timeout = TestTimeout)]
+    [InlineData("THROW 51000, 'The actor is unknown', 1;", 51000, true)]
+    [InlineData("SELECT CAST(N'Kx9secret@example.com' AS INT);", 245, false)]
+    public async Task OnlyTheMessagesOfThePlatformAreKeptAsync(string batch, int expectedNumber, bool keepsMessage)
+    {
+        // Skipping the test when no database is configured
+        CancellationToken token = TestContext.Current.CancellationToken;
+        string? connectionString = TestDatabase.ReadConnectionString();
+        if (connectionString is null)
+            Assert.Skip(TestDatabase.SkipReason);
+
+        // Raising the SQL error on the test database
+        SqlException error;
+        await using (SqlConnection connection = await TestDatabase.OpenAsync(connectionString, token))
+        {
+            await using SqlCommand command = new SqlCommand(batch, connection);
+            error = await Should.ThrowAsync<SqlException>(() => command.ExecuteNonQueryAsync(token));
+        }
+
+        // Keeping its facts
+        SqlCallException exception = new SqlCallException("[Test].[SP_Test]", error);
+
+        // Checks
+        exception.Number.ShouldBe(expectedNumber);
+        if (keepsMessage)
+            exception.Message.ShouldContain("The actor is unknown");
+        else
+            exception.ToString().ShouldNotContain("Kx9secret");
+    }
+
     #endregion
 
     #endregion
