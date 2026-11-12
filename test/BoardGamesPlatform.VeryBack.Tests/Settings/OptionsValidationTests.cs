@@ -233,6 +233,8 @@ public sealed class OptionsValidationTests
     [InlineData("Server=sql01;Database=X;User Id=app;Password=Kx9secret;TrustServerCertificate=True")]
     [InlineData("Server=tcp:sql01,1433;Database=X;User Id=app;Password=Kx9secret;TrustServerCertificate=True")]
     [InlineData("Server=localhost;Database=X;User Id=app;Password=Kx9secret;Failover Partner=sql02;TrustServerCertificate=True")]
+    [InlineData("Server=localhost.example.com;Database=X;User Id=app;Password=Kx9secret;TrustServerCertificate=True")]
+    [InlineData("Server=tcp:127.0.0.1.example.com,1433;Database=X;User Id=app;Password=Kx9secret;TrustServerCertificate=True")]
     public void AnUnprotectedConnectionIsRefusedOnAServer(string connectionString)
     {
         // Validating with the rules of a server, then of a developer machine

@@ -2,7 +2,8 @@
 
 - Vault of the secrets (`BoardGamesPlatform.Vault`), native to the operating system behind one interface: the credentials of systemd on Fedora (`LoadCredentialEncrypted=`, read from `CREDENTIALS_DIRECTORY`), a folder of files encrypted with DPAPI `LocalMachine` on Windows (setting `Vault:Path`); read as the last configuration source, so that the tiers read their secrets under their usual keys.
 - `tools/vault/Set-VaultSecret.ps1`: writes a secret of a tier into its DPAPI vault, as an administrator, from the standard input or a hidden prompt, with a protected access list and an atomic replacement.
-- Tests of the vault (`BoardGamesPlatform.Vault.Tests`).
+- Tests of the vault (`BoardGamesPlatform.Vault.Tests`): the stores, the source added last that wins, the checks of the sources (a chained configuration, a configuration that cannot be inspected), the warnings 9071 and 9072 with their events, the refusals of the tool (a bad name, a relative folder, an unknown account), and on Linux a secret encrypted and decrypted by `systemd-creds`.
+- Tests of the Gateway, the Back and the Very Back: each tier gives exactly its secrets to the vault, and each of them is refused on the command line of a server.
 
 ### Changed
 
