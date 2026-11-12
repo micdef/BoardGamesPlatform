@@ -304,7 +304,7 @@ public sealed partial class SqlProjectFileTests
     /// </summary>
     /// <remarks>
     /// <para><b>Purpose:</b> the test strategy of version 0.7.0: one test class per group of procedures, and a new procedure without a test fails.
-    /// A procedure added to an existing group is caught too: its name must appear in the class that tests it.</para>
+    /// A procedure added to an existing group is caught too: its name must appear, as a whole word, in the class that tests it.</para>
     /// </remarks>
     [Fact]
     public void EveryGroupOfProceduresHasItsTestClass()
@@ -329,7 +329,7 @@ public sealed partial class SqlProjectFileTests
             string source = File.ReadAllText(testClass);
             problems.AddRange(group
                 .Select(parts => Path.GetFileNameWithoutExtension(parts[^1]))
-                .Where(name => !source.Contains(name, StringComparison.Ordinal))
+                .Where(name => !Regex.IsMatch(source, $@"\b{Regex.Escape(name)}\b", RegexOptions.CultureInvariant))
                 .Select(name => $"{group.Key}: {name} is never named in {first[2]}ProceduresTests.cs"));
         }
 
@@ -368,8 +368,8 @@ public sealed partial class SqlProjectFileTests
                 "Triggers" => ("TRIGGER", parts[1], $"TR_{parts[1]}_{(parts.Length > 3 ? parts[2] : string.Empty)}_", 4),
                 _ => ("FUNCTION", "Functions", string.Empty, 2),
             };
-            Match declaration = Regex.Match(ReadSqlFile(file), $@"CREATE\s+{expected.Keyword}\s+\[(?<schema>[^\]]+)\]\.\[(?<name>[^\]]+)\]",
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            Match declaration = Regex.Match(ReadSqlFile(file), $@"^CREATE\s+{expected.Keyword}\s+\[(?<schema>[^\]]+)\]\.\[(?<name>[^\]]+)\]",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Multiline);
             if (parts.Length != expected.Depth)
                 problems.Add($"{file}: expected at the depth {parts[0]}{(expected.Depth > 2 ? "\\<Schema>" : string.Empty)}{(expected.Depth > 3 ? "\\<Table>" : string.Empty)}\\<Name>.sql");
             else if (!declaration.Success)
