@@ -29,7 +29,7 @@ namespace BoardGamesPlatform.Gateway.Tests.Hubs;
 /// <remarks>
 /// <para><b>Purpose:</b> proves that the Gateway, as wired by its own startup (settings, client, hub), reaches a Back on a socket.</para>
 /// <para><b>Behavior:</b> each test starts the real Gateway in process with its real Back client, configured by <c>Back:Port</c> to reach a fake
-/// Back on a loopback socket, or a port where nothing listens. The cancellation test replaces the client by one that never answers.</para>
+/// Back on a loopback socket, or a port where nothing listens. The cancellation test replaces the client by one that never answers, and reaches the hub over a WebSocket.</para>
 /// </remarks>
 public sealed class PlatformHubBackLinkTests
 {
@@ -53,11 +53,20 @@ public sealed class PlatformHubBackLinkTests
     /// </summary>
     private const int RefusalTestTimeout = 30000;
 
+    /// <summary>
+    /// Longest duration of a test whose steps are bounded one by one, in milliseconds: above the sum of its steps, so that a step that hangs
+    /// fails by its own name first
+    /// </summary>
+    private const int SteppedTestTimeout = 20000;
+
     #endregion
 
     #region Variables
 
-    // #N/A
+    /// <summary>
+    /// Longest wait of one step of a test, so that a step that hangs fails by its own name before the timeout of the test
+    /// </summary>
+    private static readonly TimeSpan _stepTimeout = TimeSpan.FromSeconds(3);
 
     #endregion
 
@@ -192,25 +201,27 @@ public sealed class PlatformHubBackLinkTests
     /// <summary>
     /// When the front disconnects, the call to the Back client is canceled
     /// </summary>
-    [Fact(Timeout = TestTimeout)]
+    [Fact(Timeout = SteppedTestTimeout)]
     public async Task WhenTheFrontDisconnectsTheCallToTheBackClientIsCanceledAsync()
     {
-        // Starting the Gateway with a Back client that never answers, and a front that asks Ping without waiting for the answer
+        // Starting the Gateway with a Back client that never answers, and a front that asks Ping without waiting for the answer; over a
+        // WebSocket, whose close ends the connection on the server at once (see CreateWebSocketHubConnection)
         CancellationToken token = TestContext.Current.CancellationToken;
         HangingBackClient back = new HangingBackClient();
         await using GatewayFactory factory = new GatewayFactory(back);
-        await using HubConnection connection = factory.CreateHubConnection(PlatformHubContract.DefaultPath);
-        await connection.StartAsync(token);
+        await using HubConnection connection = factory.CreateWebSocketHubConnection(PlatformHubContract.DefaultPath);
+        await connection.StartAsync(token).WaitAsync(_stepTimeout, token);
         Task<PingResponse> pending = connection.InvokeAsync<PingResponse>(PlatformHubContract.Ping, token);
 
-        // Waiting until the Back client holds the call, then disconnecting the front
-        await back.CallReceived.WaitAsync(token);
+        // Waiting until the Back client holds the call, then disconnecting the front; each step is bounded, so that a failure names it
+        await back.CallReceived.WaitAsync(_stepTimeout, token);
         back.CallCanceled.IsCompleted.ShouldBeFalse();
-        await connection.StopAsync(token);
+        await connection.StopAsync(token).WaitAsync(_stepTimeout, token);
 
         // Checks: the token of the call is canceled, and the call of the front ends with an error
-        await back.CallCanceled.WaitAsync(token);
-        await Should.ThrowAsync<Exception>(async () => await pending);
+        await back.CallCanceled.WaitAsync(_stepTimeout, token);
+        Exception error = await Should.ThrowAsync<Exception>(async () => await pending.WaitAsync(_stepTimeout, token));
+        error.ShouldNotBeOfType<TimeoutException>();
     }
 
     /// <summary>

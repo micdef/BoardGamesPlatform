@@ -32,7 +32,7 @@ namespace BoardGamesPlatform.EndToEnd.Tests.Support;
 /// <remarks>
 /// <para><b>Purpose:</b> the Gateway tier of the chain: its own Program, its own SignalR hub and its own Back client, nothing replaced.</para>
 /// <para><b>Behavior:</b> the only settings added are the address and the port of the Back, in memory. The hub is reached through the test
-/// server (no network), by long polling, the transport that works in memory.</para>
+/// server (no network), by long polling, in memory.</para>
 /// </remarks>
 internal sealed class GatewayFactory : WebApplicationFactory<Program>
 {

@@ -33,8 +33,8 @@ namespace BoardGamesPlatform.Gateway.Tests.Support;
 /// <remarks>
 /// <para><b>Purpose:</b> one place that knows how to start the real Gateway (its Program) in a test and how to reach its hub.</para>
 /// <para><b>Behavior:</b> without a Back client, the Gateway keeps the one it registers itself. With one, the test client replaces it.
-/// The hub path and the port of the Back are set by configuration when given. The hub is reached through the test server, by long polling, the transport that works
-/// in memory.</para>
+/// The hub path and the port of the Back are set by configuration when given. The hub is reached through the test server, in memory, by long polling, or by a WebSocket of the test server for
+/// a test that needs a front that disconnects at once.</para>
 /// </remarks>
 public sealed class GatewayFactory : WebApplicationFactory<Program>
 {
@@ -163,6 +163,33 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
             {
                 options.HttpMessageHandlerFactory = _ => server.CreateHandler();
                 options.Transports = HttpTransportType.LongPolling;
+            })
+            .Build();
+    }
+
+    /// <summary>
+    /// Method used to build a connection to the hub of the started Gateway, over a WebSocket
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b> a front that disconnects at once. Stopping a long polling connection goes through a DELETE and the end of a
+    /// pending poll, waited for without a time limit by the SignalR client; closing a WebSocket ends the connection on the server at once.</para>
+    /// <para><b>Behavior:</b> the WebSocket of the test server, in memory, without negotiation; the connection is built, not started.</para>
+    /// </remarks>
+    /// <param name="path">[Cannot be null] Path of the hub</param>
+    /// <returns>
+    /// The connection, not started
+    /// </returns>
+    public HubConnection CreateWebSocketHubConnection(string path)
+    {
+        // Reaching the hub through the WebSocket client of the test server
+        TestServer server = Server;
+        return new HubConnectionBuilder()
+            .WithUrl(new Uri(server.BaseAddress, path), options =>
+            {
+                options.Transports = HttpTransportType.WebSockets;
+                options.SkipNegotiation = true;
+                options.WebSocketFactory = async (context, cancellationToken) =>
+                    await server.CreateWebSocketClient().ConnectAsync(context.Uri, cancellationToken).ConfigureAwait(false);
             })
             .Build();
     }

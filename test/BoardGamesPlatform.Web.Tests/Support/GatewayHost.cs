@@ -37,7 +37,7 @@ namespace BoardGamesPlatform.Web.Tests.Support;
 /// <remarks>
 /// <para><b>Purpose:</b> one place that knows how to start the real Gateway (its Program) and how to reach its hub like the website does.</para>
 /// <para><b>Behavior:</b> the Back client of the Gateway is replaced by the one given. The hub is reached through the in-memory test
-/// server, by long polling, the transport that works in memory: no socket and no port are used. <b>WebSockets, the transport a real
+/// server, by long polling, in memory: no socket and no port are used. <b>WebSockets, the transport a real
 /// website uses first, are therefore NOT tested here.</b> The environment and the settings the Gateway reads are pinned, so that a variable
 /// of the machine (such as <c>Gateway__HubPath</c>) cannot change the result.</para>
 /// </remarks>

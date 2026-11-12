@@ -23,7 +23,7 @@ Every text shown to a player comes from the resources `Resources/WebTexts.resx` 
 
 ## Tests
 
-The tests start the real Gateway in process, reached through the in-memory test server by **long polling**. A real website connects by WebSockets first, so **WebSockets are not tested** by the automated tests.
+The tests start the real Gateway in process, reached through the in-memory test server by **long polling**. A real website connects by WebSockets first, and **the website tests do not use them**: only one test of the Gateway (a front that disconnects) reaches the hub by a WebSocket of the test server, in memory.
 
 ## Pages
 
