@@ -103,11 +103,11 @@ Other UIs   ┘
 
 #### 0.7.0 — Database foundation [SEC]
 
-- **Content**: schemas, filegroups, temporal tables, immutable audit, table-valued parameter and JSON-result patterns; `DEV_`, `ACC_` and `TEST_` databases; one application SQL user per database with a random password stored in a vault; the vault also holds the passwords of the PFX of the tiers (`Tls:CertificatePassword`, an environment variable of the service since 0.5.0); the deployment script.
+- **Content**: schemas, filegroups, temporal tables, immutable audit with its purge by dates, table-valued parameter and JSON-result patterns, proved on the settings of the platform (first setting: the registration switch of 0.8.0); `DEV_`, `ACC_` and `TEST_` databases; one application SQL user per database with a random password stored in a vault; the vault also holds the passwords of the keys of the tiers (`Tls:CertificatePassword` since 0.5.0, `Handshake:SigningKeyPassword` since 0.6.0, environment variables of the services until now); the deployment script. Specified, with its threat model, in `doc/dev/database.md`, written and reviewed before the code.
 - **Deployment script**: it drops and recreates a `DEV_` or `TEST_` database, and refuses to drop any database without one of these prefixes.
 - **Done**: `DEV_` is deployed from scratch by one script; the application user can execute procedures but cannot read tables; an update of the audit is rejected.
 - **Tests**: the SQL test suite becomes the standard: one test class per procedure group, audit immutability, permission matrix, temporal history. A new procedure without a test fails the review.
-- **Branches**: `feature/db-schemas-and-audit`, `feature/tvp-json-pattern`, `chore/db-deploy-script`, `feature/vault-secrets`.
+- **Branches**, in order: `docs/database-foundation`, `feature/db-schemas-and-audit`, `feature/tvp-json-pattern`, `feature/vault-secrets`, `chore/db-deploy-script` (the script hands the password of the application user to the vault, so it comes after it).
 
 ### Block 2 — Platform
 
@@ -337,6 +337,8 @@ Every tier communicates through the network. All ports are configurable; the def
 | Database | SQL Server only until 1.0.0; the SQL project keeps its original format (DACPAC, opened by Visual Studio 2026) and is never converted to the SDK style; built by a separate CI job with the MSBuild of Visual Studio |
 | SQL access | Plain ADO.NET (`Microsoft.Data.SqlClient`) calling the stored procedures, never Entity Framework (decided in 0.3.0): the database stays the master of its schema and its rules, and the code keeps control of the connections. Each tier that holds a connection string clears its pool when it stops, so that no session stays open on SQL Server after a stop or a redeployment |
 | Development databases | `DEV_` and `ACC_` rebuilt freely until the first beta; no migration scripts before then |
+| Vault of the secrets (0.7.0, decided by the project lead) | Native to the operating system, behind one entry point: DPAPI on Windows, `systemd-creds` on Fedora; read as a configuration source, so that the tiers read their secrets under their usual keys. No vault product or server of secrets. Specified in `doc/dev/database.md` |
+| Audit (0.7.0, decided by the project lead) | An ordinary table protected by `INSTEAD OF` triggers, as in the author's reference project; never a ledger table, which cannot be purged without rebuilding the database: the audit is purged in place, by dates, sliding, to a backup. Specified in `doc/dev/database.md` |
 | Match history | Every move recorded; training logs pseudonymized |
 | Spectators | Public view: the match is visible, the fleets never are |
 | Rating | A rating system (Elo or Glicko), per game |
@@ -348,7 +350,7 @@ Every tier communicates through the network. All ports are configurable; the def
 
 | Choice | Decided in |
 |--------|------------|
-| Vault product | 0.7.0 |
+| How the audit rows reach a backup before their purge | 0.7.0, by the project lead |
 | How clients present the session token to the SignalR hub | 0.10.0 |
 | Chat retention and GDPR (hiding versus deleting) | 0.12.0 |
 | Elo or Glicko | 0.19.0 |
