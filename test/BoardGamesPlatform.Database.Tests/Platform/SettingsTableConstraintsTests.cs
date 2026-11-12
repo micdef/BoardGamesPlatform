@@ -147,19 +147,22 @@ public sealed class SettingsTableConstraintsTests
     /// <param name="code">T-SQL value of the code</param>
     /// <param name="kind">T-SQL value of the kind</param>
     /// <param name="value">T-SQL value of the value</param>
+    /// <param name="constraintNames">The constraint that must refuse the row (several, separated by '|', when the row breaks more than one by
+    /// nature: an unknown kind fits no value)</param>
     [Theory]
-    [InlineData("'00000000-0000-0000-0000-000000000000'", "N'Test.ZeroId'", "N'Text'", "N'x'")]
-    [InlineData("NEWID()", "N'NoDot'", "N'Text'", "N'x'")]
-    [InlineData("NEWID()", "N'Test.Date'", "N'Date'", "N'x'")]
-    [InlineData("NEWID()", "N'Test.Maybe'", "N'Boolean'", "N'maybe'")]
-    public async Task TheTableRefusesAnInvalidRowEvenToTheOwnerAsync(string id, string code, string kind, string value)
+    [InlineData("'00000000-0000-0000-0000-000000000000'", "N'Test.ZeroId'", "N'Text'", "N'x'", "CK_Platform_Settings_Id")]
+    [InlineData("NEWID()", "N'NoDot'", "N'Text'", "N'x'", "CK_Platform_Settings_Code")]
+    [InlineData("NEWID()", "N'Test.Date'", "N'Date'", "N'x'", "CK_Platform_Settings_Kind|CK_Platform_Settings_Value")]
+    [InlineData("NEWID()", "N'Test.Maybe'", "N'Boolean'", "N'maybe'", "CK_Platform_Settings_Value")]
+    public async Task TheTableRefusesAnInvalidRowEvenToTheOwnerAsync(string id, string code, string kind, string value, string constraintNames)
     {
         // Writing the row directly
         CancellationToken token = TestContext.Current.CancellationToken;
         await using SqlConnection connection = await TestDatabase.OpenAsync(token);
 
-        // Check
-        await SqlBatch.ShouldFailWithAsync(connection, DirectInsert(id, code, kind, value), ConstraintViolation, token);
+        // Checks: the error of a CHECK constraint, and the constraint expected (SQL Server names it in its message)
+        SqlException exception = await SqlBatch.ShouldFailWithAsync(connection, DirectInsert(id, code, kind, value), ConstraintViolation, token);
+        constraintNames.Split('|').ShouldContain(name => exception.Message.Contains($"\"{name}\"", StringComparison.Ordinal), exception.Message);
     }
 
     /// <summary>
@@ -172,8 +175,9 @@ public sealed class SettingsTableConstraintsTests
         CancellationToken token = TestContext.Current.CancellationToken;
         await using SqlConnection connection = await TestDatabase.OpenAsync(token);
 
-        // Check
-        await SqlBatch.ShouldFailWithAsync(connection, DirectInsert("NEWID()", "N'Registration.IsOpen'", "N'Boolean'", "N'true'"), UniqueViolation, token);
+        // Checks: the error of a unique constraint, and the constraint expected
+        SqlException exception = await SqlBatch.ShouldFailWithAsync(connection, DirectInsert("NEWID()", "N'Registration.IsOpen'", "N'Boolean'", "N'true'"), UniqueViolation, token);
+        exception.Message.ShouldContain("UK_Platform_Settings_Code");
     }
 
     /// <summary>
@@ -221,7 +225,7 @@ public sealed class SettingsTableConstraintsTests
         object? written = await SqlBatch.ScalarAsync(connection, $"""
             SET XACT_ABORT OFF;
             BEGIN TRANSACTION;
-            INSERT INTO [Platform].[Settings] ([Code], [Kind], [Value]) VALUES (N'Test.S{Guid.NewGuid():N}', N'Boolean', N'true');
+            INSERT INTO [Platform].[Settings] ([Id], [Code], [Kind], [Value]) VALUES (NEWID(), N'Test.S{Guid.NewGuid():N}', N'Boolean', N'true');
             DECLARE @rows INT = @@ROWCOUNT;
             ROLLBACK TRANSACTION;
             SELECT @rows;

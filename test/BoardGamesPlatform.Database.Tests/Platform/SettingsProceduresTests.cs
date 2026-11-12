@@ -475,8 +475,15 @@ public sealed class SettingsProceduresTests
         }
         finally
         {
-            await SqlBatch.ExecuteAsync(connection, $"IF OBJECT_ID(N'[Logs].[{triggerName}]', N'TR') IS NOT NULL DROP TRIGGER [Logs].[{triggerName}];", CancellationToken.None);
-            await DeleteAsync(connection, code);
+            // Dropping the trigger, then the setting even when the drop failed
+            try
+            {
+                await SqlBatch.ExecuteAsync(connection, $"IF OBJECT_ID(N'[Logs].[{triggerName}]', N'TR') IS NOT NULL DROP TRIGGER [Logs].[{triggerName}];", CancellationToken.None);
+            }
+            finally
+            {
+                await DeleteAsync(connection, code);
+            }
         }
     }
 
@@ -514,8 +521,15 @@ public sealed class SettingsProceduresTests
         }
         finally
         {
-            await SqlBatch.ExecuteAsync(connection, $"IF OBJECT_ID(N'[Logs].[{triggerName}]', N'TR') IS NOT NULL DROP TRIGGER [Logs].[{triggerName}];", CancellationToken.None);
-            await DeleteAsync(connection, code);
+            // Dropping the trigger, then the setting even when the drop failed
+            try
+            {
+                await SqlBatch.ExecuteAsync(connection, $"IF OBJECT_ID(N'[Logs].[{triggerName}]', N'TR') IS NOT NULL DROP TRIGGER [Logs].[{triggerName}];", CancellationToken.None);
+            }
+            finally
+            {
+                await DeleteAsync(connection, code);
+            }
         }
     }
 
@@ -753,8 +767,9 @@ public sealed class SettingsProceduresTests
         int audits = (int)(await SqlBatch.ScalarAsync(connection,
             "SELECT COUNT(*) FROM [Logs].[Audit] WHERE [TableName] = N'Settings' AND [OldValue] IS NULL AND [NewValue] LIKE N'%\"Registration.IsOpen\"%';", token))!;
 
-        // Checks: closed (the test of the redeployment opens it and closes it again, in the same class, never at the same time); its audit row is
-        // there once, unless a purge of the audit removed it since the deployment
+        // Checks: closed (the test of the redeployment of this class opens it for a moment and closes it again, never while this test runs); its
+        // audit row is there once, unless a purge of the audit removed it since the deployment: the audit of the insert itself is proven by the
+        // tests of the insert, since the post-deployment script writes through the same procedure
         value.ShouldBe("false");
         audits.ShouldBeInRange(0, 1);
     }
