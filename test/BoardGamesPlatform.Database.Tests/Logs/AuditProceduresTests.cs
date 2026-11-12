@@ -451,9 +451,11 @@ public sealed class AuditProceduresTests
             await WriteOldRowAsync(owner, tableName, "2001-04-01T10:00:00", marker, token);
             await using (SqlConnection connection = await TestDatabase.OpenAsync(builder => builder.Pooling = false, token))
             {
-                await SqlBatch.ExecuteAsync(connection, "EXEC [sys].[sp_set_session_context] @key = N'AllowAuditPurge', @value = NULL, @read_only = 1;", token);
-                await SqlBatch.ShouldFailWithAsync(connection,
-                    "DECLARE @result NVARCHAR(MAX); EXEC [Logs].[SP_Logs_Audit_Purge] @Before = '2001-12-31', @Result = @result OUTPUT;", ReadOnlyKey, token);
+                await SqlBatch.ShouldFailWithAsync(connection, """
+                    EXEC [sys].[sp_set_session_context] @key = N'AllowAuditPurge', @value = NULL, @read_only = 1;
+                    DECLARE @result NVARCHAR(MAX);
+                    EXEC [Logs].[SP_Logs_Audit_Purge] @Before = '2001-12-31', @Result = @result OUTPUT;
+                    """, ReadOnlyKey, token);
             }
 
             // Check
