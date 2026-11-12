@@ -101,7 +101,7 @@ pwsh tools/vault/Set-VaultSecret.ps1 -VaultPath C:\ProgramData\BoardGamesPlatfor
 ```
 
 The tool asks the value hidden (or reads it from its standard input), encrypts it with DPAPI (scope `LocalMachine`, bound to the name of the secret), and gives the folder and the file to the Administrators, readable by the account of the service only.
-At startup, the tier refuses a folder or a file whose owner or access list trusts another account than SYSTEM, the Administrators and its own account: with DPAPI `LocalMachine`, any process of the machine could otherwise read a secret or plant one.
+At startup, the tier refuses a folder or a file that is not owned by SYSTEM or the Administrators, that its own account could change (it may only read), or on which another account holds a right; and a folder that is a junction or holds a subfolder: with DPAPI `LocalMachine`, any process of the machine could otherwise read a secret or plant one. Outside Development, a tier without a vault logs a warning at startup (event 9072). Create the parent folders of the vault as an administrator.
 A file copied from another machine or under another name does not decrypt; a full copy of the disk can, so keep it encrypted (BitLocker).
 
 The exact installation of the services (units, accounts, folders) comes with the native installation (0.25.0).

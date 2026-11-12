@@ -75,7 +75,9 @@ try
     # Step 3: the value, from the standard input or a hidden prompt
     if ([Console]::IsInputRedirected)
     {
-        $text = [Console]::In.ReadToEnd()
+        # Read as UTF-8, whatever the code page of the console (a non-ASCII password would be altered otherwise)
+        $reader = [System.IO.StreamReader]::new([Console]::OpenStandardInput(), [System.Text.UTF8Encoding]::new($false))
+        try { $text = $reader.ReadToEnd() } finally { $reader.Dispose() }
         if ($text.EndsWith("`r`n")) { $text = $text.Substring(0, $text.Length - 2) }
         elseif ($text.EndsWith("`n")) { $text = $text.Substring(0, $text.Length - 1) }
     }
@@ -84,9 +86,9 @@ try
         $secure = Read-Host -AsSecureString -Prompt "Value of $vaultName"
         $text = [System.Net.NetworkCredential]::new('', $secure).Password
     }
-    if ([string]::IsNullOrEmpty($text) -or ($text.ToCharArray() | Where-Object { [char]::IsControl($_) }))
+    if ([string]::IsNullOrEmpty($text) -or [regex]::IsMatch($text, '[\p{Cc}\p{Cf}]'))
     {
-        throw "The value of $vaultName is empty or holds a control character: the tier would refuse it."
+        throw "The value of $vaultName is empty or holds a control or format character: the tier would refuse it."
     }
 
     # Step 4: the encryption, bound to the name of the secret
@@ -106,8 +108,19 @@ try
     $folderSecurity.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($service, 'ReadAndExecute', 'None', 'None', 'Allow')))
     $folderSecurity.SetOwner($administrators)
     $folder = New-Object System.IO.DirectoryInfo($VaultPath)
-    if (-not $folder.Exists) { $folder.Create() }
-    [System.IO.FileSystemAclExtensions]::SetAccessControl($folder, $folderSecurity)
+    if (-not $folder.Exists)
+    {
+        # Created with its protection in one call: never visible with the inherited rights of its parent (create the parents as an administrator)
+        [System.IO.FileSystemAclExtensions]::Create($folder, $folderSecurity)
+    }
+    else
+    {
+        # An existing folder must be a real folder that holds secrets only: anything else is left to the administrator to look at
+        if ($folder.Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)) { throw "The folder $VaultPath is a junction or a link: it must be a real folder." }
+        $foreign = @($folder.EnumerateFileSystemInfos() | Where-Object { $_ -is [System.IO.DirectoryInfo] -or $_.Name -cnotmatch '^[A-Za-z][A-Za-z0-9_]*\z' })
+        if ($foreign.Count -gt 0) { throw "The folder $VaultPath holds something else than secrets ($($foreign[0].Name)): remove it first." }
+        [System.IO.FileSystemAclExtensions]::SetAccessControl($folder, $folderSecurity)
+    }
 
     # Step 6: a temporary file, protected before it holds anything, then renamed over the secret
     $fileSecurity = New-Object System.Security.AccessControl.FileSecurity
@@ -120,7 +133,13 @@ try
     $fileSecurity.SetOwner($administrators)
     $temporary = Join-Path $VaultPath ".writing-$([guid]::NewGuid().ToString('N'))"
     $stream = [System.IO.FileSystemAclExtensions]::Create((New-Object System.IO.FileInfo($temporary)), 'CreateNew', 'Write', 'None', 4096, 'None', $fileSecurity)
-    try { $stream.Write($encrypted, 0, $encrypted.Length) } finally { $stream.Dispose() }
+    try
+    {
+        # Written to the disk before the rename, so that a power loss never leaves a renamed but empty secret
+        $stream.Write($encrypted, 0, $encrypted.Length)
+        $stream.Flush($true)
+    }
+    finally { $stream.Dispose() }
     [System.IO.File]::Move($temporary, (Join-Path $VaultPath $vaultName), $true)
     $temporary = $null
 

@@ -351,7 +351,7 @@ Every tier communicates through the network. All ports are configurable; the def
 | Choice | Decided in |
 |--------|------------|
 | How the audit rows reach a backup before their purge | 0.7.0, by the project lead |
-| Validation of the choices of 0.7.0 proposed in `doc/dev/database.md` and not yet approved: DPAPI scope `LocalMachine`; the account of the service trusted with its own vault; a login of the server with SQL authentication (`CHECK_POLICY` on, no expiration) rather than a contained user; an encrypted connection required outside Development | 0.7.0, by the project lead |
+| Validation of the choices of 0.7.0 proposed in `doc/dev/database.md` and not yet approved: DPAPI scope `LocalMachine`, its access lists checked at startup (the service reads only); a login of the server with SQL authentication (`CHECK_POLICY` on, no expiration) rather than a contained user; an encrypted connection required outside Development | 0.7.0, by the project lead |
 | A server-level SQL Server Audit, written to a file outside the database, to see what the administrators do | 0.25.0 |
 | `VIEW DEFINITION` of the application on the database, or on the schemas of the platform only (which would hide the principals) | 0.8.0 |
 | Whether the history of a temporal table may hold a column that is a secret or its hash | 0.8.0, with the first such column |

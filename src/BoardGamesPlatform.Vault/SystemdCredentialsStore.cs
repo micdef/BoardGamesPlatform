@@ -137,6 +137,8 @@ public sealed class SystemdCredentialsStore : IVaultStore
         ArgumentNullException.ThrowIfNull(knownNames);
         if (!Directory.Exists(Location))
             throw new VaultException($"The folder of the credentials {Location} does not exist ({DirectoryVariable})");
+        if (Directory.EnumerateDirectories(Location).Any())
+            throw new VaultException($"The folder of the credentials {Location} holds a subfolder: it may only hold the credentials of the unit");
 
         // Reading every credential; an unknown one is a mistake of the unit, never ignored
         Dictionary<string, string> secrets = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

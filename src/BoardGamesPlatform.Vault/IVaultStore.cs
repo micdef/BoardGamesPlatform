@@ -30,13 +30,43 @@ namespace BoardGamesPlatform.Vault;
 /// </remarks>
 public interface IVaultStore
 {
+    #region Members
+
+    #region Constants
+
+    // #N/A
+
+    #endregion
+
+    #region Variables
+
+    // #N/A
+
+    #endregion
+
+    #region Delegates
+
+    // #N/A
+
+    #endregion
+
+    #endregion
+
     #region Enumerations
 
     // #N/A
 
     #endregion
 
+    #region Services
+
+    // #N/A
+
+    #endregion
+
     #region Accessors/Properties
+
+    #region Members & Properties
 
     /// <summary>
     /// Gets where the store reads its secrets (a folder), for the messages
@@ -45,7 +75,17 @@ public interface IVaultStore
 
     #endregion
 
+    #region Delegates
+
+    // #N/A
+
+    #endregion
+
+    #endregion
+
     #region Methods
+
+    #region Publics
 
     /// <summary>
     /// Method used to read every secret of the store
@@ -57,6 +97,8 @@ public interface IVaultStore
     /// </returns>
     /// <exception cref="VaultException">If the store cannot be read, holds an unknown secret, or a secret it cannot read safely</exception>
     public IReadOnlyDictionary<string, string> ReadAll(IReadOnlySet<string> knownNames);
+
+    #endregion
 
     #endregion
 }

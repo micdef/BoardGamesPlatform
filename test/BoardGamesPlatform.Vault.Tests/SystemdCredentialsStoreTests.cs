@@ -180,6 +180,7 @@ public sealed class SystemdCredentialsStoreTests : IDisposable
     [InlineData("4B783973656372657409")]
     [InlineData("")]
     [InlineData("4B7839C328")]
+    [InlineData("EFBBBF4B7839736563726574")]
     public void AValueThatIsNotASecretIsRefusedWithoutQuotingIt(string hex)
     {
         // Writing the credential ("Kx9secret" followed by a control character, nothing, or a broken UTF-8 sequence)
@@ -189,6 +190,20 @@ public sealed class SystemdCredentialsStoreTests : IDisposable
         VaultException exception = Should.Throw<VaultException>(() => new SystemdCredentialsStore(_folder).ReadAll(_knownNames));
         exception.Message.ShouldContain("Tls__CertificatePassword");
         exception.Message.ShouldNotContain("Kx9");
+    }
+
+    /// <summary>
+    /// A folder of the credentials that holds a subfolder is refused rather than half read
+    /// </summary>
+    [Fact]
+    public void AFolderWithASubfolderIsRefused()
+    {
+        // Writing a credential and a subfolder
+        Write("Tls__CertificatePassword", Encoding.UTF8.GetBytes("x"));
+        Directory.CreateDirectory(Path.Combine(_folder, "ConnectionStrings__Main"));
+
+        // Check
+        Should.Throw<VaultException>(() => new SystemdCredentialsStore(_folder).ReadAll(_knownNames)).Message.ShouldContain("subfolder");
     }
 
     /// <summary>
