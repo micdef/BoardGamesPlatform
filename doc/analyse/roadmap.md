@@ -95,10 +95,11 @@ Other UIs   ┘
 
 #### 0.6.1 — Complexity tests [SEC]
 
-- **Content**: tests of time and space complexity for the hot paths of the protocol, asked by the project lead after 0.6.0, and the fixes they found: no copy of the content of a frame written, of a request written or read, of a record of the secure channel; the erasure of a record read covers its own bytes only. The SDK 10.0.404 and the runtime 10.0.15 (17 CVEs fixed) become the minimum.
-- **Done**: each hot path has a test of its cost per byte and of its fixed cost, which fails on the regression it names; the bytes on the wire do not change.
-- **Tests**: `AllocationMeter`, the complexity tests of the frames, the envelopes and the records, the erasure of the records.
-- **Branches**, in order: `perf/frame-allocations`, `perf/secure-record-allocations`.
+- **Content**: tests of time and space complexity for the hot paths of the protocol, asked by the project lead after 0.6.0. They found fixes: a frame written, a request written or read, and a record of the secure channel no longer make a second copy of their content, and the erasure of a record read covers its own bytes only. Every request and response written is read back with the rules of the reader before it is sent.
+- **Done**: each hot path has a test of its cost per byte and of its fixed cost, which fails on the regression it names (the read of a record had nothing to fix: its test keeps it so); the bytes on the wire do not change.
+- **Tests**: `AllocationMeter`, the complexity tests of the frames, the envelopes and the records, the erasure of the records, the writer of the messages against the rules of the reader.
+- **Branches**, in order: `perf/frame-allocations`, `perf/secure-record-allocations`, then `fix/request-write-check` (found in the review of the changelog).
+- **Prerequisite**: the .NET SDK 10.0.404 and the runtime 10.0.15, which fix 17 CVEs.
 
 #### 0.7.0 — Database foundation [SEC]
 
