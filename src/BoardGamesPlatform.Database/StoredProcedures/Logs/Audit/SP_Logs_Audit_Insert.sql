@@ -35,7 +35,7 @@
  *	#N/A
  *
  *	Behavior :
- *	-----------
+ *	----------
  *	The procedure is the only way rows enter the audit. It checks every row again, although the table-valued parameter and the CHECK constraints
  *	of the table check them too (control in depth): an audit row that cannot be trusted is never written. The date (UTC) and the SQL login of
  *	the session are set by the defaults of the table, never by the caller. It runs inside the transaction of the calling procedure, so a write

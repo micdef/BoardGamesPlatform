@@ -52,6 +52,11 @@ public sealed class AuditProceduresTests
     /// </summary>
     private const int ForcedFailure = 50999;
 
+    /// <summary>
+    /// Error number of SQL Server when a read-only key of the session context is changed
+    /// </summary>
+    private const int ReadOnlyKey = 15664;
+
     #endregion
 
     #region Variables
@@ -429,6 +434,39 @@ public sealed class AuditProceduresTests
         // Check: the refusal of the purge itself (51000), not the error of a key that cannot be changed (15664)
         await SqlBatch.ShouldFailWithAsync(connection, "DECLARE @result NVARCHAR(MAX); EXEC [Logs].[SP_Logs_Audit_Purge] @Before = '2001-01-01', @Result = @result OUTPUT;",
             SqlBatch.CheckFailed, token);
+    }
+
+    /// <summary>
+    /// A key set read-only to NULL passes the check of the purge, but the engine refuses to open the gate: the purge fails before any delete
+    /// </summary>
+    [Fact]
+    public async Task ThePurgeFailsBeforeAnyDeleteWhenTheKeyIsReadOnlyNullAsync()
+    {
+        // Writing an old row, then setting the key read-only to NULL in a session of its own
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await using SqlConnection owner = await TestDatabase.OpenAsync(token);
+        string marker = Guid.NewGuid().ToString("N");
+        string tableName = await CreateTargetTableAsync(owner, token);
+        try
+        {
+            await WriteOldRowAsync(owner, tableName, "2001-04-01T10:00:00", marker, token);
+            await using (SqlConnection connection = await TestDatabase.OpenAsync(builder => builder.Pooling = false, token))
+            {
+                await SqlBatch.ShouldFailWithAsync(connection, """
+                    EXEC [sys].[sp_set_session_context] @key = N'AllowAuditPurge', @value = NULL, @read_only = 1;
+                    DECLARE @result NVARCHAR(MAX);
+                    EXEC [Logs].[SP_Logs_Audit_Purge] @Before = '2001-12-31', @Result = @result OUTPUT;
+                    """, ReadOnlyKey, token);
+            }
+
+            // Check
+            (await CountMarkedRowsAsync(owner, marker, token)).ShouldBe(1);
+        }
+        finally
+        {
+            await DropTargetTableAsync(owner, tableName);
+            await PurgeAsync(owner, "'2001-12-31'", CancellationToken.None);
+        }
     }
 
     /// <summary>

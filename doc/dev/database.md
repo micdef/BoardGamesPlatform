@@ -1,7 +1,7 @@
 # Database foundation
 
 This document specifies the database foundation delivered in 0.7.0 (schemas, filegroups, audit, the write and read patterns, the application principal, the deployment script) and the vault of the secrets of the tiers, and records their threat model.
-It is written **before the code** and reviewed before any line of it, as the secure channel was in 0.6.0 ([secure-channel.md](secure-channel.md)).
+It was written **before the code** and reviewed before any line of it, as the secure channel was in 0.6.0 ([secure-channel.md](secure-channel.md)), then aligned with what the code and its tests proved; each change of that kind says what found it.
 
 The reference level is the author's own SQL project, AckSolutions: modules and schemas per type of object, immutable audit, table-valued parameters checked again by the procedures, one JSON result per row, an application user limited to procedures, types and views.
 This document keeps that level and says, for each place it departs from it, why.
@@ -108,6 +108,16 @@ The `Kind` of a setting never changes after its insert: the update procedure onl
 
 ## The audit
 
+The audit keeps the design of AckSolutions: the table `Logs.Audit`, its `INSTEAD OF` triggers, its internal insert, and its purge by dates opened by the session key `AllowAuditPurge`. It departs from it on these points, each explained below:
+
+| AckSolutions | 0.7.0 | Why |
+|--------------|-------|-----|
+| The triggers and the gate are the protection | `DENY INSERT, UPDATE, DELETE` to `public` on the table | The gate is not a barrier: anyone can set its key (found by the security review) |
+| A member of `db_owner` purges | A role `AuditPurgeRole` | Least privilege for the purge |
+| The purge deletes every row before its date | The rows that record a purge are never purged; the purge refuses a key already set; the key is read once, the delete runs with `MAXDOP 1` | A purge cannot hide an earlier one; a read-only key could not be closed; a known issue of `SESSION_CONTEXT` in parallel plans |
+| `@Date`, compared with the local date | `@Before`, compared with the UTC date | One clock for the audit and the temporal tables |
+| Clustered primary key on the GUID | Non-clustered key; clustered index on `ActionDT`; `LoginName` added | No page split; the purge reads by date; the login of the session is a fact the caller cannot forge |
+
 ### Immutability
 
 | Statement | Result |
@@ -126,7 +136,7 @@ A ledger table would refuse all of these to the administrators too, but it can n
 `Logs.SP_Logs_Audit_Purge @Before DATE` deletes the audit rows written before `@Before` (UTC), and only them:
 
 1. `@Before` must be earlier than today (UTC): the rows of the current day are never purged; a `NULL` date is refused.
-2. The key `AllowAuditPurge` must not be set yet in the session: a key set read-only (`@read_only = 1`) could not be closed afterwards, so the purge refuses to start.
+2. The key `AllowAuditPurge` must not be set yet in the session: a key set read-only (`@read_only = 1`) could not be closed afterwards, so the purge refuses to start (51000). A key set read-only to NULL passes that check, and the engine then refuses to open the gate (15664): the purge fails before any delete, rolled back (found by the security review of the code).
 3. In one transaction, it opens the gate (`sp_set_session_context N'AllowAuditPurge', 1`) just before the delete, deletes the rows, closes the gate (`NULL`), then writes **one audit row of the purge itself** (the date given, the number of rows deleted, the oldest and the newest `ActionDT` deleted).
 4. **The rows that record a purge are never purged** (the rows about `Logs.Audit` itself, which only the purge writes): the chain of the purges stays complete, so a purge can never hide an earlier one.
 5. On any error, it rolls back, closes the gate and rethrows: no partial purge. The only case where the gate stays open in the session is a client that cancels the call (an attention is not caught by `CATCH`); the session is then the one of an administrator, and its reuse from a pool clears the key.
@@ -227,7 +237,7 @@ The login and the user are **not part of the DACPAC**: a login is a server objec
 6. Send the connection string to the place named by `-SecretTarget`:
    - `None` (default): nowhere; the login exists but nobody knows its password (enough for the SQL tests, which play the user with `EXECUTE AS`);
    - `UserSecrets`: the user secrets of the Very Back, as a JSON batch on the standard input of `dotnet user-secrets set` (built with `ConvertTo-Json`; never on a command line, visible in the list of processes);
-   - `Vault`: the vault folder of the Very Back given by `-VaultPath`, through `tools/vault/Set-VaultSecret.ps1`.
+   - `Vault`: the vault folder of the Very Back given by `-VaultPath`, readable by the account given by `-VaultAccount`, through `tools/vault/Set-VaultSecret.ps1` (as an administrator).
 7. Drop the references to the password (a .NET string cannot be erased: it stays in memory until the process ends, which is short).
 
 What the script never does: deploy a database without the prefix, touch another login, print or log the password, keep it in a file, install anything.
@@ -258,7 +268,7 @@ builder.AddPlatformVault("Tls:CertificatePassword", "Handshake:SigningKeyPasswor
 | Host | Source | Where the secrets are |
 |------|--------|-----------------------|
 | Fedora, systemd unit | `$CREDENTIALS_DIRECTORY`, read by the provider of the platform (`SystemdCredentialsStore`) | Each secret is encrypted by `systemd-creds encrypt --name=<name>` (key of the host, and the TPM2 when present) under `/etc/credstore.encrypted/`; the unit names it with `LoadCredentialEncrypted=<name>:<file>`, and a file renamed to another name is refused by systemd; systemd decrypts it at start into a read-only, non-swappable folder readable by root and **by the user of the service**, so each tier runs under its own system user (or `DynamicUser=yes`), never a shared one |
-| Windows service | The folder named by `Vault:Path`, read by the provider of the platform (`DpapiVaultStore`), DPAPI `LocalMachine` | Each secret is a file encrypted with DPAPI (`ProtectedData`); the owner of the file and of its folder is SYSTEM, the Administrators or the account of the service, and no other account holds any right on the file nor a right to write in the folder |
+| Windows service | The folder named by `Vault:Path`, read by the provider of the platform (`DpapiVaultStore`), DPAPI `LocalMachine` | Each secret is a file encrypted with DPAPI (`ProtectedData`); the vault refuses a file or a folder whose owner is not SYSTEM, the Administrators or the account of the service, or on which another account holds a right (any right on the file, a right to write in the folder); the tool of the administrators is stricter: owner the Administrators, read only for the service |
 | Developer machine, tests | None | User secrets (Development) and in-memory settings, as today |
 
 The name of a secret is its configuration key with `__` for `:` (`Tls__CertificatePassword`), mapped back to the key by the provider.
@@ -273,7 +283,11 @@ Rules:
 4. On Windows, each file is bound to its name: the DPAPI entropy is the name of the secret, so a file copied under another name does not decrypt. On Fedora, `systemd-creds` embeds the name and refuses another one.
 5. No secret is ever logged; the error messages name the setting and the file, never a value (rule 3 of [configuration.md](../adm/configuration.md)).
 
-**DPAPI scope: `LocalMachine` (decided with the security review).** `CurrentUser` would bind a secret to the account of the service, but it needs the profile of that account loaded to write the file, and a virtual account `NT SERVICE\<name>` cannot log on to provision it; the DPAPI of CNG protects only to a domain group or to web credentials, not to a local account. With `LocalMachine`, any process of the machine can decrypt a file it can read **and write a valid one** (the entropy, the name of the secret, is public): the access list of the file and of its folder is therefore the protection, checked at load, on both the read and the write side. The account of the service itself may own and write its secrets: it can already read them all, so writing them gives it nothing more (a departure from the security review, which asked SYSTEM or the Administrators only, to be confirmed by it). It is the same model as `systemd-creds` without a TPM: the secret is safe at rest on another machine, but not in a full copy of the disk of its host, which holds the key of the machine (the DPAPI master key of the machine is protected by keys stored in the registry; `/var/lib/systemd/credential.secret` on Fedora). Hence: `--with-key=host+tpm2` where a TPM2 exists (a vTPM for the virtual machines), and an encrypted disk (BitLocker, LUKS); otherwise a residual risk.
+**DPAPI scope: `LocalMachine` (proposed with the security review, to be validated by the project lead).** `CurrentUser` would bind a secret to the account of the service. But writing such a file needs the profile of that account loaded, and a virtual account `NT SERVICE\<name>` cannot log on to provision it. The DPAPI of CNG protects only to a domain group or to web credentials, not to a local account.
+
+With `LocalMachine`, any process of the machine can decrypt a file it can read **and write a valid one**: the entropy, the name of the secret, is public. The access list of the file and of its folder is therefore the protection, checked at load, on both the read and the write side. The account of the service itself may own and write its secrets: it can already read them all, so writing them gives it nothing more. This departs from the security review, which asked SYSTEM or the Administrators only; it is submitted to that review again with the code.
+
+It is the same model as `systemd-creds` without a TPM: the secret is safe at rest on another machine, but not in a full copy of the disk of its host, which holds the key of the machine (the DPAPI master key of the machine is protected by keys stored in the registry; `/var/lib/systemd/credential.secret` on Fedora). Hence: `--with-key=host+tpm2` where a TPM2 exists (a vTPM for the virtual machines), and an encrypted disk (BitLocker, LUKS); otherwise a residual risk.
 
 The tool that writes a secret on Windows is `tools/vault/Set-VaultSecret.ps1`: it refuses to run without the rights of an administrator (the account of the service only reads the vault, so nobody else could write it), after the service exists; it reads the value from the standard input or a prompt, never from an argument; it encrypts it; it sets the owner (Administrators) and the access list (read for the account of the service; full control for SYSTEM and Administrators; no inheritance) on the folder and on the file, written atomically. On Fedora, `systemd-ask-password -n | systemd-creds encrypt --name=<name> - /etc/credstore.encrypted/<name>` writes a secret without a line break; the commands are documented in [configuration.md](../adm/configuration.md), and the full installation of the units comes with 0.25.0.
 
@@ -346,4 +360,9 @@ The tool that writes a secret on Windows is `tools/vault/Set-VaultSecret.ps1`: i
 | Decision | Options | Proposed |
 |----------|---------|----------|
 | How the rows reach a backup before their purge | (a) The purge refuses to run unless a full backup of the database finished after the newest row to purge (read from `msdb`); (b) an export of the rows (JSON or BCP) by the administration before the purge; (c) the backup policy of the server, outside the database | None: to be decided |
-| Updates of the development tools | SQL Server 2025 CU10 + GDR (17.0.5045.3) instead of the GDR branch; Visual Studio 2026 updated for SqlPackage 170.5.96 or later (fixes of the deployment of triggers and default constraints) | Both, by the author on his machines (CVE audit of this document) |
+| Updates of the development tools | SQL Server 2025 CU10 + GDR (17.0.5045.3) instead of the GDR branch; Visual Studio 2026 updated for SqlPackage 170.5.96 or later (fixes of the deployment of triggers and default constraints); PowerShell 7 on the runtime 10.0.15 (7.6.9 ships its own 10.0.14); the sqlcmd utilities | All, by the author on his machines (CVE audits of this document and of the code) |
+| Validation of the choices proposed here and not yet approved | DPAPI scope `LocalMachine`; the account of the service trusted with its own vault; a login of the server with SQL authentication (`CHECK_POLICY` on, no expiration) rather than a contained user; an encrypted connection required outside Development | As written in this document |
+| A server-level SQL Server Audit, to a file outside the database | It would see what the administrators do to the audit (decided with the native installation, 0.25.0) | Yes, to a file target |
+| `VIEW DEFINITION` of the application | On the database (as written here, the reading of the metadata of the design of the author) or on the schemas of the platform only, which hides the principals and the row counts (0.8.0) | On the database, as designed |
+| Secrets in the history of a temporal table | A column that holds a secret or its hash is audited as `"changed"`; whether its table may be temporal is decided with the first such column (0.8.0) | Not temporal, or the column kept out of the history |
+| GDPR and NIS2 for the audit | The history tables are not purged; the login of an administrator in the audit is personal data | With the GDPR work of the author |

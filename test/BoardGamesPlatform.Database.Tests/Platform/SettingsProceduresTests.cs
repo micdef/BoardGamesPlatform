@@ -350,12 +350,17 @@ public sealed class SettingsProceduresTests
     [InlineData("{new}", "Integer", "9223372036854775808", "Value does not fit its kind")]
     [InlineData("{new}", "Text", "   ", "Value does not fit its kind")]
     [InlineData("Registration.IsOpen", "Boolean", "true", "Code already exists")]
+    [InlineData("{new}", "Boolean", "true ", "Value does not fit its kind")]
+    [InlineData("{new}", "Integer", "5 ", "Value does not fit its kind")]
+    [InlineData("{new}", "boolean", "true", "Kind is not Boolean, Integer or Text")]
+    [InlineData("{new}", "Boolean ", "true", "Kind is not Boolean, Integer or Text")]
+    [InlineData("{new} ", "Text", "x", "Code is not valid")]
     public async Task TheInsertRejectsARowThatBreaksARuleAsync(string code, string kind, string value, string expectedError)
     {
-        // Inserting the row
+        // Inserting the row ("{new}" is a fresh valid code; "{new} " the same followed by a space)
         CancellationToken token = TestContext.Current.CancellationToken;
         await using SqlConnection connection = await TestDatabase.OpenAsync(token);
-        string actualCode = code == "{new}" ? NewCode() : code;
+        string actualCode = code.StartsWith("{new}", StringComparison.Ordinal) ? NewCode() + code["{new}".Length..] : code;
         (int Settings, int Audit) before = await CountAsync(connection, actualCode, token);
         string result = await InsertAsync(connection, InsertRows((actualCode, kind, value, null)), token);
 

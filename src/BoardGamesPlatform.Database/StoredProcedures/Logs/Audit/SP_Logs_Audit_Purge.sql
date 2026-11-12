@@ -22,6 +22,8 @@
  *	* 51000	| Before is today or later (UTC)| The date of the purge must be earlier than today (UTC): the rows of the current day stay	*
  *	* 51000	| AllowAuditPurge already set	| The gate of the purge is already set in this session: a key set read-only could not be	*
  *	*		|   in the session				|   closed afterwards, so the purge refuses to start										*
+ *	* 15664	| AllowAuditPurge set read-only	| The engine refuses to open the gate (a read-only key cannot be changed): the purge fails	*
+ *	*		|   to NULL in the session		|   before any delete, and the transaction is rolled back									*
  *	*************************************************************************************************************************************
  *
  *	Response Structure :
@@ -51,7 +53,7 @@
  *	}
  *
  *	Behavior :
- *	-----------
+ *	----------
  *	In one transaction, the procedure opens the gate of the delete trigger (session key AllowAuditPurge = 1) just before the delete, deletes the
  *	rows written before the date, closes the gate (NULL), then writes one audit row of the purge itself (actor: the platform; login: the
  *	administrator who ran it; new value: the JSON returned). The rows that record a purge (the rows about Logs.Audit itself, which only the purge
