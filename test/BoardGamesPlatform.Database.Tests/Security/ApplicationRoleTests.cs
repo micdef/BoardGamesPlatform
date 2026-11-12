@@ -22,11 +22,13 @@ namespace BoardGamesPlatform.Database.Tests.Security;
 /// Tests used to check the permissions of the database role ApplicationRole
 /// </summary>
 /// <remarks>
-/// <para><b>Purpose:</b> least privilege is a rule of the platform: the application may only execute the procedures of the granted schemas.
-/// A right added by mistake, directly or through another role, must break the build.</para>
-/// <para><b>Behavior:</b> reads the permission matrix and the role memberships of the role, then plays a member of the role with a temporary
-/// user without login, against a temporary schema holding a table and a procedure. Every temporary object is dropped at the end of its test,
-/// even when a check fails. Skipped when no throwaway database is configured (see <see cref="TestDatabase"/>).</para>
+/// <para><b>Purpose:</b> least privilege is a rule of the platform: the application executes the procedures, reads the views, passes the
+/// table-valued parameters, reads the metadata, and nothing else (doc/dev/database.md, Permission matrix). A right added by mistake, directly or
+/// through another role, must break the build.</para>
+/// <para><b>Behavior:</b> reads the permission matrix and the role memberships of the role, then plays a member of the role with a temporary user
+/// without login, against temporary objects owned by dbo in the public schemas (a procedure of StorProc that writes and reads the audit, a view
+/// of Views over the audit) and in another schema. Every temporary object is dropped at the end of its test, even when a check fails. Skipped
+/// when no throwaway database is configured (see <see cref="TestDatabase"/>).</para>
 /// </remarks>
 public sealed class ApplicationRoleTests
 {
@@ -39,19 +41,32 @@ public sealed class ApplicationRoleTests
     /// </summary>
     private const string RoleName = "ApplicationRole";
 
-    /// <summary>
-    /// Error number of SQL Server when a permission is denied on an object
-    /// </summary>
-    private const int PermissionDeniedError = 229;
-
     #endregion
 
     #region Variables
 
     /// <summary>
-    /// The only permission the application role may hold: class, permission, state and schema
+    /// The schemas the application role may never reach directly
     /// </summary>
-    private static readonly string[] _expectedPermissions = new string[] { "SCHEMA|EXECUTE|GRANT|ServerCore" };
+    private static readonly string[] _internalSchemas = new string[] { "Logs", "Platform", "History", "Functions", "dbo" };
+
+    /// <summary>
+    /// The rights denied on every internal schema
+    /// </summary>
+    private static readonly string[] _deniedPermissions = new string[] { "SELECT", "INSERT", "UPDATE", "DELETE", "EXECUTE", "ALTER", "REFERENCES", "TAKE OWNERSHIP" };
+
+    /// <summary>
+    /// The rights granted to the application role: class, permission, state and schema (empty for the database)
+    /// </summary>
+    private static readonly string[] _grantedPermissions = new string[]
+    {
+        "DATABASE|VIEW DEFINITION|GRANT|",
+        "SCHEMA|EXECUTE|GRANT|ServerCore",
+        "SCHEMA|EXECUTE|GRANT|StorProc",
+        "SCHEMA|EXECUTE|GRANT|Types",
+        "SCHEMA|REFERENCES|GRANT|Types",
+        "SCHEMA|SELECT|GRANT|Views",
+    };
 
     #endregion
 
@@ -108,53 +123,20 @@ public sealed class ApplicationRoleTests
     #region Privates
 
     /// <summary>
-    /// Method used to run a T-SQL batch that returns nothing
+    /// Method used to build the full permission matrix the role must hold
     /// </summary>
-    /// <param name="connection">[Cannot be null] Open connection</param>
-    /// <param name="sql">[Cannot be null] Batch to run; the names it holds are built by the tests from constants and GUIDs, never from input</param>
-    /// <param name="cancellationToken">Token of the test</param>
     /// <returns>
-    /// A task that completes when the batch has run
+    /// Every expected permission, as class|permission|state|schema, sorted
     /// </returns>
-    private static async Task ExecuteAsync(SqlConnection connection, string sql, CancellationToken cancellationToken)
+    private static List<string> ExpectedPermissions()
     {
-        // Running the batch
-        await using SqlCommand command = new SqlCommand(sql, connection);
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
-    /// <summary>
-    /// Method used to run a T-SQL query that returns one value
-    /// </summary>
-    /// <param name="connection">[Cannot be null] Open connection</param>
-    /// <param name="sql">[Cannot be null] Query to run</param>
-    /// <param name="cancellationToken">Token of the test</param>
-    /// <returns>
-    /// The first column of the first row
-    /// </returns>
-    private static async Task<object?> ScalarAsync(SqlConnection connection, string sql, CancellationToken cancellationToken)
-    {
-        // Running the query
-        await using SqlCommand command = new SqlCommand(sql, connection);
+        // Setting the grants, then one deny per right and internal schema
+        List<string> expected = new List<string>(_grantedPermissions);
+        foreach (string schema in _internalSchemas)
+            expected.AddRange(_deniedPermissions.Select(permission => $"SCHEMA|{permission}|DENY|{schema}"));
 
         // Function's return
-        return await command.ExecuteScalarAsync(cancellationToken);
-    }
-
-    /// <summary>
-    /// Method used to run a T-SQL batch that must be refused for lack of permission
-    /// </summary>
-    /// <param name="connection">[Cannot be null] Open connection, acting as the tested user</param>
-    /// <param name="sql">[Cannot be null] Batch that must be refused</param>
-    /// <param name="cancellationToken">Token of the test</param>
-    /// <returns>
-    /// A task that completes when the refusal has been checked
-    /// </returns>
-    private static async Task ShouldBeDeniedAsync(SqlConnection connection, string sql, CancellationToken cancellationToken)
-    {
-        // Running the batch: only the "permission denied" error proves the refusal
-        SqlException exception = await Should.ThrowAsync<SqlException>(() => ExecuteAsync(connection, sql, cancellationToken));
-        exception.Number.ShouldBe(PermissionDeniedError, $"Expected a permission denial for: {sql}");
+        return expected.Order(StringComparer.Ordinal).ToList();
     }
 
     #endregion
@@ -162,19 +144,19 @@ public sealed class ApplicationRoleTests
     #region Publics
 
     /// <summary>
-    /// The application role holds exactly one permission, EXECUTE on the schema ServerCore, and belongs to no other role
+    /// The application role holds exactly the permissions of the matrix, and belongs to no other role
     /// </summary>
     /// <remarks>
     /// <para><b>Purpose:</b> a membership of db_owner or db_datareader would give far more rights without any permission row: both are read.</para>
     /// </remarks>
     [Fact]
-    public async Task TheApplicationRoleCanOnlyExecuteTheGrantedSchemaAsync()
+    public async Task TheApplicationRoleHoldsExactlyThePermissionMatrixAsync()
     {
         // Reading every permission of the role
         CancellationToken token = TestContext.Current.CancellationToken;
         await using SqlConnection connection = await TestDatabase.OpenAsync(token);
         const string PermissionsSql = """
-            SELECT p.[class_desc], p.[permission_name], p.[state_desc], ISNULL(SCHEMA_NAME(p.[major_id]), N'')
+            SELECT p.[class_desc], p.[permission_name], p.[state_desc], IIF(p.[class_desc] = N'SCHEMA', SCHEMA_NAME(p.[major_id]), N'')
             FROM [sys].[database_permissions] p
             JOIN [sys].[database_principals] r ON (r.[principal_id] = p.[grantee_principal_id])
             WHERE r.[name] = @RoleName
@@ -203,62 +185,97 @@ public sealed class ApplicationRoleTests
         }
 
         // Checks
-        permissions.ShouldBe(_expectedPermissions);
+        permissions.Order(StringComparer.Ordinal).ToList().ShouldBe(ExpectedPermissions());
         memberships.ShouldBe(0, "The application role must belong to no other role");
     }
 
     /// <summary>
-    /// A member of the application role can call the Ping procedure, and is refused everything else: another schema, a table, a creation
+    /// A member of the application role uses the procedures, the views and the table-valued parameters, reads the metadata, and is refused
+    /// every table, every internal procedure and function, the delete of the audit even with the gate of the purge open, and any creation
     /// </summary>
     /// <remarks>
-    /// <para><b>Purpose:</b> checks the effective rights of a real member, not only the declared permissions.</para>
-    /// <para><b>Behavior:</b> creates a temporary user without login and a temporary schema holding a table and a procedure, acts as the user,
-    /// and expects the error 229 (permission denied) for each refused action. The temporary objects are dropped in every case, with batches that
-    /// tolerate an object that was never created.</para>
+    /// <para><b>Purpose:</b> checks the effective rights of a real member, not only the declared permissions; in particular that the denies on the
+    /// internal schemas do not break the ownership chaining through which a procedure of StorProc writes the audit (whose CHECK constraints call
+    /// the functions of the schema Functions).</para>
+    /// <para><b>Behavior:</b> creates a temporary user without login, a procedure of StorProc and a view of Views (both owned by dbo, over the
+    /// audit), and another schema with a table and a procedure; acts as the user; expects the error 229 for each refused action. The temporary
+    /// objects are dropped in every case, with batches that tolerate an object that was never created. The audit row written by the test is
+    /// left in the table, as any audit row.</para>
     /// </remarks>
     [Fact]
-    public async Task AMemberOfTheRoleCanOnlyCallTheGrantedProceduresAsync()
+    public async Task AMemberOfTheRoleCanOnlyUseThePublicSchemasAsync()
     {
         // Setting the names of the temporary objects (from GUIDs: safe to put in the batches)
         CancellationToken token = TestContext.Current.CancellationToken;
         await using SqlConnection connection = await TestDatabase.OpenAsync(token);
         string suffix = Guid.NewGuid().ToString("N");
         string userName = $"TestApplicationUser_{suffix}";
+        string procedureName = $"SP_Test_Audit_Write_{suffix}";
+        string viewName = $"V_Test_Audit_{suffix}";
         string schemaName = $"TestOtherSchema_{suffix}";
         try
         {
-            // Creating the user, member of the role, and another schema with a table and a procedure
-            await ExecuteAsync(connection, $"CREATE USER [{userName}] WITHOUT LOGIN; ALTER ROLE [{RoleName}] ADD MEMBER [{userName}];", token);
-            await ExecuteAsync(connection, $"EXEC (N'CREATE SCHEMA [{schemaName}] AUTHORIZATION [dbo];');", token);
-            await ExecuteAsync(connection, $"CREATE TABLE [{schemaName}].[Data] ([Id] INT NOT NULL);", token);
-            await ExecuteAsync(connection, $"EXEC (N'CREATE PROCEDURE [{schemaName}].[SP_Test_Data_Read] AS SELECT [Id] FROM [{schemaName}].[Data];');", token);
+            // Creating the user, member of the role, the public objects over the audit, and another schema with a table and a procedure
+            await SqlBatch.ExecuteAsync(connection, $"CREATE USER [{userName}] WITHOUT LOGIN; ALTER ROLE [{RoleName}] ADD MEMBER [{userName}];", token);
+            await SqlBatch.ExecuteAsync(connection, $$"""
+                EXEC (N'CREATE PROCEDURE [StorProc].[{{procedureName}}] AS
+                BEGIN
+                    SET NOCOUNT ON;
+                    DECLARE @rows [Types].[TVP_Logs_Audit_Insert];
+                    INSERT INTO @rows ([IdActor], [SchemaName], [TableName], [OldValue], [NewValue])
+                    VALUES ([Functions].[SystemActorId](), N''Logs'', N''Audit'', NULL, N''{"marker":"{{suffix}}"}'');
+                    EXEC [Logs].[SP_Logs_Audit_Insert] @Rows = @rows;
+                END');
+                """, token);
+            await SqlBatch.ExecuteAsync(connection, $"EXEC (N'CREATE VIEW [Views].[{viewName}] AS SELECT [Id] FROM [Logs].[Audit] WHERE [NewValue] LIKE N''%{suffix}%'';');", token);
+            await SqlBatch.ExecuteAsync(connection, $"EXEC (N'CREATE SCHEMA [{schemaName}] AUTHORIZATION [dbo];');", token);
+            await SqlBatch.ExecuteAsync(connection, $"CREATE TABLE [{schemaName}].[Data] ([Id] INT NOT NULL);", token);
+            await SqlBatch.ExecuteAsync(connection, $"EXEC (N'CREATE PROCEDURE [{schemaName}].[SP_Test_Data_Read] AS SELECT [Id] FROM [{schemaName}].[Data];');", token);
 
             // Acting as that user
-            await ExecuteAsync(connection, $"EXECUTE AS USER = N'{userName}';", token);
+            await SqlBatch.ExecuteAsync(connection, $"EXECUTE AS USER = N'{userName}';", token);
             try
             {
-                // Allowed: the Ping procedure
-                await ExecuteAsync(connection, "DECLARE @Result NVARCHAR(MAX); EXEC [ServerCore].[SP_ServerCore_Server_Ping] @Result = @Result OUTPUT;", token);
+                // Allowed: a procedure of StorProc that writes the audit, a view, the Ping, a table-valued parameter, the metadata
+                await SqlBatch.ExecuteAsync(connection, $"EXEC [StorProc].[{procedureName}];", token);
+                int rowsSeen = (int)(await SqlBatch.ScalarAsync(connection, $"SELECT COUNT(*) FROM [Views].[{viewName}];", token))!;
+                await SqlBatch.ExecuteAsync(connection, "DECLARE @Result NVARCHAR(MAX); EXEC [ServerCore].[SP_ServerCore_Server_Ping] @Result = @Result OUTPUT;", token);
+                await SqlBatch.ExecuteAsync(connection, "DECLARE @rows [Types].[TVP_Logs_Audit_Insert];", token);
+                int auditTablesSeen = (int)(await SqlBatch.ScalarAsync(connection,
+                    "SELECT COUNT(*) FROM [INFORMATION_SCHEMA].[TABLES] WHERE [TABLE_SCHEMA] = N'Logs' AND [TABLE_NAME] = N'Audit';", token))!;
 
-                // Refused: a procedure and a table of another schema, a creation
-                await ShouldBeDeniedAsync(connection, $"EXEC [{schemaName}].[SP_Test_Data_Read];", token);
-                await ShouldBeDeniedAsync(connection, $"SELECT [Id] FROM [{schemaName}].[Data];", token);
-                object? canCreateTable = await ScalarAsync(connection, "SELECT HAS_PERMS_BY_NAME(NULL, N'DATABASE', N'CREATE TABLE');", token);
-                object? canAlterServerCore = await ScalarAsync(connection, "SELECT HAS_PERMS_BY_NAME(N'ServerCore', N'SCHEMA', N'ALTER');", token);
+                // Refused: the tables, the internal procedures and functions, the delete with the gate open, another schema, a creation
+                await SqlBatch.ShouldFailWithAsync(connection, "SELECT COUNT(*) FROM [Logs].[Audit];", SqlBatch.PermissionDenied, token);
+                await SqlBatch.ShouldFailWithAsync(connection, "DECLARE @rows [Types].[TVP_Logs_Audit_Insert]; EXEC [Logs].[SP_Logs_Audit_Insert] @Rows = @rows;",
+                    SqlBatch.PermissionDenied, token);
+                await SqlBatch.ShouldFailWithAsync(connection, "DECLARE @result NVARCHAR(MAX); EXEC [Logs].[SP_Logs_Audit_Purge] @Before = '2001-01-01', @Result = @result OUTPUT;",
+                    SqlBatch.PermissionDenied, token);
+                await SqlBatch.ShouldFailWithAsync(connection, "SELECT [Functions].[SystemActorId]();", SqlBatch.PermissionDenied, token);
+                await SqlBatch.ShouldFailWithAsync(connection,
+                    "EXEC [sys].[sp_set_session_context] @key = N'AllowAuditPurge', @value = 1; DELETE FROM [Logs].[Audit];", SqlBatch.PermissionDenied, token);
+                await SqlBatch.ExecuteAsync(connection, "EXEC [sys].[sp_set_session_context] @key = N'AllowAuditPurge', @value = NULL;", token);
+                await SqlBatch.ShouldFailWithAsync(connection, $"EXEC [{schemaName}].[SP_Test_Data_Read];", SqlBatch.PermissionDenied, token);
+                await SqlBatch.ShouldFailWithAsync(connection, $"SELECT [Id] FROM [{schemaName}].[Data];", SqlBatch.PermissionDenied, token);
+                object? canCreateTable = await SqlBatch.ScalarAsync(connection, "SELECT HAS_PERMS_BY_NAME(NULL, N'DATABASE', N'CREATE TABLE');", token);
+                object? canAlterStorProc = await SqlBatch.ScalarAsync(connection, "SELECT HAS_PERMS_BY_NAME(N'StorProc', N'SCHEMA', N'ALTER');", token);
 
                 // Checks
+                rowsSeen.ShouldBe(1, "The procedure of StorProc must have written the audit through ownership chaining, and the view must read it");
+                auditTablesSeen.ShouldBe(1, "The right to read the metadata must show the tables");
                 canCreateTable.ShouldBe(0);
-                canAlterServerCore.ShouldBe(0);
+                canAlterStorProc.ShouldBe(0);
             }
             finally
             {
-                await ExecuteAsync(connection, "REVERT;", CancellationToken.None);
+                await SqlBatch.ExecuteAsync(connection, "REVERT;", CancellationToken.None);
             }
         }
         finally
         {
             // Dropping every temporary object that exists, even when a step above failed
-            await ExecuteAsync(connection, $"""
+            await SqlBatch.ExecuteAsync(connection, $"""
+                IF OBJECT_ID(N'[StorProc].[{procedureName}]', N'P') IS NOT NULL DROP PROCEDURE [StorProc].[{procedureName}];
+                IF OBJECT_ID(N'[Views].[{viewName}]', N'V') IS NOT NULL DROP VIEW [Views].[{viewName}];
                 IF OBJECT_ID(N'[{schemaName}].[SP_Test_Data_Read]', N'P') IS NOT NULL DROP PROCEDURE [{schemaName}].[SP_Test_Data_Read];
                 IF OBJECT_ID(N'[{schemaName}].[Data]', N'U') IS NOT NULL DROP TABLE [{schemaName}].[Data];
                 IF SCHEMA_ID(N'{schemaName}') IS NOT NULL EXEC (N'DROP SCHEMA [{schemaName}];');

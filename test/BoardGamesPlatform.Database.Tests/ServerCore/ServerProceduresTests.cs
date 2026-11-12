@@ -1,5 +1,5 @@
 /*
- *	@file	test/BoardGamesPlatform.Database.Tests/ServerCore/PingProcedureTests.cs
+ *	@file	test/BoardGamesPlatform.Database.Tests/ServerCore/ServerProceduresTests.cs
  *	@author	Defraene Michaël (AKA Sonic) (co-written by Claude)
  *
  *	@brief	Checks the procedure ServerCore.SP_ServerCore_Server_Ping on a throwaway database
@@ -29,7 +29,7 @@ namespace BoardGamesPlatform.Database.Tests.ServerCore;
 /// <para><b>Behavior:</b> skipped when no throwaway database is configured (see <see cref="TestDatabase"/>). The checks compare with the clock
 /// and the offset of the SQL Server itself, read on the same connection, never with the clock of the test machine.</para>
 /// </remarks>
-public sealed class PingProcedureTests
+public sealed class ServerProceduresTests
 {
     #region Members
 
